@@ -1,0 +1,11 @@
+[package]
+name = "caddis-core"
+version = "0.1.0"
+edition = "2021"
+description = "CADDIS nervous kernel: envelope, policy, idempotency, ledger (TCB; sync, no-async, no-rusqlite — WORKSPACE C3)"
+# Origin: CARD-0001 (docs/ ledger card-0001-proposal.md); canon: docs/CANON/LADDER.md R1a
+# Private workshop artifact (CD-021): full context lives here; public repo projects this.
+
+[dependencies]
+# TCB law: zero runtime deps. serde_json dev-only until schema freeze (then hand-rolled parser card).
+[dev-dependencies]

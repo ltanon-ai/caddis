@@ -1,0 +1,14 @@
+[package]
+name = "caddis-warden"
+version = "0.1.0"
+edition = "2021"
+
+# The consciousness omp does not have. omp owns the MECHANISM (a pre-tool hook
+# that can block); this crate is the LAW that decides. No dependencies by
+# design — the kernel must be auditable by reading it (AGENT-LAW, WORKSPACE C3).
+[dependencies]
+caddis-core = { path = "../caddis-core" }
+
+[[bin]]
+name = "caddis-warden"
+path = "src/main.rs"

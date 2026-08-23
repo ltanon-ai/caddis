@@ -1,0 +1,8 @@
+[package]
+name = "caddis-card"
+version = "0.1.0"
+edition = "2021"
+description = "CADDIS card schema + parser (CARD-0003; LADDER R1a; CARD-SCHEMA-v1: frontmatter + sections + anchors)"
+# Origin: CARD-0003; card = unit of nuance (25 §4); 9-section heritage (qpi executor) minimal v0
+
+[dependencies]

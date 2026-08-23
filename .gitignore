@@ -1,0 +1,4 @@
+/target
+*.exe.bak*
+__pycache__/
+.DS_Store

@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/caddis-core", "crates/caddis-card", "crates/caddis-warden"]
+
+# caddis — a conscience for coding agents.
+# One binary, zero dependencies: core (envelope/policy/idempotency/ledger),
+# card (the work-unit law), warden (the law engine your harness calls).

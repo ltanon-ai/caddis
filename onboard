@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# onboard — install the conscience and PROVE it is alive.
+# An install that cannot show you a denial is not an install.
+set -u
+if [ -z "${HOME:-}" ]; then HOME="$USERPROFILE"; fi
+HARNESS="${1:-}"
+BIN_DIR="$HOME/.caddis/bin"
+EXE="$BIN_DIR/caddis-warden.exe"
+[ -x "$BIN_DIR/caddis-warden" ] && EXE="$BIN_DIR/caddis-warden"
+LEDGER="${CADDIS_WARDEN_LEDGER:-$HOME/.caddis/warden-ledger.jsonl}"
+
+die() { echo "onboard: FAIL — $1" >&2; exit 1; }
+
+# 1. Build and install the binary (the INSTALLED copy, never target/release).
+command -v cargo >/dev/null || die "cargo not found on PATH"
+cargo build --release || die "cargo build --release failed"
+mkdir -p "$BIN_DIR" || die "cannot create $BIN_DIR"
+if [ -f target/release/caddis-warden.exe ]; then
+    cp target/release/caddis-warden.exe "$EXE" || die "install failed"
+else
+    cp target/release/caddis-warden "$EXE" || die "install failed"
+fi
+echo "onboard: binary installed at $EXE"
+
+# 2. The self-proof, frame-level: force-push must DENY, echo must ALLOW.
+frame() {
+    local tool="$1" command="$2"
+    printf 'tool %d\n%s\n' "${#tool}" "$tool"
+    printf 'command %d\n%s\n' "${#command}" "$command"
+    printf 'path 0\n\ncontent 0\n\n'
+}
+
+deny_reply=$(frame bash "git push --force origin main" | "$EXE")
+echo "$deny_reply" | grep -q '"verdict":"deny"' \
+    || die "force-push was not denied — the conscience came up mute. Reply: $deny_reply"
+
+allow_reply=$(frame bash "echo onboard-self-proof" | "$EXE")
+echo "$allow_reply" | grep -q '"verdict":"allow"' \
+    || die "an innocuous echo was not allowed — the law is over-firing. Reply: $allow_reply"
+
+seq=$(echo "$deny_reply" | sed -n 's/.*"seq":\([0-9]*\).*/\1/p')
+[ -n "$seq" ] && [ "$seq" != "0" ] \
+    || die "verdicts returned but no ledger row was written (seq=0)"
+row=$(sed -n "${seq}p" "$LEDGER" 2>/dev/null)
+echo "$row" | grep -q '"body":"deny|git push --force origin main' \
+    || die "ledger row $seq does not carry the denial: $row"
+
+echo "onboard: PROOF — force-push DENIED (ledger seq $seq), echo ALLOWED."
+echo "onboard: the conscience is live. Next: wire your harness (ONBOARD.md step 2)" \
+     "as '${HARNESS:-<harness>}' if you want in-ledger attribution."
+
+# If a harness was named, stamp the local adapter copy's CALLER constant.
+if [ -n "$HARNESS" ] && [ -f "$(dirname "$0")/adapters/caddis-warden.ts" ]; then
+    src="$(dirname "$0")/adapters/caddis-warden.ts"
+    case "$HARNESS" in
+      little-coder) dest="$HOME/.config/little-coder/extensions/caddis-warden.ts" ;;
+      prime-agent)   dest="$HOME/.prime/agent/extensions/caddis-warden.ts" ;;
+      omp)           dest="$HOME/.omp/agent/extensions/caddis-warden.ts" ;;
+      *)             dest="" ;;
+    esac
+    if [ -n "$dest" ]; then
+        mkdir -p "$(dirname "$dest")"
+        sed "s/const CALLER = \"omp\";/const CALLER = \"$HARNESS\";/" "$src" > "$dest" \
+            && echo "onboard: adapter stamped '$HARNESS' -> $dest"
+    fi
+fi
