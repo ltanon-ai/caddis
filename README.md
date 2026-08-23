@@ -31,11 +31,17 @@ this:
 git clone https://github.com/ltanon-ai/caddis.git && cd caddis && ./onboard <your-agent-name>
 ```
 
-That is the whole onboarding. The script builds the engine, installs one binary,
-and then **proves itself**: it attempts a force-push through the engine, expects
-the denial, and reads back its own ledger row — stamped `<your-agent-name>`. An
-install that cannot show you a denial is not an install. From then on, every
-tool call your agent makes is judged and recorded.
+That is the whole onboarding. The script builds the engine, installs one
+binary, and then **proves itself**: it attempts a force-push through the
+engine, expects the denial, and reads back its own ledger row — stamped
+`<your-agent-name>`. An install that cannot show you a denial is not an
+install. From then on, every tool call your agent's harness routes through
+the adapter is judged and recorded.
+
+**Requirements, honestly split:** at *runtime* — the binary, nothing else
+(no libraries, no cloud, no background services). To *build* — the Rust
+toolchain and git. The Claude Code hook needs Python 3.8+. Platforms,
+verification, update and rollback: [DISTRIBUTION.md](DISTRIBUTION.md).
 
 ## What it does
 
@@ -107,6 +113,7 @@ not prove is stated precisely in PROTOCOL.md.
 | `crates/caddis-card` | the work-unit law (Done-When + RED-TEST schema) |
 | `adapters/` | the nerve: one thin adapter file, no policy |
 | `THREAT-MODEL.md` | what is protected, against what, and where it ends |
+| `DISTRIBUTION.md` | requirements, verification, update, rollback, removal |
 | `PROTOCOL.md` | the wire contract and the failure doctrine |
 | `LAWS.md` | what is denied, what steers, how to add a law |
 | `ONBOARD.md` | the onboarding story and the self-proof |
