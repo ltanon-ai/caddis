@@ -59,6 +59,7 @@ code ─────┘                                   ~/.caddis/warden-ledge
 | `crates/caddis-warden` | the law engine + decision binary |
 | `crates/caddis-core` | envelope → policy → idempotency → ledger kernel |
 | `crates/caddis-card` | the work-unit law (Done-When + RED-TEST schema) |
+| `adapters/` | the nerve: one TypeScript adapter per harness family |
 | `PROTOCOL.md` | the wire contract and the failure doctrine |
 | `LAWS.md` | what is denied, what steers, how to add a law |
 | `ONBOARD.md` | the onboarding story and the self-proof |
