@@ -14,6 +14,10 @@ Rules (quorum-pinned, correction #3/#4 + sol refinements adopted):
   re-proposed); transforms are hypotheses — record whether the retry
   actually converted
 - fallback tax (strong-lane closures) recorded per level: the honest cost
+- plan oracle (BC2, card-tree quorum): its own counters — proposed /
+  well_formed / intent_accepted / intent_rejected — and its own ladder;
+  promotion = 2 consecutive intent_accepted; plan outcomes never touch
+  exec telemetry (attribution first)
 """
 import json
 import os
@@ -34,6 +38,14 @@ def blank(model):
             for lv in LEVELS
         },
         "streak": {"clean_first_attempts": 0},
+        "plan": {
+            "proposed": 0,
+            "well_formed": 0,
+            "intent_accepted": 0,
+            "intent_rejected": 0,
+            "level": "L1",
+            "streak": 0,
+        },
         "transforms": {},
         "history": [],
     }
@@ -107,6 +119,29 @@ class Profile:
     def tax(self, level):
         return self.data["levels"][level]["fallbacks"]
 
+    # ── plan oracle (BC2, card-tree quorum 2026-08-23) ───────────────────
+    def record_plan(self, outcome):
+        """Attribute one proposed plan: 'malformed' (validate_plan
+        structure failed), 'rejected' (well-formed, intent review refused)
+        or 'accepted' (well-formed, intent accepted). The plan ladder is a
+        separate oracle — this never touches exec counters."""
+        pl = self.data["plan"]
+        pl["proposed"] += 1
+        if outcome == "accepted":
+            pl["well_formed"] += 1
+            pl["intent_accepted"] += 1
+            pl["streak"] += 1
+            if pl["streak"] >= 2:
+                idx = LEVELS.index(pl["level"])
+                if idx + 1 < len(LEVELS):
+                    pl["level"] = LEVELS[idx + 1]
+                pl["streak"] = 0
+            return
+        pl["streak"] = 0
+        if outcome == "rejected":
+            pl["well_formed"] += 1
+            pl["intent_rejected"] += 1
+
 
 def default_path(model):
     safe = model.replace("/", "_").replace("\\", "_").replace(":", "_")
@@ -121,6 +156,9 @@ def main():
         p.load()
         print(f"{p.data['model']}: level={p.level()} "
               f"tax={ {lv: p.tax(lv) for lv in LEVELS} }")
+        pl = p.data["plan"]
+        print(f"  plan: {pl['proposed']} proposed, "
+              f"{pl['intent_accepted']} accepted, level={pl['level']}")
         return 0
     print("usage: ladder.py profile <model>")
     return 2
