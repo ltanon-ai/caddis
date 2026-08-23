@@ -84,6 +84,28 @@ A ledger failure does not block the tool — a full disk must not halt all work
 behind an audit trail. The failure is loud and the reply carries `seq: 0`, so an
 unrecorded decision is detectable rather than disguised.
 
+### What "append-only" means here — exactly
+
+Append-only is **program behavior, not protection**: the engine only ever
+appends; it never rewrites or deletes its own rows. Nothing stops another
+process running as the same OS user — including the agent you attached —
+from truncating, editing, or deleting the file. There is no hash chain, no
+signature, no tamper detection. If you need tamper-evident audit, it does
+not exist here yet; a separate proposal would have to weigh it.
+
+- **What a gap in `seq` proves:** rows were not written at that time — the
+  binary was absent (its allow-loud warning fires), or a ledger write
+  failed (`seq: 0` in the reply, a line on stderr).
+- **What it does not prove:** anything, once the file has been edited
+  externally — sequence numbers are counters, not a cryptographic chain.
+- **`seq: 0`:** the decision happened but was not recorded; the reply says
+  so and stderr carries the reason.
+- **OS assumption:** normal user file permissions on the ledger path. The
+  engine does not lock, chmod, or guard the file.
+- **Standing:** observability, not security evidence (see
+  [THREAT-MODEL.md](THREAT-MODEL.md)). It answers "what did the agent do
+  while it ran" — it cannot answer "has anyone touched this file".
+
 ## Environment
 
 | Variable | Effect |
