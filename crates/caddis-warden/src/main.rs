@@ -18,10 +18,16 @@
 //! this estate treats as the most expensive failure. Owed as its own card if
 //! effect-level idempotency is ever wanted.
 
+mod replay;
+
 use caddis_warden::{decide, wire, Verdict};
 use std::io::{Read, Write};
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--replay") {
+        std::process::exit(replay::run(&args));
+    }
     let mut buf = Vec::new();
     if std::io::stdin().read_to_end(&mut buf).is_err() {
         return fail_closed("warden: could not read the request frame");
@@ -155,9 +161,8 @@ fn caller_id() -> String {
     }
 }
 
-/// The envelope's `type` must start with an ASCII letter (envelope.rs). omp
-/// tool names are well-behaved today; this keeps a future one from being
-/// rejected at the ledger and losing the record.
+/// The envelope `type` must start with an ASCII letter (envelope.rs); this
+/// keeps a future exotic tool name from losing its ledger row.
 fn sanitize_type(tool: &str) -> String {
     let cleaned: String = tool
         .chars()
@@ -200,13 +205,11 @@ fn body_command(command: &str) -> String {
 fn unix_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
-/// FNV-1a. Used only to give the envelope a stable id and idem_key — never for
-/// security. A cryptographic hash would mean a dependency, and nothing here
-/// rests on collision resistance.
+/// FNV-1a — stable envelope ids only, never security (nothing here rests on
+/// collision resistance; a crypto hash would cost the zero-dep property).
 fn fnv1a(s: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.as_bytes() {

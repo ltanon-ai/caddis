@@ -58,6 +58,28 @@ grep -o '"seq":[0-9]*' ~/.caddis/warden-ledger.jsonl | tail -5
 - **Not a model context.** The ledger never feeds back into any model
   automatically. It is an audit memory for the operator.
 
+## Simulation — replaying the memory
+
+The memory is deterministic, so it can be RE-RUN. `--replay` re-judges
+every recorded command against the current law and reports the diff:
+
+```sh
+caddis-warden --replay ~/.caddis/warden-ledger.jsonl
+```
+
+```text
+rows: 2847  judged: 420  unchanged: 419  new-denies: 0  freed: 1  skipped: 2427
+FREED   seq=383 it's
+```
+
+This is how a law change is previewed against your own history before it
+ever guards a live agent: every NEW-DENY is a future false positive you
+just caught for free; every FREED is a historical over-fire the new law
+fixes. Honest limits: masked and elided commands are skipped (never
+guessed — the secrets doctrine outranks fidelity); write/edit content was
+never stored, so those rows are skipped; directory-sensitive laws are
+judged from where you run replay. Read-only by construction.
+
 ## Retention
 
 The file grows forever by design — memory you trim is memory you cannot

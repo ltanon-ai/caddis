@@ -69,7 +69,14 @@ to rewrite — other clones already have it.
   harness built on extensions, hooks, or headless RPC can wire it in with one
   thin adapter file — the adapter holds no policy, so harness API churn never
   touches the law. Several agents can share one binary and one ledger, each
-  verdict attributed to its caller. - **Fails honestly.** Binary missing? Tools
+  verdict attributed to its caller.
+- **Replay — the memory is a simulator.** `caddis-warden --replay
+  <ledger>` re-judges recorded history against the current law and
+  reports the diff: every NEW-DENY is a future false positive caught for
+  free, every FREED is a historical over-fire the new law fixes. The only
+  guard you can safely update — because you can preview the update
+  against your own nights.
+- **Fails honestly.** Binary missing? Tools
   keep flowing, loudly — a deployment problem must not brick your agent at 3am.
   Binary ran but the verdict is unreadable? **Blocked** — a judgement you cannot
   read is not an approval. - **Reads stay free.** `read`/`grep`/`glob`/`ls` are
