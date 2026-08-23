@@ -1,5 +1,7 @@
 # caddis
 
+[![pipeline](https://gitlab.com/varliukai/caddis/badge/pipeline.svg?branch=main)](https://gitlab.com/varliukai/caddis/-/pipelines)
+
 ![caddis — a conscience for coding agents](assets/banner.png)
 
 **A conscience for coding agents.**
@@ -121,11 +123,17 @@ not prove is stated precisely in PROTOCOL.md.
 
 ## Adding a law
 
-Laws live in Rust, arrive with tests, and are written red-first: a failing test
-that proves the hole, then the smallest fix that closes it. See `LAWS.md`. The
-engine's own history is 25 hardening iterations of exactly this loop — every
-bypass was measured against real `getopt`/`bash` behavior before it was fixed,
-and the test suite (170+) pins each one.
+Laws live in Rust, arrive with tests, and are written red-first: a failing
+test that proves the hole, then the smallest fix that closes it. See
+`LAWS.md` for the method and one fully documented cycle. The fixture corpus
+in `crates/caddis-warden/tests/` is the evidence — every fixture is a
+measured bypass or false positive that motivated a rule. Verify any count
+you read about this repository yourself:
+
+```sh
+cargo test --workspace 2>&1 | grep -oE "[0-9]+ passed" \
+  | awk '{s+=$1} END {print s}'
+```
 
 ## License
 
