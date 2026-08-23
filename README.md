@@ -6,13 +6,21 @@
 
 Your AI agent can run any command. Including the ones it shouldn't.
 
-Caddis is a tiny law engine that sits between **any** coding agent and its
-tools. Every tool call — every shell command, every file write — is judged
-before it runs: **allowed, steered, or denied**, with the reason, every time, in
-a local ledger you can audit.
+Caddis is a tiny law engine that sits between a coding agent and its tools.
+Every tool call the harness routes through the installed adapter is judged
+before it runs: **allowed, steered, or denied**, with the reason, every time,
+in a local ledger you can audit.
 
 The caddisfly larva builds its own protective case from materials it finds
-around it. An agent that grows a conscience from what's already on the machine.
+around it. An agent that grows a conscience from what's already on the
+machine.
+
+**Read the boundary before you trust it:** caddis is a policy guard and
+audit layer — not an OS sandbox. It judges what the harness routes through
+the adapter you installed; it parses shell, not embedded programs; a
+missing binary fails open and loud, an unreadable verdict fails closed. The
+exact trust assumptions and out-of-scope attacks live in
+[THREAT-MODEL.md](THREAT-MODEL.md).
 
 ## The one command to give any agent
 
@@ -51,7 +59,7 @@ to rewrite — other clones already have it.
   dependencies.** ~1 700 lines of Rust, three first-party crates, no external
   deps. Builds in about two seconds, runs anywhere, reads one length-prefixed
   frame and answers one JSON verdict. No cloud, no telemetry, no trust required.
-  - **Universal attachment.** It does not care whose brain it guards. Any
+  - **Broad attachment.** It does not care whose brain it guards. Any
   harness built on extensions, hooks, or headless RPC can wire it in with one
   thin adapter file — the adapter holds no policy, so harness API churn never
   touches the law. Several agents can share one binary and one ledger, each
@@ -76,10 +84,11 @@ one shared ledger. *"Which of my agents tried what"* is one grep.
 
 The ledger answers the nightly question — *"what did the agent do while I
 slept?"* — which a guard that records only its refusals cannot. Every decision
-appends one row: sequence number, the caller it is attributed to, the tool, the
-verdict with the command's first line, a timestamp. Nothing is ever edited or
-deleted; the file only grows; a gap in the sequence numbers means the guard was
-not running, and says so loudly.
+appends one row: sequence number, the caller it is attributed to, the tool,
+the verdict with the command's first line, a timestamp. The engine never
+edits or deletes what it wrote, and the file only grows. A gap in sequence
+numbers means rows were not written at that time — what that does and does
+not prove is stated precisely in PROTOCOL.md.
 
 ## The verdict flow
 
@@ -97,6 +106,7 @@ not running, and says so loudly.
 | `crates/caddis-core` | envelope → policy → idempotency → ledger kernel |
 | `crates/caddis-card` | the work-unit law (Done-When + RED-TEST schema) |
 | `adapters/` | the nerve: one thin adapter file, no policy |
+| `THREAT-MODEL.md` | what is protected, against what, and where it ends |
 | `PROTOCOL.md` | the wire contract and the failure doctrine |
 | `LAWS.md` | what is denied, what steers, how to add a law |
 | `ONBOARD.md` | the onboarding story and the self-proof |
