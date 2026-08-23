@@ -80,11 +80,18 @@ An update that fails the self-proof is not installed — restore `.prev`.
 
 ## Platform status
 
+Universal by construction: pure std Rust, no OS-specific dependencies, and
+a CI matrix that builds, tests, and runs the onboard self-proof on **every
+push, on all three platforms**.
+
 | Platform | State |
 | --- | --- |
-| Windows (x64) | developed and end-to-end tested here |
-| Linux (x64) | compiles and lints in CI (clippy, fmt, dep-audit) |
-| macOS | untested; pure std Rust, expected to build — verify with onboard |
+| Windows (x64) | built and tested in CI; developed here |
+| Linux (x64) | built, tested, self-proven in CI (GitHub matrix) |
+| macOS (arm64/x64) | built, tested, self-proven in CI (GitHub matrix) |
+
+Releases carry per-platform binaries named `caddis-warden-<OS>-x64[.exe]`
+plus a `SHA256SUMS` covering them all.
 
 ## Release plan (requires explicit approval per release)
 

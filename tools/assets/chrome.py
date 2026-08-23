@@ -13,11 +13,44 @@ TEAL_DIM = (66, 100, 103)
 AMBER = (232, 161, 61)
 TEXT = (200, 207, 214)
 DIM = (124, 134, 143)
-FONTS = r"C:\Windows\Fonts"
+# Font candidates per platform: Windows first, then the usual Linux and
+# macOS font homes. Monospace/console faces fall back across platforms.
+FONT_HOMES = [
+    r"C:\Windows\Fonts",
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts",
+    "/System/Library/Fonts",
+    "/Library/Fonts",
+]
+ALIASES = {  # windows name -> (linux name, macos name)
+    "consola.ttf": ("DejaVuSansMono.ttf", "Menlo.ttc"),
+    "consolab.ttf": ("DejaVuSansMono-Bold.ttf", "Menlo.ttc"),
+    "segoeuil.ttf": ("DejaVuSans.ttf", "Helvetica.ttc"),
+    "segoeui.ttf": ("DejaVuSans.ttf", "Helvetica.ttc"),
+}
+
+
+def _find(name):
+    import glob
+
+    candidates = [name] + list(ALIASES.get(name, ()))
+    for home in FONT_HOMES:
+        for cand in candidates:
+            path = os.path.join(home, cand)
+            if os.path.exists(path):
+                return path
+        for cand in candidates:  # case-insensitive sweep as a last resort
+            hits = glob.glob(os.path.join(home, "**", cand), recursive=True)
+            if hits:
+                return hits[0]
+    return None
 
 
 def font(name, size):
-    return ImageFont.truetype(os.path.join(FONTS, name), size)
+    path = _find(name)
+    if path is None:
+        return ImageFont.load_default()
+    return ImageFont.truetype(path, size)
 
 
 def mono(size, bold=False):

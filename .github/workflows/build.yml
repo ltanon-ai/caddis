@@ -1,0 +1,80 @@
+name: build
+
+# Universal platform proof: build, test, and self-prove on all three OSes.
+# On a v* tag, package the binaries for every platform and attach them (with
+# SHA256SUMS) to the GitHub release. workflow_dispatch lets the same release
+# path be run for an already-published tag (input: tag).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing tag to attach artifacts to (release path)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release -p caddis-warden
+      - name: Test
+        run: cargo test --workspace
+      - name: Self-proof (deny + allow + ledger row)
+        run: |
+          mkdir -p "$HOME/.caddis/bin"
+          if [ -f target/release/caddis-warden.exe ]; then
+            cp target/release/caddis-warden.exe "$HOME/.caddis/bin/"
+          else
+            cp target/release/caddis-warden "$HOME/.caddis/bin/"
+          fi
+          . ./onboard
+      - name: Package
+        run: |
+          mkdir -p dist
+          if [ -f target/release/caddis-warden.exe ]; then
+            cp target/release/caddis-warden.exe "dist/caddis-warden-${RUNNER_OS}-x64.exe"
+          else
+            cp target/release/caddis-warden "dist/caddis-warden-${RUNNER_OS}-x64"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caddis-${{ matrix.os }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    needs: matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          cd dist
+          sha256sum caddis-warden-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: gh release upload "$TAG" dist/* --clobber
