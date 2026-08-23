@@ -1,69 +1,112 @@
 ---
 name: caddis
-description: Operate the caddis conscience for the user — query the verdict
-  ledger, run replay before/after warden updates, explain blocks, and
-  investigate incidents. Use when a tool call was blocked by caddis-warden,
-  when the user asks what an agent did (audit/incident review), when
-  updating or rebuilding the warden binary (replay first), or when the user
-  mentions caddis, the warden, the ledger, or replay.
+description: Operate the caddis conscience AND work card-first — query the
+  verdict ledger, run replay around warden updates, explain blocks, and
+  structure every unit of work as a card (Done-When + RED-TEST, strict
+  EXECUTION when dispatching to a local model). Use when any tool call was
+  blocked by caddis-warden, when starting any non-trivial task (write the
+  card first), when dispatching code work to a local/weak model (the
+  ladder), when the user asks what an agent did, or mentions caddis,
+  cards, the ledger, the ladder, or replay.
 ---
 
-# caddis — the agent's guide to the conscience
+# caddis — the conscience and the card ladder
 
-A caddis warden judges tool calls and remembers every verdict in
-`~/.caddis/warden-ledger.jsonl`. The user should never have to memorize
-its commands — you know them, and you act at the right moments.
+A warden judges tool calls and remembers every verdict in
+`~/.caddis/warden-ledger.jsonl`. Work happens as CARDS. Users memorize
+nothing and plan nothing — you do, at the right moments.
 
-## Act proactively at these moments
+## 1. Card-first is the default
 
-1. **A tool call was blocked by caddis-warden.** Read the reason to the
-   user in one sentence (it names the law). If the block looks wrong,
-   do NOT bypass it — pull the row and the surrounding context from the
-   ledger and show the user; a false positive is a card, not a detour.
-2. **The warden binary is being updated or rebuilt.** Before the new
-   binary replaces the installed one, run replay and show the diff —
-   every NEW-DENY is a future false positive caught before it happens.
-   After the swap, re-run `./onboard <name>` so the install re-proves.
-3. **The user reports an incident** ("what did the agent do last
-   night?"). Query first, replay second (gap analysis) — see commands.
-4. **The user mentions caddis / warden / ledger / replay.** You are the
-   interface: run the command, show the output, explain in one line.
+Before any unit of work beyond a one-liner, write the card:
 
-## The commands
-
-```sh
-# everything denied today (the nightly question)
-grep '"deny|' ~/.caddis/warden-ledger.jsonl | tail
-
-# one agent's story (attributed rows)
-grep '"from":"NAME"' ~/.caddis/warden-ledger.jsonl | tail -20
-
-# was the guard even running? (gaps in seq mean it was not)
-grep -o '"seq":[0-9]*' ~/.caddis/warden-ledger.jsonl | tail -5
-
-# replay: re-judge history against the current law, show the diff
-caddis-warden --replay ~/.caddis/warden-ledger.jsonl
-caddis-warden --replay ~/.caddis/warden-ledger.jsonl --from NAME      # one caller
-caddis-warden --replay ~/.caddis/warden-ledger.jsonl --since 24      # last day
+```text
+---
+id: CARD-<slug>
+class: fix|feat|docs
+owner: <agent-name>
+---
+# <one line>
+# Done-When          (mechanically checkable, falsifiable)
+# RED-TEST           (the failing proof, run BEFORE the work)
+# EXECUTION          (when dispatching to a local model — see §3)
 ```
 
-## Reading replay output
+Validate before acting: `cargo run -p caddis-card --example validate --
+card.md --strict` (strict demands EXECUTION; plain cards keep the v1
+contract). Work RED-first: make the proof fail for the stated reason,
+make the smallest change, make it pass, land with the evidence.
 
-- `NEW-DENY seq=N <cmd>` — the current law denies what was allowed
-  then. Before an update ships: each of these is a false positive you
-  just prevented. After an incident: these are recurrences now covered.
-- `FREED seq=N <cmd>` — the current law allows what was denied then: a
-  historical over-fire, now fixed.
-- `skipped` — masked or elided rows (secrets doctrine outranks
-  simulation) and non-command tools. Never guessed.
+If YOU notice you have made 3+ content writes without a card this
+session — stop, write the card, continue. (This same nudge arrives
+mechanically from the skill environment; never fight it, never bypass a
+law to make work pass — a wrong law is fixed by a card, not a detour.)
 
-## Doctrine
+## 2. The conscience commands
 
-- The ledger is observability, not tamper-proof evidence; a gap in seq
-  means rows were not written, and after external edits it proves
-  nothing (PROTOCOL.md in the caddis repo states the exact semantics).
-- Never edit or trim the ledger to "clean up" — memory you trim is
-  memory you cannot audit. Archiving (move whole file) is the user's
-  call.
-- Never disable or uninstall the warden to make work pass; if a law is
-  wrong, the fix is a card with a RED-TEST (CARDS.md in the caddis repo).
+```sh
+grep '"deny|' ~/.caddis/warden-ledger.jsonl | tail     # nightly question
+grep '"from":"NAME"' ~/.caddis/warden-ledger.jsonl | tail -20
+caddis-warden --replay ~/.caddis/warden-ledger.jsonl [--from NAME] [--since 24h]
+```
+
+Replay re-judges history against the current law: every NEW-DENY is a
+future false positive caught free; every FREED a fixed over-fire. Run it
+before swapping an updated warden binary; re-run `./onboard <name>`
+after the swap. A blocked call: explain the reason in one sentence; if
+it looks wrong, pull the ledger row — a false positive is a card.
+
+## 3. The ladder — dispatching to a local model
+
+The card is the PLANNING side; the ladder adapts it to the EXECUTOR you
+have. Honest claim: local execution EARNS levels by measurement — never
+promise local-by-default.
+
+**Before a model's first dispatch**: run the calibration pack
+(`skills/caddis/calibration/` — copy fixtures to a scratch dir, dispatch
+each card one-shot, record outcomes). Profiles live in
+`~/.caddis/executor-profiles/<model>.json` via `skills/caddis/ladder.py`
+— capability telemetry, not memory.
+
+**Mechanical rules (never override by judgment):**
+- start L1; +1 level only after 2 consecutive first-attempt untransformed
+  accepts; any blast violation, claims violation, or retired-transform
+  hit → immediate −1, floor L1
+- a transform with ≥3 uses and 0 conversions is RETIRED — never proposed
+  again
+- fallback tax (strong-lane closures) per level is the honest cost: when
+  closures exceed accepts at a level across ≥6 cards, go strong-first at
+  that level and note it in the profile
+
+**The loop (bounded):** dispatch the card one-shot to the local model
+with a FRESH context each attempt (no contamination). Gates decide —
+never claims. On reject, classify the mode and apply ONE transform, then
+retry (max 3 attempts total):
+
+| reject mode | transform (a hypothesis — outcomes recorded) |
+|---|---|
+| partial-edit | pin the exact line: anchor narrows to the broken lines |
+| no-edit | one imperative step; the card becomes a single command |
+| wrong-target | re-anchor to the actually-edited path |
+| claims-violation | restate claims-forbidden: output the file only |
+| blast-violation | demote + shrink blast to the touched file |
+| tool-error | do NOT transform — the lane is broken, fall back |
+
+**Too thick? SPLIT, don't shrink.** If a card needs blast >3 or fails at
+L1 twice, split it into ordered children (each its own strict card,
+blast ≤3, `# SPLIT` marker with parent/order/of). Children run in
+sequence; the parent's gate is all children green. The annex may carry
+context but never broadens allowlist, blast, or level.
+
+**Dead end (never silent):** after the 3 bounded attempts, the strong
+lane closes the task. If the strong lane ALSO fails — STOP: hand the
+card back to the operator with the evidence. The loop never retries
+upward silently.
+
+## 4. Doctrine
+
+- The ledger is observability, not tamper-proof evidence (PROTOCOL.md).
+- Never trim the ledger; archiving is the user's call.
+- Profiles are telemetry: they answer "what level can this executor
+  hold", nothing else.
+- Local tests/gates override every rule here, including all of §3.

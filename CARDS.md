@@ -65,6 +65,19 @@ Validate it, watch the test fail for exactly the stated reason, fix the
 smallest thing, watch it pass. If the test fails for a *different*
 reason, the card was wrong — fix the card first.
 
+## Strict cards and the ladder (for local executors)
+
+`validate --strict` adds the EXECUTION contract: verbatim CURRENT
+anchors, a change allowlist, blast <= 3 (hard error above), level
+L1-L3 (defaults LOW), claims-forbidden. A CONTINUATION annex carries
+context between chained cards but may never broaden them; a SPLIT
+marker names ordered children when a card is too thick for the
+executor — the model can split cards automatically, each child a full
+strict card. The ladder (skills/caddis) calibrates which level a given
+local model has EARNED by measurement; local execution is never the
+default promise. See the shipped skill for the bounded retry loop and
+its mechanical promotion/demotion rules.
+
 ## Where the schema lives
 
 `crates/caddis-card/` — a zero-dependency parser and validator (~140

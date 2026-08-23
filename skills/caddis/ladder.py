@@ -1,0 +1,130 @@
+"""ladder.py — the executor ladder: profiles, mechanical level rules.
+
+Lives beside the caddis skill because it IS the skill's state machine
+(quorum card-ladder ruling: the ladder lives agent-side; no engine
+daemon). Profiles are named capability telemetry at
+~/.caddis/executor-profiles/<model>.json — never "memory", never merged
+into the warden ledger (correction #2).
+
+Rules (quorum-pinned, correction #3/#4 + sol refinements adopted):
+- start L1; promotion = 2 consecutive FIRST-ATTEMPT UNTRANSFORMED accepts
+- blast violation / claims failure / retired-transform hit → immediate −1,
+  floor clamps at L1
+- transform with >=3 recorded uses and 0 conversions retires (never
+  re-proposed); transforms are hypotheses — record whether the retry
+  actually converted
+- fallback tax (strong-lane closures) recorded per level: the honest cost
+"""
+import json
+import os
+import time
+
+LEVELS = ["L1", "L2", "L3"]
+HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or "."
+PROFILES = os.path.join(HOME, ".caddis", "executor-profiles")
+
+
+def blank(model):
+    return {
+        "model": model,
+        "fingerprint": {"noted_at": int(time.time())},
+        "level": "L1",
+        "levels": {
+            lv: {"attempts": 0, "accepts": 0, "fallbacks": 0}
+            for lv in LEVELS
+        },
+        "streak": {"clean_first_attempts": 0},
+        "transforms": {},
+        "history": [],
+    }
+
+
+class Profile:
+    def __init__(self, path):
+        self.path = path
+        self.data = blank("")  # replaced by load(); never None
+
+    def load(self):
+        with open(self.path, encoding="utf-8") as f:
+            self.data = json.load(f)
+        return self
+
+    def save(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(self.data, f, indent=2)
+
+    # ── level machinery ──────────────────────────────────────────────────
+    def level(self):
+        return self.data["level"]
+
+    def _demote(self):
+        idx = LEVELS.index(self.data["level"])
+        self.data["level"] = LEVELS[max(0, idx - 1)]
+        self.data["streak"]["clean_first_attempts"] = 0
+
+    def _maybe_promote(self):
+        if self.data["streak"]["clean_first_attempts"] >= 2:
+            idx = LEVELS.index(self.data["level"])
+            if idx + 1 < len(LEVELS):
+                self.data["level"] = LEVELS[idx + 1]
+            self.data["streak"]["clean_first_attempts"] = 0
+
+    # ── recording ────────────────────────────────────────────────────────
+    def record(self, level, outcome, attempt=1, transform=None, mode=None):
+        lv = self.data["levels"][level]
+        lv["attempts"] += 1
+        if outcome == "fallback":
+            lv["fallbacks"] += 1
+        elif outcome == "accept":
+            lv["accepts"] += 1
+        if outcome == "accept" and attempt == 1 and transform is None:
+            self.data["streak"]["clean_first_attempts"] += 1
+            self._maybe_promote()
+        else:
+            self.data["streak"]["clean_first_attempts"] = 0
+        if mode in ("blast-violation", "claims-violation", "retired-transform"):
+            self._demote()
+        if outcome == "reject" and mode:
+            self.data["history"].append(
+                {"ts": int(time.time()), "level": level, "mode": mode}
+            )
+        if transform:
+            self.record_transform(
+                transform, converted=(outcome == "accept" and attempt > 1)
+            )
+
+    def record_transform(self, name, converted):
+        t = self.data["transforms"].setdefault(name, {"used": 0, "converted": 0})
+        t["used"] += 1
+        if converted:
+            t["converted"] += 1
+
+    def transform_retired(self, name):
+        t = self.data["transforms"].get(name)
+        return bool(t) and t["used"] >= 3 and t["converted"] == 0
+
+    def tax(self, level):
+        return self.data["levels"][level]["fallbacks"]
+
+
+def default_path(model):
+    safe = model.replace("/", "_").replace("\\", "_").replace(":", "_")
+    return os.path.join(PROFILES, f"{safe}.json")
+
+
+def main():
+    import sys
+
+    if len(sys.argv) >= 3 and sys.argv[1] == "profile":
+        p = Profile(default_path(sys.argv[2]))
+        p.load()
+        print(f"{p.data['model']}: level={p.level()} "
+              f"tax={ {lv: p.tax(lv) for lv in LEVELS} }")
+        return 0
+    print("usage: ladder.py profile <model>")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
