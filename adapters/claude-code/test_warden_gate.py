@@ -101,6 +101,11 @@ def test_posix_paths_stay_case_sensitive(monkeypatch):
 
 
 def test_windows_case_folds_where_the_filesystem_does(monkeypatch):
+    # normcase lowercases and backslash-folds on Windows; simulate it so
+    # the guarantee is pinned even when the suite runs on POSIX cells.
+    monkeypatch.setattr(
+        gate.os.path, "normcase", lambda s: s.replace("/", "\\").lower()
+    )
     monkeypatch.setattr(gate, "_lanes", lambda: {"C:/proj": "owl"})
     assert gate._longest_lane_match("C:\\PROJ\\src") == "owl"
 
