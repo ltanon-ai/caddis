@@ -69,6 +69,7 @@ each card one-shot, record outcomes). Profiles live in
 — capability telemetry, not memory.
 
 **Mechanical rules (never override by judgment):**
+
 - start L1; +1 level only after 2 consecutive first-attempt untransformed
   accepts; any blast violation, claims violation, or retired-transform
   hit → immediate −1, floor L1
@@ -84,7 +85,7 @@ never claims. On reject, classify the mode and apply ONE transform, then
 retry (max 3 attempts total):
 
 | reject mode | transform (a hypothesis — outcomes recorded) |
-|---|---|
+| --- | --- |
 | partial-edit | pin the exact line: anchor narrows to the broken lines |
 | no-edit | one imperative step; the card becomes a single command |
 | wrong-target | re-anchor to the actually-edited path |

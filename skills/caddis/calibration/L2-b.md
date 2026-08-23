@@ -6,16 +6,17 @@ owner: ladder
 
 # CAL-L2-b: implement one small function (L2)
 
-# Done-When
+## Done-When
 
 - fixtures/test_all.py::is_even-related assertions pass
 
-# RED-TEST
+## RED-TEST
 
 - the is_even assertions fail before the edit
 
-# EXECUTION
+## EXECUTION
 
+```yaml
 level: L2
 blast: 1
 claims-forbidden: true
@@ -27,3 +28,4 @@ anchors:
           return True
 allowlist:
   - edit fixtures/l2_b.py
+```

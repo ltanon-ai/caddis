@@ -29,7 +29,7 @@ import os
 import time
 
 LEVELS = ["L1", "L2", "L3"]
-HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or "."
+HOME = os.path.expanduser("~")
 PROFILES = os.path.join(HOME, ".caddis", "executor-profiles")
 
 
@@ -102,26 +102,36 @@ class Profile:
 
     # ── recording ────────────────────────────────────────────────────────
     def record(self, level, outcome, attempt=1, transform=None, mode=None):
+        self._tally(level, outcome)
+        self._track_streak(level, outcome, attempt, transform, mode)
+        if transform:
+            self.record_transform(
+                transform, converted=(outcome == "accept" and attempt > 1)
+            )
+
+    def _tally(self, level, outcome):
+        """Exec counters: attempts, and fallbacks as the honest tax."""
         lv = self.data["levels"][level]
         lv["attempts"] += 1
         if outcome == "fallback":
             lv["fallbacks"] += 1
         elif outcome == "accept":
             lv["accepts"] += 1
-        if outcome == "accept" and attempt == 1 and transform is None:
-            self.data["streak"]["clean_first_attempts"] += 1
+
+    def _track_streak(self, level, outcome, attempt, transform, mode):
+        """Promotion streak and demotion laws, exactly as quorum-pinned."""
+        clean = outcome == "accept" and attempt == 1 and transform is None
+        streak = self.data["streak"]
+        if clean:
+            streak["clean_first_attempts"] += 1
             self._maybe_promote()
         else:
-            self.data["streak"]["clean_first_attempts"] = 0
+            streak["clean_first_attempts"] = 0
         if mode in ("blast-violation", "claims-violation", "retired-transform"):
             self._demote()
         if outcome == "reject" and mode:
             self.data["history"].append(
                 {"ts": int(time.time()), "level": level, "mode": mode}
-            )
-        if transform:
-            self.record_transform(
-                transform, converted=(outcome == "accept" and attempt > 1)
             )
 
     def record_transform(self, name, converted):

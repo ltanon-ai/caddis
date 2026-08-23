@@ -139,7 +139,7 @@ fn plan_gates_check_repo_reality() {
 
 #[test]
 fn dispatch_stamps_strategy_into_events() {
-    let root = scratch("strat");
+    let root = scratch("strategy");
     seed_repo(&root);
     let mut w = walking(&root);
     w.accept_plan("PLAN-T", &plan()).unwrap();

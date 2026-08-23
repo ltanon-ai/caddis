@@ -83,11 +83,14 @@ def _label_for(cwd: str) -> str:
 def _longest_lane_match(cwd: str) -> str:
     if not cwd:
         return ""
-    norm = cwd.replace("/", os.sep).rstrip(os.sep).lower()
+    # Both sides normalize to "/": lanes.json may carry either separator,
+    # and normalizing only the cwd (the old os.sep swap) made every
+    # forward-slash prefix silently unmatchable on Windows.
+    norm = cwd.replace("\\", "/").rstrip("/").lower()
     best, best_len = "", -1
     for prefix, label in _lanes().items():
-        p = prefix.rstrip(os.sep).lower()
-        if (norm == p or norm.startswith(p + os.sep)) and len(p) > best_len:
+        p = prefix.replace("\\", "/").rstrip("/").lower()
+        if (norm == p or norm.startswith(p + "/")) and len(p) > best_len:
             best, best_len = label, len(p)
     return best
 

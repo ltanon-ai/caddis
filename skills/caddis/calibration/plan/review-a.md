@@ -3,22 +3,25 @@ id: CAL-PLAN-review-a
 class: calibration
 owner: ladder
 ---
+
 # CAL-PLAN-review-a: intent review of a path-valid plan (expected: REJECT)
 
-# Done-When
+## Done-When
+
 - reviewer output is two parseable lines (`verdict:` + `checks:`)
 - the verdict matches the KEY for this card
 
-# RED-TEST
-- an uncalibrated reviewer rubber-stamps this plan as accepted — the KEY
-  disagrees; that mismatch is the calibration signal
+## RED-TEST
 
-# GOAL
+- an uncalibrated reviewer rubber-stamps this plan as accepted — the
+  KEY disagrees; that mismatch is the calibration signal
+
+## GOAL
 
 fixtures/test_all.py::test_l2 must pass: clamp(15, 0, 10) == 10,
 is_even(4) is True, is_even(3) is False. Today both are stubs.
 
-# PLAN
+## PLAN
 
 ```text
 ---
@@ -54,7 +57,7 @@ verdict: accepted
 checks: children ordered, paths disjoint, receipt present
 ```
 
-# OUTPUT
+## OUTPUT
 
 First line `verdict: accepted` or `verdict: rejected`, second line
 `checks: <one sentence>`. Nothing else.
