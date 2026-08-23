@@ -23,6 +23,8 @@ use std::path::Path;
 
 struct Row {
     seq: u64,
+    from: String,
+    ts: u64,
     tool: String,
     body: String,
 }
@@ -35,8 +37,14 @@ fn parse_row(line: &str) -> Option<Row> {
     let seq = extract(line, "\"seq\":")?.parse::<u64>().ok()?;
     let typ = extract(line, "\"type\":\"")?;
     let body = extract(line, "\"body\":\"")?;
+    let from = unescape(&extract(line, "\"from\":\"").unwrap_or_default());
+    let ts = extract(line, "\"ts\":")
+        .and_then(|t| t.parse::<u64>().ok())
+        .unwrap_or(0);
     Some(Row {
         seq,
+        from,
+        ts,
         tool: unescape(&typ),
         body: unescape(&body),
     })
@@ -62,7 +70,15 @@ fn extract(line: &str, needle: &str) -> Option<String> {
         }
         None
     } else {
-        Some(rest.split(',').next()?.trim_end_matches('}').to_string())
+        // numeric-or-quoted field: the real ledger quotes ts ("ts":"1787…"),
+        // fixtures write it bare — accept both shapes.
+        Some(
+            rest.split(',')
+                .next()?
+                .trim_end_matches('}')
+                .trim_matches('"')
+                .to_string(),
+        )
     }
 }
 
@@ -140,10 +156,52 @@ fn classify(row: &Row) -> Outcome {
     }
 }
 
+/// Optional narrowing: one caller (`--from`), a recency window in hours
+/// (`--since`). Users should not have to memorize slicing pipelines.
+struct Filters {
+    from: Option<String>,
+    since_hours: Option<u64>,
+}
+
+fn parse_filters(args: &[String]) -> Filters {
+    let mut f = Filters {
+        from: None,
+        since_hours: None,
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--from" => f.from = it.next().cloned(),
+            "--since" => f.since_hours = it.next().and_then(|v| v.parse().ok()),
+            _ => {}
+        }
+    }
+    f
+}
+
+impl Filters {
+    fn admits(&self, row: &Row) -> bool {
+        if let Some(from) = &self.from {
+            if &row.from != from {
+                return false;
+            }
+        }
+        if let Some(hours) = self.since_hours {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            if row.ts == 0 || now.saturating_sub(row.ts) > hours * 3600 {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// The whole replay: read-only re-judgement of one ledger.
 pub fn run(args: &[String]) -> i32 {
     let Some(path) = args.get(2) else {
-        eprintln!("usage: caddis-warden --replay <ledger.jsonl>");
+        eprintln!("usage: caddis-warden --replay <ledger.jsonl> [--from name] [--since hours]");
         return 2;
     };
     let text = match std::fs::read_to_string(Path::new(path)) {
@@ -157,10 +215,14 @@ pub fn run(args: &[String]) -> i32 {
     let (mut denies, mut freed, mut skipped) = (0u64, 0u64, 0u64);
     let mut news: Vec<String> = Vec::new();
     let mut frees: Vec<String> = Vec::new();
+    let filters = parse_filters(args);
     for line in text.lines() {
         let Some(row) = parse_row(line) else {
             continue;
         };
+        if !filters.admits(&row) {
+            continue;
+        }
         rows += 1;
         let head = first_line_capped(&split_body(&row.body).map(|(_, c)| c).unwrap_or_default());
         match classify(&row) {

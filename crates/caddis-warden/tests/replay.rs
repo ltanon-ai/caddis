@@ -7,10 +7,16 @@
 use std::process::{Command, Stdio};
 
 fn row(seq: u64, body: &str) -> String {
+    row_as(seq, "t", 1, body)
+}
+
+fn row_as(seq: u64, from: &str, ts: u64, body: &str) -> String {
     format!(
         "{{\"seq\":{seq},\"v\":1,\"id\":\"x{seq:016}\",\"idem_key\":\"k{seq}\",\
-         \"type\":\"tool.bash\",\"from\":\"t\",\"to\":\"warden\",\"body\":{body:?},\"ts\":1}}\n",
+         \"type\":\"tool.bash\",\"from\":\"{from}\",\"to\":\"warden\",\"body\":{body:?},\"ts\":{ts}}}\n",
         seq = seq,
+        from = from,
+        ts = ts,
         body = body
     )
 }
@@ -30,12 +36,16 @@ fn write_ledger(tag: &str) -> std::path::PathBuf {
 }
 
 fn replay(path: &std::path::Path) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_caddis-warden"))
-        .arg("--replay")
+    replay_with(path, &[])
+}
+
+fn replay_with(path: &std::path::Path, extra: &[&str]) -> String {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_caddis-warden"));
+    cmd.arg("--replay")
         .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .expect("spawn warden");
+        .args(extra)
+        .stdin(Stdio::null());
+    let out = cmd.output().expect("spawn warden");
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -102,5 +112,56 @@ fn replay_skips_what_the_ledger_deliberately_never_kept() {
     assert!(
         report.contains("skipped: 2"),
         "masked commands and non-command tools are skipped, not guessed, got: {report}"
+    );
+}
+
+#[test]
+fn replay_filters_by_caller() {
+    let path =
+        std::env::temp_dir().join(format!("caddis-replay-{}-from.jsonl", std::process::id()));
+    std::fs::write(
+        &path,
+        format!(
+            "{}{}{}",
+            row_as(1, "agent@ci", 1, "allow|echo one||"),
+            row_as(2, "agent@laptop", 1, "deny|git push --force origin main||w"),
+            row_as(3, "agent@ci", 1, "allow|git push --force origin main||"),
+        ),
+    )
+    .unwrap();
+    let report = replay_with(&path, &["--from", "agent@ci"]);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        report.contains("rows: 2"),
+        "only the named caller's rows are replayed, got: {report}"
+    );
+    assert!(
+        !report.contains("seq=2"),
+        "the other caller's row is not itemized, got: {report}"
+    );
+}
+
+#[test]
+fn replay_filters_by_recency() {
+    let path =
+        std::env::temp_dir().join(format!("caddis-replay-{}-since.jsonl", std::process::id()));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        &path,
+        format!(
+            "{}{}",
+            row_as(1, "t", now - 3_600, "allow|echo fresh||"),
+            row_as(2, "t", now - 900_000, "allow|echo stale||"),
+        ),
+    )
+    .unwrap();
+    let report = replay_with(&path, &["--since", "24"]);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        report.contains("rows: 1"),
+        "only rows inside the window are replayed, got: {report}"
     );
 }

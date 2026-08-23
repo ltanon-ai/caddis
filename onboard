@@ -41,9 +41,22 @@ echo "$allow_reply" | grep -q '"verdict":"allow"' \
 seq=$(echo "$deny_reply" | sed -n 's/.*"seq":\([0-9]*\).*/\1/p')
 [ -n "$seq" ] && [ "$seq" != "0" ] \
     || die "verdicts returned but no ledger row was written (seq=0)"
-row=$(sed -n "${seq}p" "$LEDGER" 2>/dev/null)
-echo "$row" | grep -q '"body":"deny|git push --force origin main' \
-    || die "ledger row $seq does not carry the denial: $row"
+# The deny row is found by CONTENT in the tail, never by line number:
+# line-N == seq-N held only while every row was one physical line.
+row=$(tail -5 "$LEDGER" 2>/dev/null | grep '"body":"deny|git push --force origin main' | tail -1)
+[ -n "$row" ] || die "the denial is not in the ledger tail: $(tail -2 "$LEDGER")"
+
+# The agent's helper: install the caddis skill so the AGENT knows the
+# system too (users memorize nothing). Claude Code reads
+# ~/.claude/skills; the agentskills.io standard dir ~/.agents/skills is
+# read by extension-based harnesses.
+SRC_SKILL="$(dirname "$0")/skills/caddis"
+for dest in "$HOME/.claude/skills/caddis" "$HOME/.agents/skills/caddis"; do
+    mkdir -p "$(dirname "$dest")" 2>/dev/null || true
+    if cp -r "$SRC_SKILL" "$dest" 2>/dev/null; then
+        echo "onboard: agent helper installed -> $dest"
+    fi
+done
 
 echo "onboard: PROOF — force-push DENIED (ledger seq $seq), echo ALLOWED."
 echo "onboard: the conscience is live. Next: wire your harness (ONBOARD.md step 2)" \

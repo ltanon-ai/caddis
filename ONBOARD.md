@@ -41,6 +41,15 @@ does exactly this:
 If any step fails, onboarding fails, loudly. A conscience that came up mute is
 the exact failure this design refuses.
 
+## The agent's helper (installed for you)
+
+Users memorize nothing. Onboard also installs a small **caddis skill**
+into your agent's skill directories (`~/.claude/skills`,
+`~/.agents/skills`): from that moment the AGENT knows the system — it
+explains blocks in one sentence, queries the ledger when you ask what
+happened, runs replay (with `--from` / `--since` filters) before and
+after warden updates, and never bypasses a law to make work pass.
+
 ## What you get
 
 From the moment onboarding passes, every tool call the agent makes — in every
