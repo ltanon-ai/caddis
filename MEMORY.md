@@ -80,6 +80,14 @@ guessed — the secrets doctrine outranks fidelity); write/edit content was
 never stored, so those rows are skipped; directory-sensitive laws are
 judged from where you run replay. Read-only by construction.
 
+## Not this memory: executor profiles
+
+`~/.caddis/executor-profiles/<model>.json` files are CAPABILITY
+TELEMETRY for the card ladder (per-level accept counts, fallback tax,
+transform efficacy) — they are not this ledger, not merged into it, and
+not "the agent's memory" in any sense: they answer "what level of card
+can this executor hold", nothing else.
+
 ## Retention
 
 The file grows forever by design — memory you trim is memory you cannot
