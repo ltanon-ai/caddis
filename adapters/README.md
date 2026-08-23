@@ -21,8 +21,7 @@ that feeds the same frame to the binary and honors its verdict (deny → block,
 steer → context, allow → silence). Register it in your settings'
 `hooks.PreToolUse` with matcher `"*"` (snippet in the file's docstring). The
 `from:` stamp comes from an optional `~/.caddis/lanes.json` cwd-prefix map;
-unmapped sessions are stamped `claude-code`. First authored by a Claude Code
-session on its own onboarding day — the fourth harness wrote its own nerve.
+unmapped sessions are stamped `claude-code`.
 
 ## Stamping the caller
 

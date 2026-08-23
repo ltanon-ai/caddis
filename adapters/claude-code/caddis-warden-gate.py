@@ -35,8 +35,7 @@ CALLER IDENTITY — one conscience, many bodies, each body named:
   can set CADDIS_WARDEN_STAND_ASIDE=1: unmapped sessions then stand aside
   silently (no judgement, no ledger row) — a deliberate act, never a default.
 
-Lineage: first authored by a Claude Code session on its own onboarding day
-(the fourth harness to join the conscience), genericized here for everyone.
+Genericized from a real first-day onboarding adapter.
 """
 
 from __future__ import annotations

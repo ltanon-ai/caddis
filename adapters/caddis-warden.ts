@@ -28,7 +28,7 @@ const BIN =
   process.env.CADDIS_WARDEN_BIN ||
   `${process.env.USERPROFILE || process.env.HOME}/.caddis/bin/caddis-warden.exe`;
 
-// Who is asking (CARD-FROM-1): one conscience serves several harnesses, and
+// Who is asking: one conscience serves several harnesses, and
 // the shared ledger must be able to say WHICH one made each call. The onboarding
 // script stamps this constant per agent; an unstamped copy keeps the built-in
 // binary's default, so the file is safe to copy around unmodified.
