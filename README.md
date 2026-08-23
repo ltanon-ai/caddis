@@ -1,7 +1,5 @@
 # caddis
 
-[![pipeline](https://gitlab.com/varliukai/caddis/badge/pipeline.svg?branch=main)](https://gitlab.com/varliukai/caddis/-/pipelines)
-
 ![caddis — a conscience for coding agents](assets/banner.png)
 
 **A conscience for coding agents.**
