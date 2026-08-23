@@ -43,10 +43,20 @@ tools/checksums.sh            # prints SHA256SUMS for what you built
 `onboard` fails unless the engine denies a force-push and the ledger row
 exists — an install that cannot show you a denial is not an install.
 
-Published-artifact verification (signed release binaries + published
-SHA256SUMS) is planned; it will be executed only as an explicit release
-step. Until a release exists, there is nothing to verify against except
-your own build.
+### Verifying a release binary
+
+Releases publish the Windows x64 binary and a `SHA256SUMS` file. Verify
+before installing:
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
+Checksums authenticate the download against the release page, not against
+a signing key — the release page itself is trusted because it is your
+GitHub. Binary signing (minisign/sigstore) is the next step after
+releases prove their shape; it is deliberately not promised before it
+ships. Other platforms: build from the tagged source and run onboard.
 
 ## Updating and rolling back
 
