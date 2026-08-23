@@ -12,8 +12,21 @@ fn main() {
         eprintln!("cannot read {path}: {e}");
         std::process::exit(2);
     });
+    let strict = std::env::args().any(|a| a == "--strict");
     match caddis_card::Card::parse(&text) {
         Ok(card) => match card.validate() {
+            Ok(()) if strict => match card.validate_strict() {
+                Ok(exec) => {
+                    println!(
+                        "VALID[strict]: {} level={} blast={}",
+                        path, exec.level, exec.blast
+                    );
+                }
+                Err(e) => {
+                    eprintln!("INVALID[strict] {path}: {e:?}");
+                    std::process::exit(1);
+                }
+            },
             Ok(()) => {
                 println!("VALID: {} ({} sections)", path, card.sections.len());
             }

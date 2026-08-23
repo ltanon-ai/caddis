@@ -3,6 +3,9 @@
 //! (raktas: reikšmė eilutėmis) + sekcijos (# Antraštė) + eilučių inkarai.
 use std::collections::BTreeMap;
 
+mod execution;
+pub use execution::{Anchor, Continuation, Execution, Split};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Card {
     pub frontmatter: BTreeMap<String, String>,
@@ -89,5 +92,45 @@ impl Card {
             return Err(CardErr::MissingSection("RED-TEST"));
         }
         Ok(())
+    }
+
+    /// CARD-SCHEMA-v2 strict: the EXECUTION contract for a card destined to
+    /// a weak/local executor (quorum card-ladder, 2026-08-23). ADDITIVE —
+    /// `validate()` keeps its v1 meaning; strict demands EXECUTION and every
+    /// field the ladder reasons about. Anchors are EXACT-verbatim; blast is
+    /// an integer 1..=3 as a HARD error (a legitimate 4-path card is a new
+    /// class, never an override); level defaults LOW (L1) on absent/invalid
+    /// — never an error; claims-forbidden must be explicitly true.
+    pub fn validate_strict(&self) -> Result<Execution, CardErr> {
+        let exec_section = self
+            .section("EXECUTION")
+            .ok_or(CardErr::MissingSection("EXECUTION"))?;
+        let exec = Execution::parse(exec_section.body.as_str())?;
+        if let Some(ann) = self.continuation() {
+            if ann.blast_cap.unwrap_or(exec.blast) > exec.blast {
+                return Err(CardErr::MissingSection("CONTINUATION-broadens"));
+            }
+        }
+        if let Some(split) = self.split() {
+            if split.order == 0 || split.of == 0 || split.order > split.of {
+                return Err(CardErr::MissingSection("SPLIT-malformed"));
+            }
+        }
+        Ok(exec)
+    }
+
+    /// The CONTINUATION annex: how a chained card carries context from its
+    /// parent. It may never broaden what it continues — the cap is stated,
+    /// and strict rejects a cap above the card's own blast.
+    pub fn continuation(&self) -> Option<Continuation> {
+        self.section("CONTINUATION")
+            .map(|s| Continuation::parse(&s.body))
+    }
+
+    /// The SPLIT marker: this card is child `order` of `of` split from
+    /// `parent` (operator directive: cards too thick for the executor are
+    /// split automatically; each child is a full strict card of its own).
+    pub fn split(&self) -> Option<Split> {
+        self.section("SPLIT").map(|s| Split::parse(&s.body))
     }
 }
