@@ -14,9 +14,15 @@ result. Extension-based harnesses typically load such files from a user
 extensions directory (`~/.<harness>/extensions/` or
 `~/.config/<harness>/extensions/` — see your harness's docs).
 
-Hook-based harnesses don't need this file at all: a pre-tool-call hook that
-feeds the same frame to the binary and honors its verdict gets the identical
-law in ~20 lines.
+## Hook-based harnesses: `claude-code/`
+
+Hook-based harnesses use `claude-code/caddis-warden-gate.py` — a PreToolUse
+hook that feeds the same frame to the binary and honors its verdict (deny →
+block, steer → context, allow → silence). Register it in your settings'
+`hooks.PreToolUse` with matcher `"*"` (snippet in the file's docstring). The
+`from:` stamp comes from an optional `~/.caddis/lanes.json` cwd-prefix map;
+unmapped sessions are stamped `claude-code`. First authored by a Claude Code
+session on its own onboarding day — the fourth harness wrote its own nerve.
 
 ## Stamping the caller
 

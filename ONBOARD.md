@@ -24,9 +24,9 @@ most extension-based harnesses load from a user extensions directory —
 commonly `~/.<harness>/extensions/` or `~/.config/<harness>/extensions/`;
 check your harness's extension docs for its exact path.
 
-Hook-based harnesses (pre-tool-call hooks that can run a command and read its
-exit/output) wire the same binary with a ~20-line hook instead of the
-adapter — the frame in, the verdict out, identical law.
+Hook-based harnesses wire `adapters/claude-code/caddis-warden-gate.py` — a
+PreToolUse hook: frame in, verdict out, identical law. See the snippet in its
+docstring.
 
 ## 3. The self-proof
 
