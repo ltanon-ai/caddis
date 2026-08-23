@@ -28,6 +28,13 @@ pub enum CardErr {
     MissingFrontmatter(&'static str),
 }
 
+/// Section headings sit at `#` or `##` (CARD-0097): markdownlint MD025
+/// forces single-H1 documents to demote their sections, and the schema
+/// follows the document. Deeper headings are section BODY, never sections.
+fn heading_title(line: &str) -> Option<&str> {
+    line.strip_prefix("## ").or_else(|| line.strip_prefix("# "))
+}
+
 impl Card {
     /// Parse'ina kortos tekstą: `---` frontmatter blokas, po to `#`/`##`
     /// `Sekcija` antraštės (H2 leidžiama, nes markdownlint MD025 reikalauja
@@ -53,10 +60,7 @@ impl Card {
                 }
                 continue;
             }
-            if let Some(title) = line
-                .strip_prefix("## ")
-                .or_else(|| line.strip_prefix("# "))
-            {
+            if let Some(title) = heading_title(line) {
                 if let Some(s) = cur.take() {
                     sections.push(s);
                 }
