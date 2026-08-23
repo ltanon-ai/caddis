@@ -29,7 +29,7 @@ to rewrite — other clones already have it.
 ## Quick start
 
 ```bash
-git clone https://github.com/<this-repo>.git && cd caddis
+git clone https://github.com/ltanon-ai/caddis.git && cd caddis
 cargo build --release
 ./onboard            # installs the binary, wires your harness, PROVES itself
 ```
