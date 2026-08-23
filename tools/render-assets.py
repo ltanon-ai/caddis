@@ -6,8 +6,10 @@ Regenerates every PNG in assets/ deterministically from code:
 Palette (3 + neutrals, luminance-first): ink #0E1116, teal-steel, amber.
 Amber is sacred: it marks life and judgement only.
 """
+import math
+import os
+
 from PIL import Image, ImageDraw, ImageFont
-import math, os
 
 INK = (14, 17, 22)
 PANEL = (19, 24, 32)
@@ -181,6 +183,8 @@ def draw_arch():
         ('"from":"agent@ci","body":"allow|cargo test"', DIM),
         ('"from":"reviewer@bot","body":"allow|echo ok"', DIM),
     ]
+    for i, (s, c) in enumerate(rows):
+        label(d, lx + 20, ly + 50 + i * 30, s[:66], 17, c, bold=(c == AMBER))
     label(d, 60, H - 64, "the binary is spawned per call; the ledger on disk is the only state", 19)
     img.save(os.path.join(ASSETS, "diagram-architecture.png"))
 

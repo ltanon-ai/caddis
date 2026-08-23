@@ -7,7 +7,7 @@
 //! warden envelopes an omp `bash` call, the body carries NEWLINES (a heredoc, a
 //! multi-line command, file content) — and a raw newline inside a JSONL record
 //! ends the record. One appended envelope then reads back as two lines, the
-//! second of them unparseable.
+//! second of them unparsable.
 //!
 //! That is not a cosmetic defect. An append-only ledger whose lines cannot be
 //! parsed is not an audit trail; and `Ledger::open` recovers `seq` by reading

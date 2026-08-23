@@ -65,7 +65,7 @@ fn separated_flag_values_do_not_hide_the_wrapped_push() {
 #[test]
 fn a_flag_value_and_a_duration_operand_together_do_not_hide_the_push() {
     // `timeout` carries BOTH a value-taking flag and its duration operand
-    // before the command. With `-s` mis-read as boolean, KILL took the one
+    // before the command. With `-s` misread as boolean, KILL took the one
     // leading-operand skip and `30` became the command word.
     for cmd in [
         "timeout -s KILL 30 git push --force origin main",

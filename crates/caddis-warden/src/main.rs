@@ -28,7 +28,7 @@ fn main() {
     }
     let call = match wire::parse(&buf) {
         Ok(c) => c,
-        // FAIL CLOSED. An unparseable request is not an allowed one: if the
+        // FAIL CLOSED. An unparsable request is not an allowed one: if the
         // warden cannot see what it is judging, the safe answer is no.
         Err(e) => return fail_closed(&format!("warden: unreadable request ({e})")),
     };

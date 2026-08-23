@@ -5,7 +5,7 @@
 //!   IN  (JS -> Rust): LENGTH-PREFIXED frames. A tool payload is arbitrary
 //!        bytes — a heredoc, a regex, JSON, a NUL. Any separator-based framing
 //!        has a payload that breaks it, and a framing bug in the SECURITY path
-//!        fails open (the warden mis-reads a command and waves it through).
+//!        fails open (the warden misreads a command and waves it through).
 //!        A byte count cannot be spoofed by content.
 //!   OUT (Rust -> JS): JSON, because we are the producer and `JSON.parse` on
 //!        the far side is a standard-library call.
@@ -23,7 +23,7 @@ use crate::ToolCall;
 const FIELDS: [&str; 4] = ["tool", "command", "path", "content"];
 
 /// Parse one request frame. `Err` carries a human reason; the caller must FAIL
-/// CLOSED on it — an unparseable request is not an allowed one.
+/// CLOSED on it — an unparsable request is not an allowed one.
 pub fn parse(buf: &[u8]) -> Result<ToolCall, String> {
     let mut pos = 0usize;
     let mut vals: Vec<String> = Vec::with_capacity(4);

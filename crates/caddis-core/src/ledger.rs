@@ -14,7 +14,7 @@ pub struct Ledger {
 /// was a short ASCII test string. A warden body carries real tool input — a
 /// multi-line bash command, file content — and a RAW newline inside a JSONL
 /// record ENDS the record: one append reads back as two lines, the second
-/// unparseable, and `open` then recovers `seq` from a fragment.
+/// unparsable, and `open` then recovers `seq` from a fragment.
 ///
 /// Escapes the two structural characters, the five short forms JSON defines,
 /// and every remaining C0 control as `\u00XX`. Nothing above U+001F needs

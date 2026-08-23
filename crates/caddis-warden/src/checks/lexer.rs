@@ -46,7 +46,7 @@ use super::scan::{comment_end, quoted_run, separator_at};
 ///
 /// v4, and the reasoning that decides it: **this estate's commands carry
 /// Windows paths constantly and POSIX escapes almost never.** A dropped
-/// command is a missed violation on a deny-class gate; a mis-parsed POSIX
+/// command is a missed violation on a deny-class gate; a wrongly parsed POSIX
 /// escape is cosmetic. So a backslash escapes quotes AND the separator
 /// characters (`;`, `|`, `&`) — enough to embed a literal quote or a literal
 /// separator, and nothing else. Whitespace and backslash are literal, which
