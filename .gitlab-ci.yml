@@ -1,0 +1,47 @@
+# caddis — canonical etalon CI.
+#
+# Adopts the full fleet quality/security/supply-chain/ai-guard suite from the
+# etalon (varliukai/infra_pipeline_gitlab), PINNED to a full SHA (the pin is
+# load-bearing — never point ref back at 'main'). Superstrict: LINT/SEC/AI =
+# all; every job blocks, nothing is permitted to fail silently (operator
+# directive: fix every finding at source or surface it as a blocker).
+#
+# caddis is a zero-dependency Rust workspace (three first-party crates) plus
+# a TypeScript adapter, shell onboarding script, Python asset renderer and
+# markdown docs. The etalon covers it: lint:rust (clippy+rustfmt via
+# gitlab-report), lint:shellcheck, lint:typos, lint:markdown, sec:gitleaks,
+# supply-chain, ai-guard, ai-scans, fix-suggestions. No project-local gates.
+#
+# Runs ONLY on the operator's muhbot workers (varliukai-pool-1..5 group
+# runners, tag: muhbot) — shared runners are disabled on this project so no
+# job escapes to GitLab's shared fleet.
+#
+# Required CI/CD variables (set once per consumer project, same token fleet-wide):
+#   AI_SCANS_PROJ_ID   numeric ID of varliukai/infra_pipeline_gitlab (82038685)
+#   AI_SCANS_TOKEN     glpat with read_api (masked) — fetches the ai-scan engines
+#   POST_SUGGESTIONS_URL  raw URL of scripts/post-suggestions.sh at a stable ref
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+include:
+  - project: 'varliukai/infra_pipeline_gitlab'
+    ref: '7c6aecbe4e190a6503cdc39cd5df145991347bcc'
+    file:
+      - 'ci-templates/all.yml'
+      - 'ci-templates/lint.yml'
+      - 'ci-templates/security.yml'
+      - 'ci-templates/supply-chain.yml'
+      - 'ci-templates/quality.yml'
+      - 'ci-templates/ai-guard.yml'
+      - 'ci-templates/ai-scans.yml'
+      - 'ci-templates/fix-suggestions.yml'
+      - 'ci-templates/reporting.yml'
+
+variables:
+  # Superstrict canonical blocking matrix — never weaken, suppress nothing.
+  LINT_BLOCK: 'all'
+  SEC_BLOCK: 'all'
+  AI_BLOCK: 'all'
