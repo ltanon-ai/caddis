@@ -165,7 +165,10 @@ fn a_hard_reset_is_silent_when_there_is_nothing_to_discard() {
 #[test]
 fn writing_a_secret_shaped_literal_is_denied() {
     let prefix: String = [115u8, 107u8, 45u8].iter().map(|b| *b as char).collect();
-    let body = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6";
+    // Low-entropy on purpose: a repeating pattern trips the warden's
+    // charset-and-length rule without looking like a real credential to
+    // secret scanners (a high-entropy fixture is itself a finding).
+    let body = "aB1".repeat(11);
     let v = decide(
         &ToolCall::new("write")
             .path("src/config.ts")

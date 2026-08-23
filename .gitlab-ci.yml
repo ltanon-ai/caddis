@@ -45,3 +45,56 @@ variables:
   LINT_BLOCK: 'all'
   SEC_BLOCK: 'all'
   AI_BLOCK: 'all'
+
+# ── lint:rust override — TEMPORARY LOCAL REPAIR of an etalon defect ──────────
+# caddis is the fleet's FIRST root-Cargo consumer of lint:rust; on
+# rust:1.82-alpine the etalon's `cargo install gitlab-report --quiet` step
+# exits after ~22s with no output and no binary, and the job dies at
+# `gitlab-report: not found` (job 16053614870). The GATE below is unchanged
+# in strictness — clippy with -D warnings and rustfmt --check still decide
+# pass/fail — only the codequality rendering is best-effort. Tracked
+# upstream: infra_pipeline_gitlab issue (pin-bump ritual when fixed).
+lint:rust:
+  stage: lint
+  image: ${DOCKER_IMAGE_PREFIX}rust:1.82-alpine
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+    CARGO_NET_RETRY: "5"
+  cache:
+    key: "caddis-rust-$CI_COMMIT_REF_SLUG"
+    paths:
+      - .cargo/
+      - target/
+  rules:
+    - if: '$SKIP_CLIPPY == "true"'
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - |
+      set -e
+      i=0; until apk add --no-cache musl-dev; do
+        i=$((i+1)); [ "$i -ge 3" ] && exit 1
+        echo "apk add: transient (try $i/3), retrying in 5s..."; sleep 5
+      done
+      [ -f Cargo.toml ] || { echo "No Cargo.toml — skipping"; echo '[]' > gl-rust-report.json; exit 0; }
+      rustup component add clippy rustfmt
+      # LOUD install with explicit success check — the etalon's --quiet step
+      # failed silently (see header). Rendering is best-effort; the gate is
+      # clippy itself below.
+      GR_OK=0
+      cargo install gitlab-report --locked 2>&1 | tail -5 || GR_OK=1
+      echo '[]' > gl-rust-report.json
+      cargo clippy --all-targets --all-features -- -D warnings
+      cargo fmt --all -- --check
+      if [ "$GR_OK" = "0" ] && command -v gitlab-report >/dev/null 2>&1; then
+        cargo clippy --all-targets --all-features --message-format=json \
+          > /tmp/clippy-raw.json 2>/dev/null || true
+        gitlab-report -p clippy < /tmp/clippy-raw.json > gl-rust-report.json || echo '[]' > gl-rust-report.json
+      else
+        echo "note: gitlab-report unavailable — codequality rendering skipped, gate unchanged"
+      fi
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-rust-report.json

@@ -108,7 +108,7 @@ fn a_secret_refusal_never_persists_the_secret() {
     // carries a credential-shaped run is masked at rest, so the audit trail
     // cannot become a keychain. The literal is built at runtime from pieces,
     // as the warden's own guidance prescribes for tests needing the shape.
-    let key = format!("s{}{}", "k-1234567890abcdef", "1234567890abcdef");
+    let key = format!("s{}{}", "k-", "aB1".repeat(11));
     let rows = judge(&format!("echo key = \"{key}\""), "secret");
     assert!(
         rows.contains("***redacted"),
