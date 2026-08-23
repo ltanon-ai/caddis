@@ -114,6 +114,7 @@ not prove is stated precisely in PROTOCOL.md.
 | `adapters/` | the nerve: one thin adapter file, no policy |
 | `THREAT-MODEL.md` | what is protected, against what, and where it ends |
 | `DISTRIBUTION.md` | requirements, verification, update, rollback, removal |
+| `SUPPORT.md` | the adapter support matrix and each supported claim's repro |
 | `PROTOCOL.md` | the wire contract and the failure doctrine |
 | `LAWS.md` | what is denied, what steers, how to add a law |
 | `ONBOARD.md` | the onboarding story and the self-proof |
