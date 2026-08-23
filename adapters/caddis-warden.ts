@@ -1,8 +1,8 @@
-// caddis-warden — the omp adapter. THE CONSCIOUSNESS'S NERVE, NOT ITS BRAIN.
+// caddis-warden — the harness adapter. THE CONSCIOUSNESS'S NERVE, NOT ITS BRAIN.
 //
 // Deliberately thin and deliberately stupid: it marshals a tool call to the
 // warden binary and applies the verdict. It holds NO policy. That is the whole
-// update-resistance argument — omp is at v18 with a fast major cadence, so the
+// update-resistance argument — harness APIs move fast, so the
 // only thing exposed to API drift is this file. If v19 renames an event, this
 // is ~10 lines of repair and the law in Rust never notices.
 //
@@ -30,9 +30,9 @@ const BIN =
 
 // Who is asking (CARD-FROM-1): one conscience serves several harnesses, and
 // the shared ledger must be able to say WHICH one made each call. The onboarding
-// script stamps this constant per harness; an unstamped copy stays "omp", the
+// script stamps this constant per agent; an unstamped copy keeps the built-in
 // binary's default, so the file is safe to copy around unmodified.
-const CALLER = "omp";
+const CALLER = "agent";
 
 type Verdict = { verdict: string; reason: string; law: string; seq: number };
 
@@ -49,7 +49,7 @@ function frame(fields: Record<string, string>): Buffer {
 const READ_ONLY = new Set(["read", "grep", "glob", "ls", "list"]);
 
 /**
- * Pull the fields the law reasons about out of omp's `input` bag.
+ * Pull the fields the law reasons about out of the tool call's `input` bag.
  *
  * ⚠ ONLY THE CONTENT BEING WRITTEN IS SCANNED — never `old_string`. An `edit`
  * carries the text it is REPLACING, and scanning that would deny an edit merely
@@ -68,7 +68,7 @@ function extract(toolName: string, input: Record<string, unknown>) {
   let content =
     s(input.content) || s(input.new_string) || s(input.new_str) || s(input.text);
 
-  // omp's `edit` takes a UNION of six param shapes (Replace | ReplaceBatch |
+  // An `edit` commonly arrives as a UNION of param shapes (Replace | ReplaceBatch |
   // Patch | Hashline | ApplyPatch | Sloppy) — measured from its type defs, not
   // assumed. ReplaceBatch is `{path, edits: [{old_string, new_string}]}`, so
   // without this branch a batch edit matches none of the keys above, falls

@@ -8,23 +8,28 @@ event, this is a ten-line repair, and the law in Rust never notices.
 
 ## The file
 
-`caddis-warden.ts` — written for the [pi](https://pi.dev) extension API
-(`pi.on("tool_call")` / `pi.on("tool_result")`), which omp, little-coder and
-prime-agent all speak.
+`caddis-warden.ts` — written against the de-facto standard extension API
+shape: `on("tool_call")` returns a block, `on("tool_result")` amends the
+result. Extension-based harnesses typically load such files from a user
+extensions directory (`~/.<harness>/extensions/` or
+`~/.config/<harness>/extensions/` — see your harness's docs).
 
-## Per-harness wiring
+Hook-based harnesses don't need this file at all: a pre-tool-call hook that
+feeds the same frame to the binary and honors its verdict gets the identical
+law in ~20 lines.
 
-| Harness | Destination | Stamp |
-|---|---|---|
-| omp | `~/.omp/agent/extensions/caddis-warden.ts` + list in `~/.omp/agent/config.yml` | leave `CALLER = "omp"` |
-| little-coder | `~/.config/little-coder/extensions/caddis-warden.ts` | `CALLER = "little-coder"` |
-| prime-agent | `~/.prime/agent/extensions/caddis-warden.ts` | `CALLER = "prime-agent"` |
-| Claude Code | a PreToolUse hook spawning the binary with the same frame | `CADDIS_WARDEN_FROM=claude-code` |
+## Stamping the caller
 
-Stamping the `CALLER` constant attributes every ledger row to your harness —
-several harnesses can share one binary and one ledger, and the audit stays
-answerable: *which of my agents tried what*. An unstamped copy behaves
-identically and logs as `omp`.
+The `CALLER` constant at the top of the adapter is stamped per agent so the
+shared ledger's `from:` field attributes every verdict to the caller that
+made the call. Several agents can share one binary and one ledger, and the
+audit stays answerable: *which of my agents tried what*. An unstamped copy
+behaves identically and logs under the adapter's built-in default — safe to
+copy around. The onboard script stamps it for you:
+
+```bash
+./onboard my-agent-name
+```
 
 ## Two behaviors worth knowing
 

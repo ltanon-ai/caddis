@@ -63,7 +63,7 @@ Every decision — allow, steer and deny alike — appends one row to
 
 ```json
 {"seq":1030,"v":1,"id":"wardn…","idem_key":"…","type":"tool.bash",
- "from":"little-coder","to":"warden","body":"allow|echo hi|","ts":1787485959}
+ "from":"my-agent","to":"warden","body":"allow|echo hi|","ts":1787485959}
 ```
 
 A warden that records only its refusals cannot answer *"what did the agent do
@@ -81,7 +81,7 @@ an unrecorded decision is detectable rather than disguised.
 |---|---|
 | `CADDIS_WARDEN_BIN` | override the binary path (default `~/.caddis/bin/caddis-warden[.exe]`) |
 | `CADDIS_WARDEN_LEDGER` | override the ledger path |
-| `CADDIS_WARDEN_FROM` | stamp the caller's name in `from:` (sanitized to `[A-Za-z0-9._-]`, ≤32 bytes; empty → `omp`) |
+| `CADDIS_WARDEN_FROM` | stamp the caller's name in `from:` (sanitized to `[A-Za-z0-9._-]`, ≤32 bytes; empty falls back to the built-in default) |
 
 ## Why stateless
 

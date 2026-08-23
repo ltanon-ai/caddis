@@ -18,12 +18,12 @@ lives in the private workshop; what ships here is the product view.
   Zero dependencies.
 - **caddis-card**: the work-unit law — card schema enforcing Done-When +
   RED-TEST (falsifiable completion + proof the card is not lying).
-- **adapters/caddis-warden.ts**: the pi-family nerve (omp, little-coder,
-  prime-agent), CALLER-stampable, no policy.
+- **adapters/caddis-warden.ts**: the nerve — CALLER-stampable per agent,
+  no policy, standard extension API shape.
 - **onboard**: self-proving install — the script fails unless it can show you
   a denial, an allow, and the ledger row that recorded both.
 - **PROTOCOL.md / LAWS.md / ONBOARD.md**: the wire contract, the law
   registry, and the onboarding story.
 
-Proven live on four harnesses: omp, little-coder, prime-agent (extension
-adapter) — one binary, one shared ledger.
+Proven live end-to-end: a fresh clone from the public repo built in ~2 s
+and denied a force-push with a fresh ledger row.

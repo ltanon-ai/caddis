@@ -141,14 +141,14 @@ def draw_arch():
     d.text((60, 44), "ONE CONSCIENCE, MANY BODIES", font=mono(34, bold=True), fill=TEXT)
     label(d, 60, 92, "every tool call, every harness -> one law engine -> one ledger", 22)
 
-    harnesses = ["omp", "little-coder", "prime-agent", "claude-code"]
+    harnesses = [("any agent", "extension"), ("any agent", "hook"), ("any agent", "rpc"), ("your agent", "here")]
     hy = 180
     HH = 104
-    for i, hname in enumerate(harnesses):
+    for i, (hname, hsub) in enumerate(harnesses):
         y = hy + i * (HH + 30)
         panel(d, 60, y, 330, HH, None)
         label(d, 84, y + 26, hname, 26, TEXT, bold=True)
-        label(d, 84, y + 64, "harness", 16)
+        label(d, 84, y + 64, f"attaches via {hsub}" if hsub != "here" else "one file away", 16)
         arrow(d, 390, y + HH // 2, 560, y + HH // 2)
 
     # nerve column
@@ -177,12 +177,10 @@ def draw_arch():
     panel(d, lx, ly, lw, lh, None)
     label(d, lx + 20, ly + 16, "~/.caddis/warden-ledger.jsonl", 19, TEAL)
     rows = [
-        ('"from":"omp","body":"deny|git push --force origin main"', AMBER),
-        ('"from":"little-coder","body":"allow|echo ok"', DIM),
-        ('"from":"prime-agent","body":"allow|cargo test"', DIM),
+        ('"from":"agent@laptop","body":"deny|git push --force origin main"', AMBER),
+        ('"from":"agent@ci","body":"allow|cargo test"', DIM),
+        ('"from":"reviewer@bot","body":"allow|echo ok"', DIM),
     ]
-    for i, (s, c) in enumerate(rows):
-        label(d, lx + 20, ly + 50 + i * 30, s[:66], 17, c, bold=(c == AMBER))
     label(d, 60, H - 64, "the binary is spawned per call; the ledger on disk is the only state", 19)
     img.save(os.path.join(ASSETS, "diagram-architecture.png"))
 
@@ -280,10 +278,77 @@ def draw_onboard():
         label(d, 84, 512 + i * 34, s, 20, c, bold=(c == AMBER))
     img.save(os.path.join(ASSETS, "diagram-onboard.png"))
 
+def draw_banner():
+    """Full-width README banner: the case + wordmark, ink full-bleed."""
+    W, H = 2400, 640
+    img, d = canvas(W, H)
+    cx, cy = 320, H // 2
+    shard_ring(d, cx, cy, r_out=225, r_in=148, n=17)
+    glow(d, cx, cy, 21, AMBER)
+    d.ellipse([cx - 24, cy - 24, cx + 24, cy + 24], fill=AMBER)
+    d.text((620, 218), "caddis", font=ui(150), fill=TEXT)
+    d.text((628, 408), "a conscience for coding agents", font=mono(52), fill=TEAL)
+    label(d, 628, 486, "one binary - zero dependencies - any harness", 34, DIM)
+    img.save(os.path.join(ASSETS, "banner.png"))
+
+def draw_ledger():
+    """How the ledger works: one append-only row per verdict, whoever called."""
+    W, H = 1600, 900
+    img, d = canvas(W, H)
+    d.text((60, 44), "HOW THE LEDGER WORKS", font=mono(34, bold=True), fill=TEXT)
+    label(d, 60, 92, "allow, steer and deny alike - every decision appends one row, nothing is ever edited", 22)
+
+    # the file, growing downward
+    panel(d, 60, 170, 620, 600)
+    label(d, 84, 190, "~/.caddis/warden-ledger.jsonl  (append-only)", 20, TEAL)
+    rows = [
+        ("seq 41", 'from":"agent@laptop"', "deny|git push --force origin main", AMBER),
+        ("seq 42", 'from":"agent@laptop"', "allow|cargo test -p core", DIM),
+        ("seq 43", 'from":"agent@ci"',     "allow|cargo build --release", DIM),
+        ("seq 44", 'from":"reviewer@bot"', "steer|git commit -am ...", TEAL),
+        ("seq 45", 'from":"agent@laptop"', "deny|curl ... | sh", AMBER),
+    ]
+    for i, (sq, frm, body, col) in enumerate(rows):
+        y = 240 + i * 96
+        d.rounded_rectangle([84, y, 656, y + 78], radius=6, fill=(24, 30, 39), outline=EDGE, width=1)
+        label(d, 100, y + 8, sq, 20, col, bold=True)
+        label(d, 200, y + 8, frm, 18, DIM)
+        label(d, 100, y + 40, body[:52], 17, TEXT)
+    label(d, 84, 736, "newest row at the bottom - the file only ever grows", 17, DIM)
+
+    # anatomy of one row
+    panel(d, 740, 170, 800, 250)
+    label(d, 764, 190, "ANATOMY OF ONE ROW", 20, TEXT, bold=True)
+    parts = [
+        ("seq",  "monotonic row number - order is proof of order"),
+        ("from", "WHICH caller made the call - every agent is attributable"),
+        ("type", "tool.bash / tool.write / ... what kind of call"),
+        ("body", "verdict | the command's first line | path"),
+        ("ts",   "unix seconds - when the judgement happened"),
+    ]
+    for i, (k, v) in enumerate(parts):
+        label(d, 764, 226 + i * 36, k, 19, TEAL, bold=True)
+        label(d, 900, 226 + i * 36, v, 18)
+
+    # the audit question
+    panel(d, 740, 460, 800, 310)
+    label(d, 764, 480, "WHAT IT ANSWERS", 20, TEXT, bold=True)
+    for i, q in enumerate([
+        '"what did the agent do last night?"  - one grep',
+        '"which of my agents was denied what?" - filter deny, group by from',
+        '"was the guard even running?"         - gaps in seq say so, loudly',
+    ]):
+        label(d, 764, 520 + i * 40, q, 18)
+    label(d, 764, 664, "a warden that records only its refusals cannot answer", 17, DIM)
+    label(d, 764, 690, "the nightly question - so everything is recorded", 17, DIM)
+    img.save(os.path.join(ASSETS, "diagram-ledger.png"))
+
 if __name__ == "__main__":
     os.makedirs(ASSETS, exist_ok=True)
     draw_logo()
+    draw_banner()
     draw_arch()
     draw_flow()
     draw_onboard()
-    print("rendered: logo.png, diagram-architecture.png, diagram-verdict.png, diagram-onboard.png")
+    draw_ledger()
+    print("rendered: logo, banner, architecture, verdict, onboard, ledger")

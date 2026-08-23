@@ -60,7 +60,7 @@ if [ -n "$HARNESS" ] && [ -f "$(dirname "$0")/adapters/caddis-warden.ts" ]; then
     esac
     if [ -n "$dest" ]; then
         mkdir -p "$(dirname "$dest")"
-        sed "s/const CALLER = \"omp\";/const CALLER = \"$HARNESS\";/" "$src" > "$dest" \
+        sed "s/const CALLER = \"[a-z-]*\";/const CALLER = \"$HARNESS\";/" "$src" > "$dest" \
             && echo "onboard: adapter stamped '$HARNESS' -> $dest"
     fi
 fi

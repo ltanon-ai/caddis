@@ -18,18 +18,15 @@ adapter spawns. A `cargo clean` must never silently disable the conscience.
 
 The adapter is ~160 lines of TypeScript with **no policy** — the nerve, not
 the brain. It marshals the tool call into the wire frame, spawns the binary,
-applies the verdict. Nothing else.
+applies the verdict. Nothing else. It speaks the de-facto standard extension
+API shape (`on("tool_call")` to block, `on("tool_result")` to amend), which
+most extension-based harnesses load from a user extensions directory —
+commonly `~/.<harness>/extensions/` or `~/.config/<harness>/extensions/`;
+check your harness's extension docs for its exact path.
 
-| Harness | Where the adapter goes | Caller stamp |
-|---|---|---|
-| omp | `~/.omp/agent/extensions/` (list it in `~/.omp/agent/config.yml`) | `omp` (default) |
-| pi / little-coder | `~/.config/little-coder/extensions/` | set `CALLER = "little-coder"` |
-| prime-agent | `~/.prime/agent/extensions/` | set `CALLER = "prime-agent"` |
-| Claude Code | PreToolUse hook that spawns the binary with the same frame | `from:"claude-code"` |
-
-The `CALLER` constant at the top of the adapter is stamped per harness so the
-shared ledger's `from:` field attributes every verdict to the harness that
-made the call. An unstamped copy defaults to `omp` and is safe to copy around.
+Hook-based harnesses (pre-tool-call hooks that can run a command and read its
+exit/output) wire the same binary with a ~20-line hook instead of the
+adapter — the frame in, the verdict out, identical law.
 
 ## 3. The self-proof
 
@@ -39,7 +36,7 @@ script does exactly this:
 1. Feed the engine a force-push frame directly — expect **deny**.
 2. Feed it an innocuous `echo` — expect **allow**.
 3. Read the last two ledger rows — expect one `deny` and one `allow`, fresh
-   timestamps, `from:` stamped with your harness.
+   timestamps, `from:` stamped with your agent's name.
 
 If any step fails, onboarding fails, loudly. A conscience that came up mute
 is the exact failure this design refuses.
@@ -47,11 +44,11 @@ is the exact failure this design refuses.
 ## What you get
 
 From the moment onboarding passes, every tool call the agent makes — in every
-harness you wired — is judged by the same law and lands in the same ledger:
+agent you wired — is judged by the same law and lands in the same ledger:
 
 ```bash
-# what was denied tonight, by which harness
-grep '"verdict"' ~/.caddis/warden-ledger.jsonl | grep deny | tail
+# what was denied tonight, by which agent
+grep '"body":"deny' ~/.caddis/warden-ledger.jsonl | tail
 ```
 
 One conscience, many bodies.
