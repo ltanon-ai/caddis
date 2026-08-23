@@ -44,6 +44,29 @@ arrives attached to its **result**, which is the moment it applies. Every soft
 finding that fired is carried; silently dropping one is how a channel stops
 being worth reading.
 
+## One documented cycle, start to finish
+
+The comment law, as it actually happened:
+
+1. **The defect class:** bash comments, seen by bash but not by the law —
+   so a force-push hiding behind one was judged on tokens bash never
+   runs, and a harmless line before one was denied for the same reason.
+2. **RED first, both directions:** `git push # don't --force origin main`
+   must allow (everything after `#` at a word start is a comment; the
+   command is a bare `git push`), while a force-push before a comment,
+   and on the line after one, must still deny. Pinned before any fix.
+3. **The smallest fix:** teach the tokenizer what bash knows — `#` at a
+   word start comments to end of line.
+4. **The regression pin:** those tests live in
+   `crates/caddis-warden/tests/checks_v9_comments.rs` forever.
+   Re-introduce either defect and the suite names it.
+
+Every fixture in `tests/` is one such cycle. Run them all:
+
+```sh
+cargo test --workspace
+```
+
 ## Known boundaries, stated rather than implied
 
 - **The law parses shell.** Code *inside* a heredoc, quoted string or embedded
