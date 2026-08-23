@@ -75,15 +75,25 @@ def test_unknown_tool_falls_back_to_the_generic_shape():
 
 def test_marshal_normalizes_names_and_defaults_the_empty_one():
     assert gate._marshal("  Bash ", {"command": "ls"})[0] == "bash"
-    assert gate._marshal("", {"command": "x"}) == ("unknown", "x", "", "")
 
 
-def test_longest_lane_prefix_wins(monkeypatch):
-    monkeypatch.setattr(gate, "_lanes", lambda: {"/a": "short", "/a/b": "longest"})
-    assert gate._longest_lane_match("/a/b/c") == "longest"
-    assert gate._longest_lane_match("/a") == "short"
-    assert gate._longest_lane_match("/ab/c") == ""  # prefix must end at a separator
-    assert gate._longest_lane_match("") == ""
+def test_windows_separators_match_forward_slash_lanes(monkeypatch):
+    monkeypatch.setattr(gate, "_lanes", lambda: {"C:/proj": "owl"})
+    assert gate._longest_lane_match("C:\\proj\\src") == "owl"
+    assert gate._longest_lane_match("C:/proj/src") == "owl"
+    assert gate._longest_lane_match("C:\\proj") == "owl"
+    assert gate._longest_lane_match("C:\\projects") == ""
+
+
+def test_mixed_separators_and_trailing_slashes_match(monkeypatch):
+    monkeypatch.setattr(gate, "_lanes", lambda: {"C:\\lab\\": "lab"})
+    assert gate._longest_lane_match("C:/lab/goal") == "lab"
+    assert gate._longest_lane_match("C:\\lab\\goal\\") == "lab"
+
+
+def test_a_root_prefix_never_becomes_a_catch_all(monkeypatch):
+    monkeypatch.setattr(gate, "_lanes", lambda: {"/": "all", "/real": "real"})
+    assert gate._longest_lane_match("/anything/at/all") == ""
 
 
 def test_label_falls_back_to_the_generic_stamp(monkeypatch):

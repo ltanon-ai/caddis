@@ -86,11 +86,15 @@ def _longest_lane_match(cwd: str) -> str:
         return ""
     # Both sides normalize to "/": lanes.json may carry either separator,
     # and normalizing only the cwd (the old os.sep swap) made every
-    # forward-slash prefix silently unmatchable on Windows.
+    # forward-slash prefix silently unmatchable on Windows. A prefix that
+    # normalizes to EMPTY (a bare "/") is skipped: after the rstrip it
+    # would startswith-match every absolute path on the machine.
     norm = cwd.replace("\\", "/").rstrip("/").lower()
     best, best_len = "", -1
     for prefix, label in _lanes().items():
         p = prefix.replace("\\", "/").rstrip("/").lower()
+        if not p:
+            continue
         if (norm == p or norm.startswith(p + "/")) and len(p) > best_len:
             best, best_len = label, len(p)
     return best
