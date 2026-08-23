@@ -11,10 +11,8 @@ const L1C: &str = include_str!("../../../skills/caddis/calibration/L1-c.md");
 const L2A: &str = include_str!("../../../skills/caddis/calibration/L2-a.md");
 const L2B: &str = include_str!("../../../skills/caddis/calibration/L2-b.md");
 const L3: &str = include_str!("../../../skills/caddis/calibration/L3.md");
-const REVIEW_A: &str =
-    include_str!("../../../skills/caddis/calibration/plan/review-a.md");
-const REVIEW_B: &str =
-    include_str!("../../../skills/caddis/calibration/plan/review-b.md");
+const REVIEW_A: &str = include_str!("../../../skills/caddis/calibration/plan/review-a.md");
+const REVIEW_B: &str = include_str!("../../../skills/caddis/calibration/plan/review-b.md");
 
 #[test]
 fn every_exec_calibration_pack_is_strict_valid() {
@@ -27,7 +25,10 @@ fn every_exec_calibration_pack_is_strict_valid() {
         ("L3", L3),
     ] {
         let card = Card::parse(text).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        assert!(card.validate_strict().is_ok(), "{name} must be strict-valid");
+        assert!(
+            card.validate_strict().is_ok(),
+            "{name} must be strict-valid"
+        );
     }
 }
 

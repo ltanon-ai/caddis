@@ -91,9 +91,24 @@ def test_mixed_separators_and_trailing_slashes_match(monkeypatch):
     assert gate._longest_lane_match("C:\\lab\\goal\\") == "lab"
 
 
+def test_posix_paths_stay_case_sensitive(monkeypatch):
+    # normcase is the identity on POSIX; simulate it so the guarantee is
+    # pinned even when the suite runs on Windows.
+    monkeypatch.setattr(gate.os.path, "normcase", lambda s: s)
+    monkeypatch.setattr(gate, "_lanes", lambda: {"/home/proj": "owl"})
+    assert gate._longest_lane_match("/home/proj/src") == "owl"
+    assert gate._longest_lane_match("/Home/proj/src") == "", "POSIX case is real"
+
+
+def test_windows_case_folds_where_the_filesystem_does(monkeypatch):
+    monkeypatch.setattr(gate, "_lanes", lambda: {"C:/proj": "owl"})
+    assert gate._longest_lane_match("C:\\PROJ\\src") == "owl"
+
+
 def test_a_root_prefix_never_becomes_a_catch_all(monkeypatch):
     monkeypatch.setattr(gate, "_lanes", lambda: {"/": "all", "/real": "real"})
     assert gate._longest_lane_match("/anything/at/all") == ""
+    assert gate._longest_lane_match("/real/work") == "real"
 
 
 def test_label_falls_back_to_the_generic_stamp(monkeypatch):

@@ -80,19 +80,21 @@ def _label_for(cwd: str) -> str:
         return ""
     return "claude-code"
 
+def _fold(path: str) -> str:
+    """Slash-fold to "/" and case-fold ONLY where the filesystem does:
+    os.path.normcase is an identity on POSIX and a lowercase + backslash
+    fold on Windows — so lane matching stays case-sensitive on Linux and
+    macOS while tolerating either separator everywhere."""
+    return os.path.normcase(path.replace("\\", "/")).replace("\\", "/").rstrip("/")
+
 
 def _longest_lane_match(cwd: str) -> str:
     if not cwd:
         return ""
-    # Both sides normalize to "/": lanes.json may carry either separator,
-    # and normalizing only the cwd (the old os.sep swap) made every
-    # forward-slash prefix silently unmatchable on Windows. A prefix that
-    # normalizes to EMPTY (a bare "/") is skipped: after the rstrip it
-    # would startswith-match every absolute path on the machine.
-    norm = cwd.replace("\\", "/").rstrip("/").lower()
+    norm = _fold(cwd)
     best, best_len = "", -1
     for prefix, label in _lanes().items():
-        p = prefix.replace("\\", "/").rstrip("/").lower()
+        p = _fold(prefix)
         if not p:
             continue
         if (norm == p or norm.startswith(p + "/")) and len(p) > best_len:
