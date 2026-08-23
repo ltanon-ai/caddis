@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 mod execution;
 pub use execution::{Anchor, Continuation, Execution, Split};
 
+mod plan;
+pub use plan::{Plan, PlanChild, PlanReview};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Card {
     pub frontmatter: BTreeMap<String, String>,
@@ -102,6 +105,12 @@ impl Card {
     /// class, never an override); level defaults LOW (L1) on absent/invalid
     /// — never an error; claims-forbidden must be explicitly true.
     pub fn validate_strict(&self) -> Result<Execution, CardErr> {
+        // BC1 (quorum 2026-08-23): a PLAN never takes the strict oracle —
+        // its truth is intent review, not execution shape. Structural, so
+        // a plan that grew an EXECUTION section by mistake still never passes.
+        if self.frontmatter.get("class").map(String::as_str) == Some("plan") {
+            return Err(CardErr::MissingSection("EXECUTION/plan-class"));
+        }
         let exec_section = self
             .section("EXECUTION")
             .ok_or(CardErr::MissingSection("EXECUTION"))?;
