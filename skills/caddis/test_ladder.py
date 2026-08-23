@@ -170,14 +170,14 @@ def test_v2_stamped_rows_roundtrip_and_upgrade():
 
 def test_determinism_holds_over_tagged_rows_only():
     rows = [
-        dict(goal_id="g1", strategy="weak-first", blast_set=["a.py"]),
-        dict(goal_id="g1", strategy="weak-first", blast_set=["a.py"]),
-        dict(goal_id="g2", strategy="weak-first", blast_set=["b.py"]),
-        dict(goal_id="g1", strategy="", blast_set=["z.py"]),
+        {"goal_id": "g1", "strategy": "weak-first", "blast_set": ["a.py"]},
+        {"goal_id": "g1", "strategy": "weak-first", "blast_set": ["a.py"]},
+        {"goal_id": "g2", "strategy": "weak-first", "blast_set": ["b.py"]},
+        {"goal_id": "g1", "strategy": "", "blast_set": ["z.py"]},
     ]
     ok, offenders = ladder.determinism(rows)
     assert ok and offenders == [], "other goals and untagged rows never count"
-    rows.append(dict(goal_id="g1", strategy="weak-first", blast_set=["c.py"]))
+    rows.append({"goal_id": "g1", "strategy": "weak-first", "blast_set": ["c.py"]})
     ok, offenders = ladder.determinism(rows)
     assert not ok and offenders == [("g1", "weak-first")]
 
@@ -185,10 +185,15 @@ def test_determinism_holds_over_tagged_rows_only():
 def test_preset_switch_needs_four_consecutive_failures():
     rows = []
     for _ in range(3):
-        rows.append(dict(strategy="weak-first", outcome="reject"))
+        rows.append({"strategy": "weak-first", "outcome": "reject"})
         assert not ladder.should_switch(rows, "weak-first", "strong-first")
-    rows.append(dict(strategy="weak-first", outcome="reject"))
+    rows.append({"strategy": "weak-first", "outcome": "reject"})
     assert ladder.should_switch(rows, "weak-first", "strong-first"), "four is a trend"
-    rows.append(dict(strategy="weak-first", outcome="accept"))
-    rows.append(dict(strategy="weak-first", outcome="reject"))
+    rows.append({"strategy": "weak-first", "outcome": "accept"})
+    rows.append({"strategy": "weak-first", "outcome": "reject"})
     assert not ladder.should_switch(rows, "weak-first", "strong-first"), "an accept resets the window"
+
+
+def test_switching_to_the_preset_in_force_is_never_a_switch():
+    rows = [{"strategy": "weak-first", "outcome": "reject"}] * 4
+    assert not ladder.should_switch(rows, "weak-first", "weak-first")

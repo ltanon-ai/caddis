@@ -42,13 +42,13 @@ def draw_ledger():
 
     # the file, growing downward
     panel(d, 60, 170, 620, 600)
-    label(d, 84, 190, "~/.caddis/warden-ledger.jsonl  (append-only)", 20, TEAL)
+    LAPTOP = 'from":"agent@laptop"'
     rows = [
-        ("seq 41", 'from":"agent@laptop"', "deny|git push --force origin main", AMBER),
-        ("seq 42", 'from":"agent@laptop"', "allow|cargo test -p core", DIM),
+        ("seq 41", LAPTOP, "deny|git push --force origin main", AMBER),
+        ("seq 42", LAPTOP, "allow|cargo test -p core", DIM),
         ("seq 43", 'from":"agent@ci"', "allow|cargo build --release", DIM),
         ("seq 44", 'from":"reviewer@bot"', "steer|git commit -am ...", TEAL),
-        ("seq 45", 'from":"agent@laptop"', "deny|curl ... | sh", AMBER),
+        ("seq 45", LAPTOP, "deny|curl ... | sh", AMBER),
     ]
     for i, (sq, frm, body, col) in enumerate(rows):
         y = 240 + i * 96

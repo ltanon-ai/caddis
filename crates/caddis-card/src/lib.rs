@@ -29,7 +29,9 @@ pub enum CardErr {
 }
 
 impl Card {
-    /// Parse'ina kortos tekstą: `---` frontmatter blokas, po to `# Sekcija` antraštės.
+    /// Parse'ina kortos tekstą: `---` frontmatter blokas, po to `#`/`##`
+    /// `Sekcija` antraštės (H2 leidžiama, nes markdownlint MD025 reikalauja
+    /// vienintelio H1 dokumente — CARD-0097; gilesnės antraštės lieka turiniu).
     pub fn parse(text: &str) -> Result<Self, CardErr> {
         let mut frontmatter = BTreeMap::new();
         let mut in_fm = false;
@@ -51,7 +53,10 @@ impl Card {
                 }
                 continue;
             }
-            if let Some(title) = line.strip_prefix("# ") {
+            if let Some(title) = line
+                .strip_prefix("## ")
+                .or_else(|| line.strip_prefix("# "))
+            {
                 if let Some(s) = cur.take() {
                     sections.push(s);
                 }

@@ -44,3 +44,16 @@ The onboard script stamps it for you:
   delivery, so a long session cannot grow it. - **Only written content is
   scanned**, never the text an edit replaces — the warden must never punish you
   for removing the very thing it dislikes.
+
+## Scanner exceptions (written, deliberate)
+
+Static analyzers flag two shapes here that are the design, not defects:
+
+- `claude-code/caddis-warden-gate.py: main()` always exits 0 — including on
+  internal error. The hook contract routes DECISIONS through stdout JSON
+  (`deny` → block, `steer` → context), never through the exit code; a dead
+  nerve must not kill the harness it guards. An always-0 exit is the
+  documented invariant, recorded here as the in-repo exception.
+- `skills/caddis/calibration/fixtures/*.py` carry unused parameters and
+  `TODO` markers by construction: each fixture IS the red state a
+  calibration card must turn green — the stub parameters are the task.

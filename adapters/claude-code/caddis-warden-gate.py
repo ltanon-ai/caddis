@@ -47,6 +47,7 @@ import sys
 from pathlib import Path
 
 TIMEOUT_S = 20
+PREFIX = "[caddis-warden] "
 
 _DEFAULT_BIN = (
     Path.home()
@@ -189,8 +190,8 @@ def _emit_context(text: str) -> None:
 def _scream_absent(detail: str) -> None:
     """Allow, but make the missing conscience impossible to miss."""
     msg = f"CONSCIENCE OFFLINE — {detail}. Tools are running UNJUDGED."
-    sys.stderr.write("[caddis-warden] " + msg + "\n")
-    _emit_context("[caddis-warden] " + msg)
+    sys.stderr.write(PREFIX + msg + "\n")
+    _emit_context(PREFIX + msg)
 
 
 def _read_event() -> dict | None:
@@ -243,7 +244,7 @@ def _apply(reply: dict) -> None:
     elif verdict == "steer":
         law = str(reply.get("law") or "").strip()
         reason = str(reply.get("reason") or "").strip()
-        _emit_context("[caddis-warden] " + " ".join(x for x in (reason, law) if x))
+        _emit_context(PREFIX + " ".join(x for x in (reason, law) if x))
 
 
 def main() -> int:
@@ -268,5 +269,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:  # never let the nerve kill the session
-        sys.stderr.write(f"[caddis-warden] adapter internal error: {exc}\n")
+        sys.stderr.write(f"{PREFIX}adapter internal error: {exc}\n")
         sys.exit(0)

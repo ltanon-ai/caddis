@@ -1,4 +1,5 @@
-"""diagrams.py — the four explanatory diagrams, one function each."""
+"""diagrams.py — the system diagrams (architecture, verdict flow,
+onboarding), one function each."""
 
 import os
 
@@ -32,10 +33,11 @@ def draw_arch():
         d, 60, 92, "every tool call, every harness -> one law engine -> one ledger", 22
     )
 
+    ANY_AGENT = "any agent"
     harnesses = [
-        ("any agent", "extension"),
-        ("any agent", "hook"),
-        ("any agent", "rpc"),
+        (ANY_AGENT, "extension"),
+        (ANY_AGENT, "hook"),
+        (ANY_AGENT, "rpc"),
         ("your agent", "here"),
     ]
     hy = 180

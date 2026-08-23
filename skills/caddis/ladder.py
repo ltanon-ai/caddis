@@ -206,7 +206,11 @@ def determinism(rows):
 
 def should_switch(rows, current, candidate, n=4):
     """Hysteresis N=4 (BC4): switch presets only after n consecutive
-    non-accept outcomes under `current` — four is a trend, not noise."""
+    non-accept outcomes under `current` — four is a trend, not noise.
+    `candidate` names the destination preset; "switching" to the preset
+    already in force is a no-op by definition, never a switch."""
+    if candidate == current:
+        return False
     tail = [r for r in rows if r.get("strategy") == current][-n:]
     return len(tail) == n and all(r.get("outcome") != "accept" for r in tail)
 
