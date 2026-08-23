@@ -138,6 +138,11 @@ impl Walker {
         Ok(out.pass)
     }
 
+    /// Dispatch count for a leaf (the bench's first-attempt check).
+    pub fn dispatched(&self, card: &str) -> u32 {
+        self.state.dispatched(card)
+    }
+
     /// The failure map: retry the leaf up to 3 attempts, bubble up to the
     /// parent for ONE replan, then the strong lane closes.
     pub fn on_fail(&self, card: &str) -> Action {

@@ -9,6 +9,7 @@
 //! ladder.py stays profiles-only telemetry. BC4: dispatches carry a
 //! strategy stamp (presets-only, hysteresis N=4 in presets.rs).
 
+pub mod bench;
 mod codec;
 pub mod event;
 pub mod plan_gates;
@@ -16,6 +17,7 @@ pub mod presets;
 pub mod state;
 pub mod walker;
 
+pub use bench::{walk_goal, BenchCols, Checker, CheckerExecutor};
 pub use event::{Caps, EventKind, Lane, StateErr, TreeEvent};
 pub use presets::{PresetGate, HYSTERESIS_N, PRESETS, STRONG_FIRST, WEAK_FIRST};
 pub use state::TreeState;
