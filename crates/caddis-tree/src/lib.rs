@@ -6,14 +6,17 @@
 //! substrate-agnostic: the dispatch substrate is NAMED as a trait
 //! (walker::LeafExecutor) — today's live substrate is the orchestrating
 //! session doing one-shot executor-lane calls with mechanical gates;
-//! ladder.py stays profiles-only telemetry.
+//! ladder.py stays profiles-only telemetry. BC4: dispatches carry a
+//! strategy stamp (presets-only, hysteresis N=4 in presets.rs).
 
 mod codec;
 pub mod event;
 pub mod plan_gates;
+pub mod presets;
 pub mod state;
 pub mod walker;
 
 pub use event::{Caps, EventKind, Lane, StateErr, TreeEvent};
+pub use presets::{PresetGate, HYSTERESIS_N, PRESETS, STRONG_FIRST, WEAK_FIRST};
 pub use state::TreeState;
 pub use walker::{Action, LeafExecutor, Outcome, SimExecutor, Walker};

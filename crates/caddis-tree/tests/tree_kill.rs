@@ -20,7 +20,12 @@ fn kill_mid_tree_resume_completes_without_duplicate_dispatch() {
     let mut w = walking(&root);
     w.accept_plan("PLAN-T", &plan()).unwrap();
     assert!(w
-        .dispatch_as("CARD-A", &pass_exec(), &Lane::Weak("sim".into()))
+        .dispatch_as(
+            "CARD-A",
+            &pass_exec(),
+            &Lane::Weak("sim".into()),
+            "weak-first"
+        )
         .unwrap());
     drop(w); // KILL: all memory gone; the jsonl is the only survivor
 
@@ -28,13 +33,23 @@ fn kill_mid_tree_resume_completes_without_duplicate_dispatch() {
     assert_eq!(st2.writer(), "w1");
     assert_eq!(st2.seq(), 5, "intake+plan+live+dispatch+gated");
     let mut w2 = Walker::new(st2, root.clone());
-    let again = w2.dispatch_as("CARD-A", &pass_exec(), &Lane::Weak("sim".into()));
+    let again = w2.dispatch_as(
+        "CARD-A",
+        &pass_exec(),
+        &Lane::Weak("sim".into()),
+        "weak-first",
+    );
     assert!(
         matches!(again, Err(StateErr::AlreadyDone)),
         "resume never re-dispatches a gated leaf"
     );
     assert!(w2
-        .dispatch_as("CARD-B", &pass_exec(), &Lane::Weak("sim".into()))
+        .dispatch_as(
+            "CARD-B",
+            &pass_exec(),
+            &Lane::Weak("sim".into()),
+            "weak-first"
+        )
         .unwrap());
     let st3 = TreeState::load(&log, caps()).unwrap();
     let a: usize = st3
@@ -95,9 +110,19 @@ fn global_goal_caps_refuse_further_dispatch() {
     w.intake("root_red.md").unwrap();
     w.accept_plan("PLAN-T", &plan()).unwrap();
     assert!(w
-        .dispatch_as("CARD-A", &pass_exec(), &Lane::Weak("sim".into()))
+        .dispatch_as(
+            "CARD-A",
+            &pass_exec(),
+            &Lane::Weak("sim".into()),
+            "weak-first"
+        )
         .unwrap());
-    let over = w.dispatch_as("CARD-B", &pass_exec(), &Lane::Weak("sim".into()));
+    let over = w.dispatch_as(
+        "CARD-B",
+        &pass_exec(),
+        &Lane::Weak("sim".into()),
+        "weak-first",
+    );
     assert!(
         matches!(over, Err(StateErr::CapAttempts)),
         "attempts are GLOBAL per goal, not per leaf"
@@ -118,9 +143,19 @@ fn global_goal_caps_refuse_further_dispatch() {
     w2.intake("root_red.md").unwrap();
     w2.accept_plan("PLAN-T", &plan()).unwrap();
     assert!(w2
-        .dispatch_as("CARD-A", &pass_exec(), &Lane::Weak("sim".into()))
+        .dispatch_as(
+            "CARD-A",
+            &pass_exec(),
+            &Lane::Weak("sim".into()),
+            "weak-first"
+        )
         .unwrap());
-    let costly = w2.dispatch_as("CARD-B", &pass_exec(), &Lane::Weak("sim".into()));
+    let costly = w2.dispatch_as(
+        "CARD-B",
+        &pass_exec(),
+        &Lane::Weak("sim".into()),
+        "weak-first",
+    );
     assert!(
         matches!(costly, Err(StateErr::CapCost)),
         "5+5 > 7: cost is cumulative per goal"

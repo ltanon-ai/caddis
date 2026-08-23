@@ -54,6 +54,7 @@ pub enum EventKind {
         attempt: u32,
         cost: u64,
         lane: Lane,
+        strategy: String,
     },
     LeafGated {
         card: String,

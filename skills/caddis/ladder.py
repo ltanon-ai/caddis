@@ -18,6 +18,11 @@ Rules (quorum-pinned, correction #3/#4 + sol refinements adopted):
   well_formed / intent_accepted / intent_rejected — and its own ladder;
   promotion = 2 consecutive intent_accepted; plan outcomes never touch
   exec telemetry (attribution first)
+- schema v2 (BC4): per-dispatch stamped rows {goal_id, card_id, strategy,
+  model_fingerprint, blast_set, outcome} — the strategy ledger. NEVER
+  extended into the warden envelope. Determinism = same (goal_id,
+  strategy) → same blast_set over TAGGED rows only; hysteresis N=4 gates
+  any preset switch; presets-only until determinism holds.
 """
 import json
 import os
@@ -32,6 +37,8 @@ def blank(model):
     return {
         "model": model,
         "fingerprint": {"noted_at": int(time.time())},
+        "version": 2,
+        "stamped": [],
         "level": "L1",
         "levels": {
             lv: {"attempts": 0, "accepts": 0, "fallbacks": 0}
@@ -59,7 +66,18 @@ class Profile:
     def load(self):
         with open(self.path, encoding="utf-8") as f:
             self.data = json.load(f)
+        self._upgrade()
         return self
+
+    def _upgrade(self):
+        """Schema v2 (BC4): stamped rows; a v1 file gains them empty."""
+        self.data.setdefault("version", 2)
+        self.data.setdefault("stamped", [])
+        self.data.setdefault(
+            "plan",
+            {"proposed": 0, "well_formed": 0, "intent_accepted": 0,
+             "intent_rejected": 0, "level": "L1", "streak": 0},
+        )
 
     def save(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -142,6 +160,46 @@ class Profile:
             pl["well_formed"] += 1
             pl["intent_rejected"] += 1
 
+    # ── schema v2: per-dispatch stamped rows (BC4) ──────────────────────
+    def record_dispatch(self, goal_id, card_id, strategy, blast_set, outcome):
+        """One stamped row per dispatch: the strategy ledger determinism
+        and hysteresis read. NEVER extended into the warden envelope."""
+        self.data["stamped"].append({
+            "goal_id": goal_id,
+            "card_id": card_id,
+            "strategy": strategy,
+            "model_fingerprint": {
+                "model": self.data["model"],
+                "noted_at": self.data["fingerprint"]["noted_at"],
+            },
+            "blast_set": sorted(blast_set),
+            "outcome": outcome,
+        })
+
+
+def determinism(rows):
+    """BC4: same (goal_id, strategy) must yield the same blast_set, over
+    TAGGED rows only (empty strategy = untagged, ignored). Returns
+    (holds, offenders)."""
+    seen = {}
+    offenders = []
+    for r in rows:
+        if not r.get("strategy"):
+            continue
+        key = (r.get("goal_id", ""), r["strategy"])
+        blast = tuple(r.get("blast_set") or [])
+        if key in seen and seen[key] != blast and key not in offenders:
+            offenders.append(key)
+        seen.setdefault(key, blast)
+    return (not offenders), offenders
+
+
+def should_switch(rows, current, candidate, n=4):
+    """Hysteresis N=4 (BC4): switch presets only after n consecutive
+    non-accept outcomes under `current` — four is a trend, not noise."""
+    tail = [r for r in rows if r.get("strategy") == current][-n:]
+    return len(tail) == n and all(r.get("outcome") != "accept" for r in tail)
+
 
 def default_path(model):
     safe = model.replace("/", "_").replace("\\", "_").replace(":", "_")
@@ -159,6 +217,7 @@ def main():
         pl = p.data["plan"]
         print(f"  plan: {pl['proposed']} proposed, "
               f"{pl['intent_accepted']} accepted, level={pl['level']}")
+        print(f"  stamped: {len(p.data['stamped'])} rows")
         return 0
     print("usage: ladder.py profile <model>")
     return 2

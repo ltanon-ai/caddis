@@ -1,10 +1,12 @@
 //! tree_laws.rs — BC3 (CARD-0093), part 2: intake law, strong-lane law,
-//! the failure map, and the repo-reality plan gates.
+//! the failure map, and the repo-reality plan gates. BC4 (CARD-0094):
+//! strategy stamping and preset hysteresis.
 
 mod common;
 
 use caddis_tree::plan_gates::{self, Finding};
-use caddis_tree::state::{Lane, StateErr, TreeState};
+use caddis_tree::presets::PresetGate;
+use caddis_tree::state::{EventKind, Lane, StateErr, TreeState};
 use caddis_tree::walker::{Action, Walker};
 use common::{caps, fail_exec, pass_exec, plan, scratch, seed_repo, walking};
 use std::fs;
@@ -25,7 +27,12 @@ fn intake_laws_strong_root_red_once() {
         matches!(w.intake("root_red.md"), Err(StateErr::AlreadyIntaked)),
         "one intake per goal"
     );
-    let over = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Weak("sim".into()));
+    let over = w.dispatch_as(
+        "CARD-A",
+        &pass_exec(),
+        &Lane::Weak("sim".into()),
+        "weak-first",
+    );
     assert!(
         matches!(over, Err(StateErr::OrphanCard)),
         "no plan accepted yet"
@@ -38,13 +45,13 @@ fn strong_lane_never_writes_under_a_live_subtree() {
     seed_repo(&root);
     let mut w = walking(&root);
     w.accept_plan("PLAN-T", &plan()).unwrap();
-    let strong = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong);
+    let strong = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong, "weak-first");
     assert!(
         matches!(strong, Err(StateErr::StrongUnderLive)),
         "the strong lane closes, never writes under live"
     );
     w.record_strong_close("CARD-A").unwrap();
-    let after = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong);
+    let after = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong, "weak-first");
     assert!(
         matches!(after, Err(StateErr::AlreadyDone)),
         "closed is closed for every lane"
@@ -59,7 +66,12 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
     w.accept_plan("PLAN-T", &plan()).unwrap();
     for attempt in 1..=2 {
         assert!(!w
-            .dispatch_as("CARD-A", &fail_exec(), &Lane::Weak("sim".into()))
+            .dispatch_as(
+                "CARD-A",
+                &fail_exec(),
+                &Lane::Weak("sim".into()),
+                "weak-first"
+            )
             .unwrap());
         match w.on_fail("CARD-A") {
             Action::Retry { attempt: n } => assert_eq!(n, attempt + 1),
@@ -67,7 +79,12 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
         }
     }
     assert!(!w
-        .dispatch_as("CARD-A", &fail_exec(), &Lane::Weak("sim".into()))
+        .dispatch_as(
+            "CARD-A",
+            &fail_exec(),
+            &Lane::Weak("sim".into()),
+            "weak-first"
+        )
         .unwrap());
     assert_eq!(
         w.on_fail("CARD-A"),
@@ -79,8 +96,13 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
     );
     w.record_bubble_up("CARD-A", "PLAN-T").unwrap();
     for _ in 1..=3 {
-        w.dispatch_as("CARD-B", &fail_exec(), &Lane::Weak("sim".into()))
-            .unwrap();
+        w.dispatch_as(
+            "CARD-B",
+            &fail_exec(),
+            &Lane::Weak("sim".into()),
+            "weak-first",
+        )
+        .unwrap();
     }
     assert_eq!(
         w.on_fail("CARD-B"),
@@ -112,5 +134,43 @@ fn plan_gates_check_repo_reality() {
             .iter()
             .any(|f| f.child == "CARD-B" && f.what.contains("bar")),
         "symbol must be greppable in its own paths"
+    );
+}
+
+#[test]
+fn dispatch_stamps_strategy_into_events() {
+    let root = scratch("strat");
+    seed_repo(&root);
+    let mut w = walking(&root);
+    w.accept_plan("PLAN-T", &plan()).unwrap();
+    assert!(w
+        .dispatch_as(
+            "CARD-A",
+            &pass_exec(),
+            &Lane::Weak("sim".into()),
+            "weak-first"
+        )
+        .unwrap());
+    let st = TreeState::load(root.join("goal.jsonl"), caps()).unwrap();
+    assert!(
+        st.events().iter().any(|e| matches!(
+            &e.kind,
+            EventKind::LeafDispatch { strategy, .. } if strategy == "weak-first"
+        )),
+        "strategy is stamped per dispatch"
+    );
+}
+
+#[test]
+fn preset_gate_switches_only_after_four() {
+    let mut g = PresetGate::new();
+    for _ in 0..3 {
+        assert_eq!(g.tick(false), "weak-first", "three failures are noise");
+    }
+    assert_eq!(g.tick(false), "strong-first", "four is a trend");
+    assert_eq!(
+        g.tick(true),
+        "strong-first",
+        "accept resets; return is operator-only"
     );
 }

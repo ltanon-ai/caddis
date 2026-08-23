@@ -33,11 +33,13 @@ fn leaf_fields(kind: &EventKind) -> Option<Vec<(String, String)>> {
             attempt,
             cost,
             lane,
+            strategy,
         } => Some(vec![
             ("card".to_string(), esc(card)),
             ("attempt".to_string(), attempt.to_string()),
             ("cost".to_string(), cost.to_string()),
             ("lane".to_string(), esc(&lane.tag())),
+            ("strategy".to_string(), esc(strategy)),
         ]),
         EventKind::LeafGated { card, pass } => Some(vec![
             ("card".to_string(), esc(card)),
@@ -152,6 +154,7 @@ fn build_leaf(kind: &str, f: &[(String, String)]) -> Option<EventKind> {
             attempt: take(f, "attempt").parse().unwrap_or(0),
             cost: take(f, "cost").parse().unwrap_or(0),
             lane: Lane::from_tag(&take(f, "lane")),
+            strategy: take(f, "strategy"),
         }),
         "leaf_gated" => Some(EventKind::LeafGated {
             card: take(f, "card"),
