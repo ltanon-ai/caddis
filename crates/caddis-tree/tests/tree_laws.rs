@@ -1,0 +1,116 @@
+//! tree_laws.rs — BC3 (CARD-0093), part 2: intake law, strong-lane law,
+//! the failure map, and the repo-reality plan gates.
+
+mod common;
+
+use caddis_tree::plan_gates::{self, Finding};
+use caddis_tree::state::{Lane, StateErr, TreeState};
+use caddis_tree::walker::{Action, Walker};
+use common::{caps, fail_exec, pass_exec, plan, scratch, seed_repo, walking};
+use std::fs;
+
+#[test]
+fn intake_laws_strong_root_red_once() {
+    let root = scratch("intake");
+    fs::create_dir_all(&root).unwrap();
+    let st = TreeState::new(root.join("goal.jsonl"), "w1", caps()).unwrap();
+    let mut w = Walker::new(st, root.clone());
+    assert!(
+        matches!(w.intake("root_red.md"), Err(StateErr::NoRootRed)),
+        "missing file refused"
+    );
+    fs::write(root.join("root_red.md"), "assert!(tree_works());\n").unwrap();
+    w.intake("root_red.md").unwrap();
+    assert!(
+        matches!(w.intake("root_red.md"), Err(StateErr::AlreadyIntaked)),
+        "one intake per goal"
+    );
+    let over = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Weak("sim".into()));
+    assert!(
+        matches!(over, Err(StateErr::OrphanCard)),
+        "no plan accepted yet"
+    );
+}
+
+#[test]
+fn strong_lane_never_writes_under_a_live_subtree() {
+    let root = scratch("strong");
+    seed_repo(&root);
+    let mut w = walking(&root);
+    w.accept_plan("PLAN-T", &plan()).unwrap();
+    let strong = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong);
+    assert!(
+        matches!(strong, Err(StateErr::StrongUnderLive)),
+        "the strong lane closes, never writes under live"
+    );
+    w.record_strong_close("CARD-A").unwrap();
+    let after = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong);
+    assert!(
+        matches!(after, Err(StateErr::AlreadyDone)),
+        "closed is closed for every lane"
+    );
+}
+
+#[test]
+fn failure_map_retries_then_bubbles_then_strong_closes() {
+    let root = scratch("fmap");
+    seed_repo(&root);
+    let mut w = walking(&root);
+    w.accept_plan("PLAN-T", &plan()).unwrap();
+    for attempt in 1..=2 {
+        assert!(!w
+            .dispatch_as("CARD-A", &fail_exec(), &Lane::Weak("sim".into()))
+            .unwrap());
+        match w.on_fail("CARD-A") {
+            Action::Retry { attempt: n } => assert_eq!(n, attempt + 1),
+            other => panic!("attempt {attempt}: expected Retry, got {other:?}"),
+        }
+    }
+    assert!(!w
+        .dispatch_as("CARD-A", &fail_exec(), &Lane::Weak("sim".into()))
+        .unwrap());
+    assert_eq!(
+        w.on_fail("CARD-A"),
+        Action::BubbleUp {
+            from: "CARD-A".into(),
+            to: "PLAN-T".into()
+        },
+        "retry-leaf is <=3 attempts: the 3rd failure bubbles"
+    );
+    w.record_bubble_up("CARD-A", "PLAN-T").unwrap();
+    for _ in 1..=3 {
+        w.dispatch_as("CARD-B", &fail_exec(), &Lane::Weak("sim".into()))
+            .unwrap();
+    }
+    assert_eq!(
+        w.on_fail("CARD-B"),
+        Action::StrongClose {
+            card: "CARD-B".into()
+        },
+        "parent already replanned once"
+    );
+}
+
+#[test]
+fn plan_gates_check_repo_reality() {
+    let root = scratch("gates");
+    seed_repo(&root);
+    let good = plan();
+    assert!(
+        plan_gates::check(&good, &root).is_empty(),
+        "existing paths, greppable symbols"
+    );
+    fs::remove_file(root.join("b.py")).unwrap();
+    let findings = plan_gates::check(&good, &root);
+    assert!(findings
+        .iter()
+        .any(|f| f.child == "CARD-B" && f.what.contains("missing")));
+    fs::write(root.join("b.py"), "def nothing():\n    pass\n").unwrap();
+    let findings: Vec<Finding> = plan_gates::check(&good, &root);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.child == "CARD-B" && f.what.contains("bar")),
+        "symbol must be greppable in its own paths"
+    );
+}

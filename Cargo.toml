@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/caddis-core", "crates/caddis-card", "crates/caddis-warden"]
+members = [
+    "crates/caddis-core",
+    "crates/caddis-card",
+    "crates/caddis-tree",
+    "crates/caddis-warden",
+]
 
 # caddis — a conscience for coding agents.
 # One binary, zero dependencies: core (envelope/policy/idempotency/ledger),

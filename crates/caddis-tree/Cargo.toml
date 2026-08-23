@@ -1,0 +1,11 @@
+[package]
+name = "caddis-tree"
+version = "0.1.0"
+edition = "2021"
+
+# BC3: the goal-tree state organ — append-only event log, walker, plan
+# gates. Zero third-party dependencies by law; caddis-card is a workspace
+# path dependency (TCB carries PATH deps only).
+
+[dependencies]
+caddis-card = { path = "../caddis-card" }
