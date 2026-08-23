@@ -1,0 +1,32 @@
+{
+  "_comment": "Checked-in snapshot of the law-corpus CHECK IDS ONLY (no law text, no patterns) so the registry ratchet runs on any machine. The live corpus on the estate machine still takes precedence; CADDIS_LAWS_JSON overrides both.",
+  "checks": [
+    {
+      "check": "git.hooks.skipped"
+    },
+    {
+      "check": "git.push.force-to-protected"
+    },
+    {
+      "check": "git.push.into-rewritten-repo"
+    },
+    {
+      "check": "git.signing.bypassed"
+    },
+    {
+      "check": "git.stage.blanket-in-shared-worktree"
+    },
+    {
+      "check": "shell.git-show-piped-counter"
+    },
+    {
+      "check": "shell.osv-no-resolve"
+    },
+    {
+      "check": "shell.process-query-self-match"
+    },
+    {
+      "check": "shell.skip-ci"
+    }
+  ]
+}

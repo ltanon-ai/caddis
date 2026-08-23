@@ -25,19 +25,32 @@ use std::path::PathBuf;
 /// Where the shared law corpus lives, overridable so the ratchet can be pointed
 /// at a fixture.
 fn corpus_path() -> PathBuf {
-    match std::env::var("CADDIS_LAWS_JSON") {
-        Ok(p) => PathBuf::from(p),
-        Err(_) => {
-            let home = std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_else(|_| ".".to_string());
-            PathBuf::from(home)
-                .join(".claude")
-                .join("hooks")
-                .join("jit_checks")
-                .join("laws.json")
-        }
+    // Precedence: an explicit pointer, then the LIVE shared corpus on this
+    // machine (other lanes write to it — that drift-turning-red is the
+    // mechanism working), then the checked-in ids-only snapshot so the
+    // ratchet runs — and can never silently skip — on any machine (CI, a
+    // stranger's clone). The snapshot carries CHECK IDS ONLY: no law text,
+    // no patterns, nothing private.
+    if let Ok(p) = std::env::var("CADDIS_LAWS_JSON") {
+        return PathBuf::from(p);
     }
+    let live = {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home)
+            .join(".claude")
+            .join("hooks")
+            .join("jit_checks")
+            .join("laws.json")
+    };
+    if live.exists() {
+        return live;
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("data")
+        .join("laws-corpus.json")
 }
 
 /// Every `"check": "<id>"` value in the corpus.
