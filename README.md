@@ -1,5 +1,7 @@
 # caddis
 
+<p><img src="assets/logo.png" width="200" alt="caddis — a conscience for coding agents"></p>
+
 **A conscience for coding agents.**
 
 Your AI agent can run any command. Including the ones it shouldn't.
@@ -47,7 +49,8 @@ code ─────┘                                   ~/.caddis/warden-ledge
                                               one conscience, many bodies
 ```
 
-Four harnesses can share one binary and one ledger — each verdict row carries a `from:` field naming the caller, so "which of my agents tried what" is one grep.
+
+<p><img src="assets/diagram-architecture.png" width="720" alt="one conscience, many bodies — four harnesses, one binary, one ledger"></p>
 
 ## Layout
 
@@ -56,10 +59,17 @@ Four harnesses can share one binary and one ledger — each verdict row carries 
 | `crates/caddis-warden` | the law engine + decision binary |
 | `crates/caddis-core` | envelope → policy → idempotency → ledger kernel |
 | `crates/caddis-card` | the work-unit law (Done-When + RED-TEST schema) |
-| `adapters/` | the nerve: one TypeScript adapter per harness family |
 | `PROTOCOL.md` | the wire contract and the failure doctrine |
 | `LAWS.md` | what is denied, what steers, how to add a law |
 | `ONBOARD.md` | the onboarding story and the self-proof |
+
+## The verdict flow
+
+<p><img src="assets/diagram-verdict.png" width="720" alt="a tool call arrives as one frame; allow, steer or deny leaves; every verdict is ledgered"></p>
+
+## Onboarding is the proof
+
+<p><img src="assets/diagram-onboard.png" width="720" alt="build, wire, prove — the install fails unless it can show you a denial"></p>
 
 ## Adding a law
 
