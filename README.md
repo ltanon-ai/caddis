@@ -96,6 +96,24 @@ edits or deletes what it wrote, and the file only grows. A gap in sequence
 numbers means rows were not written at that time — what that does and does
 not prove is stated precisely in PROTOCOL.md.
 
+## Memory — how caddis remembers
+
+The plugin has exactly one memory: the verdict ledger. One row per
+decision — allow, steer and deny alike — attributed to the caller, capped
+and masked, append-only. Reading it, querying an agent's story, what it
+is and is not: [MEMORY.md](MEMORY.md).
+
+![how caddis remembers](assets/diagram-memory.png)
+
+## Cards — the work-unit law
+
+Work arrives as cards whose completion is falsifiable (Done-When) and
+whose proof is mechanical (RED-TEST) — the discipline this repository is
+built with, shipped as a zero-dependency validator you can use for your
+own work: [CARDS.md](CARDS.md).
+
+![the card lifecycle](assets/diagram-cards.png)
+
 ## The verdict flow
 
 ![a tool call arrives as one frame; allow, steer or deny leaves; every verdict is ledgered](assets/diagram-verdict.png)
@@ -114,6 +132,8 @@ not prove is stated precisely in PROTOCOL.md.
 | `adapters/` | the nerve: one thin adapter file, no policy |
 | `THREAT-MODEL.md` | what is protected, against what, and where it ends |
 | `DISTRIBUTION.md` | requirements, verification, update, rollback, removal |
+| `MEMORY.md` | how the plugin remembers: the ledger as memory |
+| `CARDS.md` | the work-unit law: cards, and how to use them |
 | `SUPPORT.md` | the adapter support matrix and each supported claim's repro |
 | `PROTOCOL.md` | the wire contract and the failure doctrine |
 | `LAWS.md` | what is denied, what steers, how to add a law |
