@@ -9,23 +9,32 @@ closures per level) is recorded as the honest cost signal; profiles live
 at ~/.caddis/executor-profiles/<model>.json - named capability telemetry,
 never "memory", never merged into the warden ledger.
 
-The sys.path insert below precedes the import by necessity (the ladder
-module lives in the skill directory, not a package root).
+The module is LOADED BY PATH below (never a sys.path mutation): in the
+workshop the ladder lives in skills/caddis/ (not a package root); in the
+projected public tree it sits beside this file.
 """
+import importlib.util
 import json
 import os
-import sys
 import tempfile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _cand in (_HERE, os.path.join(_HERE, "..", "skills", "caddis")):
-    # workshop: the test lives in tools/, the module in skills/caddis/;
-    # public tree: they sit side by side after projection.
-    if os.path.isfile(os.path.join(_cand, "ladder.py")):
-        sys.path.insert(0, _cand)
-        break
-
-import ladder  # late by layout, not by choice
+_LADDER = next(
+    (
+        p
+        for p in (
+            os.path.join(_HERE, "ladder.py"),
+            os.path.join(_HERE, "..", "skills", "caddis", "ladder.py"),
+        )
+        if os.path.isfile(p)
+    ),
+    None,
+)
+assert _LADDER is not None, "ladder.py not found beside or ../skills/caddis/"
+_SPEC = importlib.util.spec_from_file_location("ladder", _LADDER)
+assert _SPEC is not None and _SPEC.loader is not None
+ladder = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(ladder)
 
 
 def fresh(tmp, model="m"):
