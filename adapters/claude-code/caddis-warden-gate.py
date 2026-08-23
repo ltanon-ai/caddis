@@ -62,7 +62,9 @@ def _lanes() -> dict:
     path = Path.home() / ".caddis" / "lanes.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        return (
+            {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        )
     except Exception:
         return {}
 
@@ -71,18 +73,24 @@ def _label_for(cwd: str) -> str:
     """The `from:` stamp for this session. Never empty: an unnamed body is
     still a body, and an audit that cannot say WHO did a thing is the exact
     failure the `from:` field exists against."""
-    if cwd:
-        norm = cwd.replace("/", os.sep).rstrip(os.sep).lower()
-        best, best_len = "", -1
-        for prefix, label in _lanes().items():
-            p = prefix.rstrip(os.sep).lower()
-            if (norm == p or norm.startswith(p + os.sep)) and len(p) > best_len:
-                best, best_len = label, len(p)
-        if best:
-            return best
+    match = _longest_lane_match(cwd)
+    if match:
+        return match
     if os.environ.get("CADDIS_WARDEN_STAND_ASIDE") == "1":
         return ""
     return "claude-code"
+
+
+def _longest_lane_match(cwd: str) -> str:
+    if not cwd:
+        return ""
+    norm = cwd.replace("/", os.sep).rstrip(os.sep).lower()
+    best, best_len = "", -1
+    for prefix, label in _lanes().items():
+        p = prefix.rstrip(os.sep).lower()
+        if (norm == p or norm.startswith(p + os.sep)) and len(p) > best_len:
+            best, best_len = label, len(p)
+    return best
 
 
 def _binary() -> Path:
@@ -106,32 +114,57 @@ def _frame(tool: str, command: str, path: str, content: str) -> bytes:
     return out
 
 
-def _marshal(tool_name: str, ti: dict) -> tuple[str, str, str, str]:
-    """Decide what to scan. THE ONE RULE WITH TEETH lives here.
+# ── tool marshalling — dispatch table, one extractor per tool shape ─────────
+#
+# THE ONE RULE WITH TEETH lives here as a property of every extractor: for
+# edits only the text being WRITTEN is scanned, never the text being replaced
+# -- the warden must never punish you for cleaning up the very thing it
+# dislikes. So `old_string` is deliberately never sent by any shape.
 
-    For edits only the text being WRITTEN is scanned, never the text being
-    replaced -- the warden must never punish you for cleaning up the very thing
-    it dislikes. So `old_string` is deliberately never sent.
-    """
-    name = (tool_name or "").strip()
-    low = name.lower()
-    if low in ("bash", "powershell"):
-        return ("bash" if low == "bash" else "powershell",
-                str(ti.get("command") or ""), "", "")
-    if low == "write":
-        return ("write", "", str(ti.get("file_path") or ""),
-                str(ti.get("content") or ""))
-    if low == "edit":
-        return ("edit", "", str(ti.get("file_path") or ""),
-                str(ti.get("new_string") or ""))
-    if low == "notebookedit":
-        return ("edit", "", str(ti.get("notebook_path") or ""),
-                str(ti.get("new_source") or ""))
+
+def _shape_shell(name: str, ti: dict) -> tuple[str, str, str, str]:
+    return (name, str(ti.get("command") or ""), "", "")
+
+
+def _shape_write(_name: str, ti: dict) -> tuple[str, str, str, str]:
+    return ("write", "", str(ti.get("file_path") or ""), str(ti.get("content") or ""))
+
+
+def _shape_edit(_name: str, ti: dict) -> tuple[str, str, str, str]:
+    return ("edit", "", str(ti.get("file_path") or ""), str(ti.get("new_string") or ""))
+
+
+def _shape_notebook(_name: str, ti: dict) -> tuple[str, str, str, str]:
+    return (
+        "edit",
+        "",
+        str(ti.get("notebook_path") or ""),
+        str(ti.get("new_source") or ""),
+    )
+
+
+def _shape_generic(name: str, ti: dict) -> tuple[str, str, str, str]:
     # Unknown tool: send what is there rather than inventing a shape.
-    return (low or "unknown",
-            str(ti.get("command") or ""),
-            str(ti.get("file_path") or ""),
-            str(ti.get("content") or ""))
+    return (
+        name,
+        str(ti.get("command") or ""),
+        str(ti.get("file_path") or ""),
+        str(ti.get("content") or ""),
+    )
+
+
+_TOOL_SHAPES = {
+    "bash": _shape_shell,
+    "powershell": _shape_shell,
+    "write": _shape_write,
+    "edit": _shape_edit,
+    "notebookedit": _shape_notebook,
+}
+
+
+def _marshal(tool_name: str, ti: dict) -> tuple[str, str, str, str]:
+    name = (tool_name or "").strip().lower() or "unknown"
+    return _TOOL_SHAPES.get(name, _shape_generic)(name, ti)
 
 
 def _emit_block(reason: str) -> None:
@@ -139,9 +172,16 @@ def _emit_block(reason: str) -> None:
 
 
 def _emit_context(text: str) -> None:
-    sys.stdout.write(json.dumps(
-        {"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                "additionalContext": text}}))
+    sys.stdout.write(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": text,
+                }
+            }
+        )
+    )
 
 
 def _scream_absent(detail: str) -> None:
@@ -151,13 +191,62 @@ def _scream_absent(detail: str) -> None:
     _emit_context("[caddis-warden] " + msg)
 
 
-def main() -> int:
+def _read_event() -> dict | None:
+    """Parse the hook payload; block on an unreadable one (our parse failure
+    must not certify a command as safe)."""
     try:
-        data = json.loads(sys.stdin.read() or "{}")
+        return json.loads(sys.stdin.read() or "{}")
     except Exception:
-        # Our own parse failure is not the warden's judgement, and an
-        # unreadable payload must not certify a command as safe.
         _emit_block("caddis-warden adapter: unreadable hook payload")
+        return None
+
+
+def _ask_warden(binary: Path, frame: bytes, caller: str) -> dict:
+    """Spawn the binary and return its verdict dict, or {} when the reply
+    could not be read. Applies the failure doctrine: unspawnable allows loudly
+    (via _scream_absent and {}), unreadable blocks (via _emit_block)."""
+    if not binary.exists():
+        _scream_absent(f"binary not found at {binary}")
+        return {}
+    env = dict(os.environ)
+    env["CADDIS_WARDEN_FROM"] = caller
+    try:
+        proc = subprocess.run(
+            [str(binary)], input=frame, capture_output=True, env=env, timeout=TIMEOUT_S
+        )
+    except Exception as exc:  # unspawnable == a deployment problem
+        _scream_absent(f"could not spawn {binary}: {exc}")
+        return {}
+    raw = (proc.stdout or b"").decode("utf-8", "replace").strip()
+    try:
+        reply = json.loads(raw)
+        reply["verdict"]
+        return reply
+    except Exception:
+        # It RAN and judged; we cannot read the judgement. Fail closed.
+        tail = raw[:200] or f"(empty stdout, rc={proc.returncode})"
+        _emit_block(
+            "caddis-warden: unreadable verdict — judgement fails closed. "
+            f"Reply was: {tail}"
+        )
+        return {}
+
+
+def _apply(reply: dict) -> None:
+    if reply.get("seq") == 0:
+        sys.stderr.write("caddis-warden: seq 0 — decision NOT recorded in the ledger\n")
+    verdict = str(reply["verdict"])
+    if verdict == "deny":
+        _emit_block(str(reply.get("reason") or "caddis-warden: denied"))
+    elif verdict == "steer":
+        law = str(reply.get("law") or "").strip()
+        reason = str(reply.get("reason") or "").strip()
+        _emit_context("[caddis-warden] " + " ".join(x for x in (reason, law) if x))
+
+
+def main() -> int:
+    data = _read_event()
+    if data is None:
         return 0
 
     caller = _label_for(str(data.get("cwd") or ""))
@@ -167,48 +256,9 @@ def main() -> int:
     tool, command, path, content = _marshal(
         data.get("tool_name") or "", data.get("tool_input") or {}
     )
-
-    binary = _binary()
-    if not binary.exists():
-        _scream_absent(f"binary not found at {binary}")
-        return 0
-
-    env = dict(os.environ)
-    env["CADDIS_WARDEN_FROM"] = caller
-    try:
-        proc = subprocess.run(
-            [str(binary)],
-            input=_frame(tool, command, path, content),
-            capture_output=True,
-            env=env,
-            timeout=TIMEOUT_S,
-        )
-    except Exception as exc:  # unspawnable == a deployment problem
-        _scream_absent(f"could not spawn {binary}: {exc}")
-        return 0
-
-    raw = (proc.stdout or b"").decode("utf-8", "replace").strip()
-    try:
-        reply = json.loads(raw)
-        verdict = str(reply["verdict"])
-    except Exception:
-        # It RAN and judged; we cannot read the judgement. Fail closed.
-        tail = raw[:200] or f"(empty stdout, rc={proc.returncode})"
-        _emit_block(
-            "caddis-warden: unreadable verdict — judgement fails closed. "
-            f"Reply was: {tail}"
-        )
-        return 0
-
-    if reply.get("seq") == 0:
-        sys.stderr.write("caddis-warden: seq 0 — decision NOT recorded in the ledger\n")
-
-    if verdict == "deny":
-        _emit_block(str(reply.get("reason") or "caddis-warden: denied"))
-    elif verdict == "steer":
-        law = str(reply.get("law") or "").strip()
-        reason = str(reply.get("reason") or "").strip()
-        _emit_context("[caddis-warden] " + " ".join(x for x in (reason, law) if x))
+    reply = _ask_warden(_binary(), _frame(tool, command, path, content), caller)
+    if reply:
+        _apply(reply)
     return 0
 
 
