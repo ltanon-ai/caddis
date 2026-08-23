@@ -82,7 +82,7 @@ fn record(call: &caddis_warden::ToolCall, verdict: &Verdict) -> u64 {
     let body = format!(
         "{}|{}|{}",
         verdict.tag(),
-        first_line(&call.command),
+        body_command(&call.command),
         call.path
     );
     let id = format!("wardn{:016x}", fnv1a(&call.payload()));
@@ -168,8 +168,32 @@ fn sanitize_type(tool: &str) -> String {
     }
 }
 
-fn first_line(s: &str) -> String {
-    s.lines().next().unwrap_or("").chars().take(200).collect()
+/// The command as the ledger row must record it (CARD-LEDGER-1).
+///
+/// The old first-line-only cut recorded `deny|echo harmless|` for a command
+/// whose offence was on line two — the refused text appeared nowhere in its
+/// own row, and the row read as a false positive (measured by the fourth
+/// harness, DEFECT-ledger-truncates-at-first-newline). Newlines are kept —
+/// the ledger JSON-escapes them, and the escaping is already pinned by
+/// warden1_ledger_escaping — and a hard byte cap keeps rows bounded. The cap
+/// is EXPLICIT: an elided row says so, never masquerading as the whole
+/// command.
+fn body_command(command: &str) -> String {
+    const CAP: usize = 500;
+    let mut kept = String::new();
+    let mut consumed = 0usize;
+    for ch in command.chars() {
+        let width = ch.len_utf8();
+        if consumed + width > CAP {
+            break;
+        }
+        kept.push(ch);
+        consumed += width;
+    }
+    if consumed < command.len() {
+        kept.push_str(&format!("…[+{} bytes truncated]", command.len() - consumed));
+    }
+    kept
 }
 
 fn unix_seconds() -> u64 {

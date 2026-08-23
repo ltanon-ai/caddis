@@ -69,7 +69,11 @@ Every decision — allow, steer and deny alike — appends one row to
 A warden that records only its refusals cannot answer *"what did the agent do
 last night"* — which is the question the ledger exists for. The `from` field
 names the calling harness: several harnesses may share one binary and one
-ledger, and the audit stays attributable.
+ledger, and the audit stays attributable. The `body` carries the command
+**with newlines preserved** (JSON-escaped by the ledger layer), capped at
+500 bytes with an explicit `…[+N bytes truncated]` marker — an elided row
+says so, never masquerading as the whole command; the row must always carry
+the line that was judged.
 
 A ledger failure does not block the tool — a full disk must not halt all work
 behind an audit trail. The failure is loud and the reply carries `seq: 0`, so
