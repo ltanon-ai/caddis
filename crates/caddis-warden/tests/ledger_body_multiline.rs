@@ -85,3 +85,37 @@ fn an_overlong_command_says_it_was_truncated() {
         rows.len()
     );
 }
+
+#[test]
+fn an_elided_head_still_explains_its_own_refusal() {
+    // The reporter's re-verification (section 9): >500 bytes of padding with
+    // the offence past the cap. The head is worthless — the row must still
+    // say WHICH LAW fired: the reason's first line names the law id and, for
+    // shell-grammar laws, quotes the spelling it fired on. The promise lives
+    // in the reason, not in the head.
+    let padding = format!("echo {}\n", "a".repeat(600));
+    let rows = judge(&format!("{padding}git push --force origin main"), "elide");
+    assert!(
+        rows.contains("git.push.force-to-protected"),
+        "the law id must survive its own elision, got: {rows}"
+    );
+}
+
+#[test]
+fn a_secret_refusal_never_persists_the_secret() {
+    // The refusal's reason teaches the doctrine without quoting the literal;
+    // the row inherits that discipline — and the HEAD too: a command that
+    // carries a credential-shaped run is masked at rest, so the audit trail
+    // cannot become a keychain. The literal is built at runtime from pieces,
+    // as the warden's own guidance prescribes for tests needing the shape.
+    let key = format!("s{}{}", "k-1234567890abcdef", "1234567890abcdef");
+    let rows = judge(&format!("echo key = \"{key}\""), "secret");
+    assert!(
+        rows.contains("***redacted"),
+        "a credential-shaped run in the head is masked at rest, got: {rows}"
+    );
+    assert!(
+        !rows.contains(&key),
+        "the secret literal must never persist into the ledger, got: {rows}"
+    );
+}

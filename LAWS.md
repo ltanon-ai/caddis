@@ -41,6 +41,15 @@ arrives attached to its **result**, which is the moment it applies. Every soft
 finding that fired is carried; silently dropping one is how a channel stops
 being worth reading.
 
+## Known boundaries, stated rather than implied
+
+- **The law parses shell.** Code *inside* a heredoc, quoted string or embedded
+  program is payload, not commands — a force-push expressed as, say, embedded
+  Python (`subprocess.run([...])` inside a heredoc) is out of scope today.
+  A heredoc is exactly where an agent puts code, so assume this boundary.
+- **Write/Edit content is judged, not persisted.** The ledger row records the
+  path; what was written stays out of the audit (size and secrets).
+
 ## How a law is added
 
 Red-first, measured:

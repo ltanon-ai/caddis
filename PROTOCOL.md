@@ -69,11 +69,18 @@ Every decision — allow, steer and deny alike — appends one row to
 A warden that records only its refusals cannot answer *"what did the agent do
 last night"* — which is the question the ledger exists for. The `from` field
 names the calling harness: several harnesses may share one binary and one
-ledger, and the audit stays attributable. The `body` carries the command
-**with newlines preserved** (JSON-escaped by the ledger layer), capped at
-500 bytes with an explicit `…[+N bytes truncated]` marker — an elided row
-says so, never masquerading as the whole command; the row must always carry
-the line that was judged.
+ledger, and the audit stays attributable. The `body` is four pipe-separated fields:
+`verdict | command-head | path | why`. The head carries the command with
+newlines preserved (JSON-escaped), capped at 500 bytes with an explicit
+`…[+N bytes truncated]` marker — elision never masquerades as the whole
+command — and **credential-shaped runs are masked at rest**
+(`***redacted(len=N)`): the audit trail must not become a keychain. The
+`why` field is the durable guarantee that an elided head can never hide the
+judgement: for a deny it is the first line of the engine's reason (which
+names the law id and, for the shell-grammar laws, quotes the spelling it
+fired on); for a steer, the law ids; empty for allow. Write/Edit `content`
+is judged but deliberately not persisted — the row answers *which file*,
+never *what was written* (size and secrets).
 
 A ledger failure does not block the tool — a full disk must not halt all work
 behind an audit trail. The failure is loud and the reply carries `seq: 0`, so

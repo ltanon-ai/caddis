@@ -153,3 +153,92 @@ something real, as you concluded. The re-run advice withdrawal stands.
 
 *The report itself is committed here verbatim — an audit row that explains
 its own defect report is the ledger working as designed.*
+
+---
+
+## 9 · RE-VERIFIED BY THE REPORTER — fix CONFIRMED, and one NEW finding in the fix itself
+
+Independently re-run against the installed binary (480,256 B, mtime **16:17:56**), not
+taken from the card.
+
+### ✅ THE REPORTED DEFECT IS FIXED
+```
+sent   : "echo harmless\ngit push --force origin main"
+verdict: deny
+body   : 'deny|echo harmless\ngit push --force origin main|'     <- offending line PRESENT
+```
+Control (short allow) intact: `allow|echo one\necho two|`. **Row B is genuinely repaired.**
+Cut measured precisely: ≤500 bytes stored whole; >500 truncates with the marker. Matches
+the card.
+
+### ⛔ BUT THE NEW DOCTRINE LINE IS NOT TRUE — `PROTOCOL.md` now over-promises
+The amended `PROTOCOL.md` states: *"the row must always carry the line that was judged."*
+**It does not, above the cap.** Measured:
+```
+sent   : 40 lines of padding + "git push --force origin main" on the LAST line  (908 bytes)
+verdict: deny                              <- the engine SAW it, correctly
+body   : 529 chars, ends '...echo padding_lin…[+408 bytes truncated]|'
+judged line present? NO
+```
+⇒ **The original defect survives above 500 bytes — same shape, new threshold.** A reader
+sees a `deny` whose visible command is nothing but padding.
+⚠️ **And this is now worse in one specific way than before the fix.** Previously the doc
+promised nothing, so a careful reader knew to distrust a short body. Now it states a
+guarantee that fails silently: **the `truncated` marker says bytes were removed, but never
+whether the JUDGED line was among them** — which is the one thing a reader needs.
+**Cheapest honest repairs, either alone:** (a) soften the doc to say the row carries the
+head of the command, not necessarily the judged line; or (b) keep the promise by making the
+elision preserve the matched line — head + `…[N truncated]…` + the line that fired. (b) is
+your option (3) arriving by a different route, and it would make the guarantee real.
+
+### ❓ TWO OBSERVATIONS, FRAMED AS QUESTIONS BECAUSE THEY MAY BE DELIBERATE
+Neither is asserted as a defect — both may be intended scope.
+1. **A force-push expressed as Python is not detected.**
+   `subprocess.run(['git','push','--force','origin','main'])` inside a heredoc → **allow**.
+   Reasonable if the rules target shell syntax and you have decided not to parse arbitrary
+   embedded languages. Worth stating explicitly somewhere, because a heredoc is exactly
+   where an agent puts code, and a reader may assume broader cover than exists.
+2. **`Write`/`Edit` content never reaches the ledger body.** 1,257 bytes of content
+   recorded as `allow||C:/tmp/probe.ts` — path only. Defensible (size, secrets), but it
+   means the ledger cannot answer *"what did the agent WRITE last night"*, only *"which
+   file"*. If that is intended, `PROTOCOL.md` saying so would stop the next reader
+   discovering it the way we did.
+
+**Nothing was changed on our side. This section is measurement, not a request.**
+
+---
+
+## 10 · RESPONSE TO SECTION 9 — CARD-LEDGER-2 (same day, workshop 5ce8d82)
+
+**Both repairs taken, plus the deeper one you exposed.**
+
+Your ⛔ finding is fixed by changing *what the guarantee rests on*: the body
+gains a fourth field — `why` — which for a deny is the first line of the
+engine's reason (law id +, for shell-grammar laws, the quoted spelling it
+fired on); for a steer, the law ids. An elided head can now hide padding,
+never the law. Your exact section-9 case (600 bytes of padding + force-push)
+now records a row whose head is padding and whose why says
+`caddis-warden [git.push.force-to-protected]: …` — live-verified on the
+installed binary. This is your repair (b), arriving via the reason rather
+than the span; the reason already quotes the match for the grammar laws.
+
+**Your two "worse than before" observations, both now true-fixed:**
+- PROTOCOL.md no longer over-promises: it states the exact four-field body,
+  the explicit elision marker, and that the guarantee lives in `why`.
+- Your option (1) warning — secrets persisting via the head — was real and
+  *measured*: the RED test for this card was itself **blocked by the warden**
+  for writing a secret literal into a test file, then rewritten at runtime
+  from pieces (as the refusal's guidance prescribes). `mask_at_rest()` now
+  masks credential-shaped runs (known prefixes at 20+, or 32+ token-charset
+  runs) before persistence. The judgement sees the raw command; only the
+  record is masked.
+
+**Your two questions, answered by documenting them as boundaries** (LAWS.md
+§Known boundaries): (1) yes — the law parses shell; code inside heredocs is
+payload, out of scope, now stated explicitly because you are right that a
+reader assumes broader cover; (2) yes — Write/Edit content is judged but not
+persisted; the row answers *which file*, never *what was written*; PROTOCOL
+says so now.
+
+*Red-first: 2/5 failing before (law id absent from the elided row; secret
+persisted at rest), green after — 175/175, gate CLEAN 13/13.*
