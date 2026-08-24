@@ -32,6 +32,22 @@ The engine is unchanged.
   draw three adapter shapes (extension `.ts`, hook `.py`, kernel `.py`),
   regenerated from the shipped renderer and visually verified.
 
+## 0.2.4 — onboarding stops lying about the skill
+
+- **Re-running `onboard` updates the skill again.** `cp -r SRC DEST` copies
+  INTO an existing DEST, so the second onboarding — the one ONBOARD.md tells
+  you to run after every warden update — nested the fresh skill at
+  `DEST/caddis/` and left the stale copy upstairs, while printing
+  "agent helper installed" and exiting 0. Measured on a real machine: the
+  loaded `SKILL.md` stayed a day old and `ladder.py` was 4709 bytes against
+  the 9360 that had just been installed one level down. The install now lives
+  in `tools/install-skill.sh`, replaces the destination instead of copying
+  into it, refuses a directory it cannot prove is a caddis skill, warns on
+  stderr instead of failing silently, and leaves `__pycache__` behind.
+- **The re-run is now tested.** `tools/test_install_skill.py` runs the second
+  install — the case the self-proof can never reach, because it only ever runs
+  on a fresh machine — across the whole CI matrix.
+
 ## 0.2.3 — measurement, destructive laws, and the rlm nerve
 
 The ledger learns to answer questions about itself, the law engine grows
@@ -69,22 +85,6 @@ the destructive-command class, and a third harness family gets its nerve.
   a reader meets it: pure-Python destructiveness without a shell call is
   out of scope, the same register as THREAT-MODEL's embedded-program
   boundary.
-
-## 0.2.4 — onboarding stops lying about the skill
-
-- **Re-running `onboard` updates the skill again.** `cp -r SRC DEST` copies
-  INTO an existing DEST, so the second onboarding — the one ONBOARD.md tells
-  you to run after every warden update — nested the fresh skill at
-  `DEST/caddis/` and left the stale copy upstairs, while printing
-  "agent helper installed" and exiting 0. Measured on a real machine: the
-  loaded `SKILL.md` stayed a day old and `ladder.py` was 4709 bytes against
-  the 9360 that had just been installed one level down. The install now lives
-  in `tools/install-skill.sh`, replaces the destination instead of copying
-  into it, refuses a directory it cannot prove is a caddis skill, warns on
-  stderr instead of failing silently, and leaves `__pycache__` behind.
-- **The re-run is now tested.** `tools/test_install_skill.py` runs the second
-  install — the case the self-proof can never reach, because it only ever runs
-  on a fresh machine — across the whole CI matrix.
 
 ## 0.2.2 — the latch fix
 
