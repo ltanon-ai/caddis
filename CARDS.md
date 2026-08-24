@@ -120,6 +120,7 @@ anchors:
           return v
 allowlist:
   - edit src/clamp.py
+```
 ````
 
 Two annexes may ride on a strict card, and neither can broaden it:

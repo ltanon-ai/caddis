@@ -161,14 +161,18 @@ def draw_tree():
     ]
     for i, (s, c) in enumerate(events):
         label(d, 84, 232 + i * 40, s, 18, c, bold=(c in (TEAL, AMBER)))
-    label(d, 84, 640, "KILLED MID-TREE ->", 19, AMBER, bold=True)
-    label(d, 84, 670, "rebuild: gated leaves refuse re-dispatch", 18)
-    label(d, 84, 696, "(AlreadyDone); the caller continues", 18)
+    label(d, 84, 740, "KILLED MID-TREE ->", 19, AMBER, bold=True)
+    label(d, 84, 768, "rebuild: passed or strong-closed leaves", 18)
+    label(d, 84, 794, "refuse re-dispatch (AlreadyDone);", 18)
+    label(d, 84, 820, "the caller continues with the next child", 18)
+
+    # the tree shape
+    panel(d, 660, 170, 400, 300, None, accent=TEAL)
     label(d, 684, 190, "PLAN (children + review)", 19, TEAL, bold=True)
     panel(d, 700, 250, 150, 90, None)
-    label(d, 84, 670, "rebuild: passed or strong-closed leaves", 18)
-    label(d, 84, 696, "refuse re-dispatch (AlreadyDone);", 18)
-    label(d, 84, 722, "the caller continues", 18)
+    label(d, 716, 274, "CARD-A", 20, TEXT, bold=True)
+    label(d, 716, 302, "order 1", 16, DIM)
+    panel(d, 880, 250, 150, 90, None)
     label(d, 896, 274, "CARD-B", 20, TEXT, bold=True)
     label(d, 896, 302, "order 2", 16, DIM)
     arrow(d, 775, 250, 775, 230)
@@ -176,6 +180,8 @@ def draw_tree():
     label(d, 684, 372, "the parent's gate is all children green", 17, DIM)
 
     # the laws of the log
+    panel(d, 660, 510, 400, 300, None)
+    label(d, 684, 530, "THE LOG'S LAWS", 19, TEXT, bold=True)
     for i, q in enumerate([
         "seq is monotonic - a mismatched log is refused",
         "ONE writer per log - a second session refused",
