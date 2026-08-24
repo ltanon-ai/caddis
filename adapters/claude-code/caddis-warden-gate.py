@@ -95,7 +95,9 @@ def _longest_lane_match(cwd: str) -> str:
     best, best_len = "", -1
     for prefix, label in _lanes().items():
         p = _fold(prefix)
-        if not p:
+        # A POSIX root folds to ""; a Windows drive root folds to "c:" —
+        # both are catch-alls over a machine or a whole drive, never a lane.
+        if not p or (len(p) == 2 and p.endswith(":")):
             continue
         if (norm == p or norm.startswith(p + "/")) and len(p) > best_len:
             best, best_len = label, len(p)

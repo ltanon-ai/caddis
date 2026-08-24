@@ -4,13 +4,9 @@ One entry point for the pre-push coverage pipeline (operator ruling
 2026-08-24, option 1):
 
     python -m pytest -q skills/caddis/test_ladder.py \
-        adapters/claude-code/test_warden_gate.py \
-        --cov=skills/caddis --cov=adapters/claude-code \
+        adapters/claude-code/test_warden_gate.py tools/test_sonar_coverage.py \
+        --cov=skills/caddis --cov=adapters/claude-code --cov=tools \
         --cov-report=xml:.sonar-scan/coverage-python.xml
-    cargo llvm-cov --lcov --output-path .sonar-scan/coverage-rust.lcov
-    python tools/sonar-coverage.py
-
-Two jobs, both about the scanner running in a Linux container while the
 reports are produced on the host:
 
 1. cobertura XML: rewrite the host-absolute <source> elements to
@@ -84,7 +80,7 @@ def lcov_to_generic() -> None:
         "end_of_record"
     ):
         lines = block.splitlines()
-        sf = next((l[3:].strip() for l in lines if l.startswith("SF:")), None)
+        sf = next((ln[3:].strip() for ln in lines if ln.startswith("SF:")), None)
         if not sf:
             continue
         fe = ET.SubElement(root, "file", {"path": to_relative(sf)})

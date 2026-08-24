@@ -111,8 +111,11 @@ def test_windows_case_folds_where_the_filesystem_does(monkeypatch):
 
 
 def test_a_root_prefix_never_becomes_a_catch_all(monkeypatch):
-    monkeypatch.setattr(gate, "_lanes", lambda: {"/": "all", "/real": "real"})
+    monkeypatch.setattr(
+        gate, "_lanes", lambda: {"/": "all", "C:/": "drive", "/real": "real"}
+    )
     assert gate._longest_lane_match("/anything/at/all") == ""
+    assert gate._longest_lane_match("C:\\Windows\\foo") == "", "drive root is no lane"
     assert gate._longest_lane_match("/real/work") == "real"
 
 
