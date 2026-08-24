@@ -50,13 +50,13 @@ row=$(tail -5 "$LEDGER" 2>/dev/null | grep '"body":"deny|git push --force origin
 # system too (users memorize nothing). Claude Code reads
 # ~/.claude/skills; the agentskills.io standard dir ~/.agents/skills is
 # read by extension-based harnesses.
+# The install is IDEMPOTENT and lives in its own script, because `cp -r` into an
+# existing directory nests instead of replacing — and this runs a second time on
+# every update, which is the path a one-shot self-proof can never exercise.
 SRC_SKILL="$(dirname "$0")/skills/caddis"
-for dest in "$HOME/.claude/skills/caddis" "$HOME/.agents/skills/caddis"; do
-    mkdir -p "$(dirname "$dest")" 2>/dev/null || true
-    if cp -r "$SRC_SKILL" "$dest" 2>/dev/null; then
-        echo "onboard: agent helper installed -> $dest"
-    fi
-done
+bash "$(dirname "$0")/tools/install-skill.sh" "$SRC_SKILL" \
+    "$HOME/.claude/skills/caddis" "$HOME/.agents/skills/caddis" \
+    || echo "onboard: the agent helper did not install everywhere (see above)" >&2
 
 echo "onboard: PROOF — force-push DENIED (ledger seq $seq), echo ALLOWED."
 echo "onboard: the conscience is live. Next: wire your harness (ONBOARD.md step 2)" \
