@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from assets.diagrams import draw_arch, draw_flow, draw_onboard
 from assets.diagrams_records import draw_cards, draw_ledger, draw_memory
+from assets.diagrams_work import draw_card_anatomy, draw_ladder, draw_tree
 from assets.mark import draw_banner, draw_logo
 
 if __name__ == "__main__":
@@ -24,6 +25,8 @@ if __name__ == "__main__":
     draw_flow()
     draw_onboard()
     draw_ledger()
-    draw_memory()
     draw_cards()
-    print("rendered: logo, banner, architecture, verdict, onboard, ledger, memory, cards")
+    draw_card_anatomy()
+    draw_ladder()
+    draw_tree()
+    print("rendered: logo, banner, architecture, verdict, onboard, ledger, memory, cards, card-anatomy, ladder, tree")
