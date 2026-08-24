@@ -144,9 +144,11 @@ receipt (`reviewer`, `verdict`, `checks`):
 cargo run -p caddis-card --example validate -- plan.md --plan
 ```
 
-The split is deliberate, and enforced in both directions: a plan never
-passes `--strict` (demanding execution anchors from a decomposition
-document checks the wrong thing), and a work card never needs `--plan`.
+The split is deliberate and enforced one way in the validator: a plan
+never passes `--strict` — demanding execution anchors from a
+decomposition document checks the wrong thing. A work card has no
+CHILDREN to order and no REVIEW receipt to carry, so it never needs
+`--plan`.
 
 ## Strict cards and the ladder (for local executors)
 

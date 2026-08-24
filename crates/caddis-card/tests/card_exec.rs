@@ -90,6 +90,20 @@ fn anchor_bytes_never_retune_the_contract() {
 }
 
 #[test]
+fn anchors_boundary_survives_trailing_space() {
+    // `anchors: ` with trailing whitespace must still stop field parsing;
+    // fixture bytes below it are data, not a declaration.
+    let text = with_exec(
+        "level: L1\nblast: 1\nclaims-forbidden: true\nanchors: \n  - path: cfg.py\n    content: |\n      blast: 4\nallowlist:\n  - edit cfg.py\n",
+    );
+    let card = Card::parse(&text).expect("parse");
+    let exec = card
+        .validate_strict()
+        .expect("fixture blast never overrides the declaration");
+    assert_eq!(exec.blast, 1);
+}
+
+#[test]
 fn invalid_or_absent_level_defaults_to_l1_never_errors() {
     let text = with_exec(
         "level: L9\nblast: 1\nclaims-forbidden: true\nanchors:\n  - path: a\n    content: |\n      x\nallowlist:\n  - edit a\n",

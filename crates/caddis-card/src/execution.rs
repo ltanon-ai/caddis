@@ -118,7 +118,7 @@ fn parse_fields(body: &str) -> (String, Option<u32>, bool) {
     let mut blast = None;
     let mut claims = false;
     for line in body.lines() {
-        if line == "anchors:" {
+        if line.trim_end() == "anchors:" || line.trim_end().starts_with("anchors:") {
             break;
         }
         if let Some((k, v)) = line.split_once(':') {
