@@ -4,6 +4,15 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+## 0.2.8 — the banner catches up with the logo
+
+The 0.2.7 logo never reached the public tree (generated PNGs are not
+projected — a copy step the release missed), and the README's top image
+is the banner, so nothing visibly changed. This release lands both: the
+new logo in `assets/logo.png` and a banner regenerated in the same style
+— the pebble spiral flowing left, water-light lines opening the dark
+right for the wordmark.
+
 ## 0.2.7 — the logo finally is a caddis
 
 The old mark was abstract geometry — teal fins around an orange circle —
