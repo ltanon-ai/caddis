@@ -59,7 +59,7 @@ def draw_card_anatomy():
         (700, 180, "FRONTMATTER", "id / class / owner - who owns the unit,\nwhat kind of work it is", TEAL),
         (700, 315, "DONE-WHEN", "completion a machine can check: a command,\nan exit code, a grep - never \"looks correct\"", TEAL),
         (700, 455, "RED-TEST", "the failing proof, run BEFORE the work -\nthe work cannot quietly redefine success", AMBER),
-        (700, 600, "EXECUTION (strict)", "level L1-L3 - blast 1..=3, a HARD error above -\nEXACT-verbatim anchors - an exact allowlist -\nclaims-forbidden", AMBER),
+        (700, 600, "EXECUTION (strict)", "level L1-L3 - blast 1..=3, hard error outside -\nEXACT-verbatim anchors - an exact allowlist -\nclaims-forbidden", AMBER),
     ]
     for x, y, t, g, col in ann:
         panel(d, x, y, 840, 115, None, accent=col)
@@ -121,7 +121,8 @@ def draw_ladder():
         ("levels: attempts / accepts / fallbacks", DIM),
         ("streak: clean_first_attempts", DIM),
         ("transforms: used / converted", DIM),
-        ("plan: proposed / accepted / rejected", DIM),
+        ("plan: proposed / well_formed /", DIM),
+        ("   intent_accepted / intent_rejected", DIM),
         ("stamped rows, one per dispatch:", DIM),
         ("{goal_id, card_id, strategy,", DIM),
         (" blast_set, outcome}", DIM),

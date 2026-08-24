@@ -2,8 +2,9 @@
 //!
 //! The quorum (2026-08-23, card-ladder) pinned the field contract before any
 //! code: anchors are EXACT-verbatim (relocatable anchors are a later card);
-//! blast is an integer <= 3 as a HARD error (a legitimate 4-path card is a
-//! new class, never an override); level is L1|L2|L3 with absent-or-invalid
+//! blast is an integer 1..=3, a HARD error outside the range (a legitimate
+//! 4-path card is a new class, never an override); level is L1|L2|L3 with
+//! absent-or-invalid
 //! falling back to L1 (never an error — the ladder defaults LOW); strict mode
 //! is ADDITIVE — an existing Done-When + RED-TEST card keeps validating.
 //! The CONTINUATION annex may carry context but may never broaden

@@ -82,7 +82,7 @@ executor must carry — every field the dispatch machinery reasons about:
 | Field | Meaning |
 | --- | --- |
 | `level` | L1–L3; absent or invalid defaults LOW (L1) |
-| `blast` | paths the card may touch; 1..=3, hard error above |
+| `blast` | paths the card may touch; 1..=3, hard error outside |
 | `claims-forbidden` | output the work only; gates decide, not claims |
 | `anchors` | the EXACT current bytes of each file, verbatim |
 | `allowlist` | the exact editable paths; nothing else |
