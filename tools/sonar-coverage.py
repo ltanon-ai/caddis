@@ -19,7 +19,6 @@ Both reports are produced on the host:
    paths.
 """
 import os
-import xml.etree.ElementTree as ET
 from defusedxml import ElementTree as SafeET
 
 PY_XML = ".sonar-scan/coverage-python.xml"
@@ -65,9 +64,11 @@ def fix_cobertura_sources() -> None:
             )
     if srcs_el is not None:
         root.remove(srcs_el)
-    new = ET.Element("sources")
-    ET.SubElement(new, "source").text = "."
-    root.insert(0, new)
+    srcs = root.makeelement("sources", {})
+    src = root.makeelement("source", {})
+    src.text = "."
+    srcs.append(src)
+    root.insert(0, srcs)
     tree.write(PY_XML, encoding="unicode", xml_declaration=True)
     print(f"fixed {PY_XML}: sources are project-relative")
 
@@ -83,21 +84,20 @@ def to_relative(path: str) -> str:
     return p
 
 
-def _da_line(fe, line: str) -> None:
-    """Append one <lineToCover> for a `DA:<num>,<hits>` record."""
-    number, hits, *_ = line[3:].split(",")
-    ET.SubElement(
-        fe,
-        "lineToCover",
-        {
-            "lineNumber": number,
-            "covered": "true" if int(hits) > 0 else "false",
-        },
+def _xml_escape(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
     )
 
 
 def lcov_to_generic() -> None:
-    root = ET.Element("coverage", {"version": "1"})
+    # Built as text, not via xml.etree builders: the safe parser
+    # (defusedxml) does not re-export the builder API, and importing the
+    # stdlib module trips bandit B405 even when only builders are used.
+    out = ['<coverage version="1">']
     for block in open(LCOV_IN, encoding="utf-8", errors="replace").read().split(
         "end_of_record"
     ):
@@ -105,14 +105,20 @@ def lcov_to_generic() -> None:
         sf = next((ln[3:].strip() for ln in lines if ln.startswith("SF:")), None)
         if not sf:
             continue
-        fe = ET.SubElement(root, "file", {"path": to_relative(sf)})
+        out.append(f'  <file path="{_xml_escape(to_relative(sf))}">')
         for line in lines:
             if line.startswith("DA:"):
-                _da_line(fe, line)
-    ET.indent(root)
-    ET.ElementTree(root).write(GENERIC_OUT, encoding="utf-8", xml_declaration=True)
-    print(f"wrote {GENERIC_OUT}: {len(root)} file(s)")
-
+                number, hits, *_ = line[3:].split(",")
+                covered = "true" if int(hits) > 0 else "false"
+                out.append(
+                    f'    <lineToCover lineNumber="{number}" covered="{covered}"/>'
+                )
+        out.append("  </file>")
+    out.append("</coverage>")
+    with open(GENERIC_OUT, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(out) + "\n")
+    files = sum(1 for ln in out if ln.lstrip().startswith("<file "))
+    print(f"wrote {GENERIC_OUT}: {files} file(s)")
 
 def main() -> int:
     fix_cobertura_sources()
