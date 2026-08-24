@@ -71,6 +71,7 @@ fn parse_anchors(body: &str) -> Vec<Anchor> {
     let mut anchors = Vec::new();
     let mut cur_path = String::new();
     let mut cur_content = String::new();
+    let mut in_content = false;
     for raw in body.lines() {
         let line = raw.trim_end();
         if let Some(rest) = line.strip_prefix("  - path: ") {
@@ -81,15 +82,27 @@ fn parse_anchors(body: &str) -> Vec<Anchor> {
                 });
             }
             cur_path = rest.trim().to_string();
-        } else if let Some(stripped) = line.strip_prefix("      ") {
-            cur_content.push_str(stripped);
-            cur_content.push('\n');
+            in_content = false;
+        } else if line == "    content: |" {
+            in_content = true;
+        } else if in_content {
+            if line.is_empty() {
+                // A YAML literal block swallows its blank lines: the
+                // fixture's own blanks are part of the EXACT-verbatim
+                // anchor body and must survive the round-trip.
+                cur_content.push('\n');
+            } else if let Some(stripped) = line.strip_prefix("      ") {
+                cur_content.push_str(stripped);
+                cur_content.push('\n');
+            } else {
+                in_content = false;
+            }
         }
     }
     if !cur_path.is_empty() {
         anchors.push(Anchor {
             path: cur_path,
-            content: cur_content.trim_end_matches('\n').to_string(),
+            content: cur_content,
         });
     }
     anchors

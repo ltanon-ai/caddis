@@ -3,7 +3,7 @@
 //! (raktas: reikšmė eilutėmis) + sekcijos (# Antraštė) + eilučių inkarai.
 use std::collections::BTreeMap;
 
-mod execution;
+pub mod execution;
 pub use execution::{Anchor, Continuation, Execution, Split};
 
 mod plan;
@@ -116,6 +116,12 @@ impl Card {
         self.sections
             .iter()
             .find(|s| s.title.eq_ignore_ascii_case(title))
+    }
+
+    /// The parsed EXECUTION contract, when the section exists and parses.
+    pub fn execution(&self) -> Option<crate::execution::Execution> {
+        self.section("EXECUTION")
+            .and_then(|s| crate::execution::Execution::parse(&s.body).ok())
     }
 
     /// CARD-SCHEMA-v1 būtinosios sekcijos (26 red-first įstatymas): Done-When su

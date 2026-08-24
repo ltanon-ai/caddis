@@ -2,7 +2,7 @@
 
 One entry point for the pre-push coverage pipeline (operator ruling
 2026-08-24, option 1). Prerequisites: `pip install pytest pytest-cov
-defusedxml`, `cargo llvm-cov` (with llvm-tools-preview):
+defusedxml pillow`, `cargo llvm-cov` (with llvm-tools-preview):
 
     python -m pytest -q skills/caddis/test_ladder.py \
         adapters/claude-code/test_warden_gate.py tools/test_sonar_coverage.py \

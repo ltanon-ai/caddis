@@ -73,3 +73,20 @@ fn plan_review_fences_keep_the_nested_plan_in_one_section() {
         );
     }
 }
+
+#[test]
+fn golden_l3_anchors_are_exact_verbatim_fixtures() {
+    // parse_anchors must keep the blank lines inside a `content: |`
+    // literal: the anchor body is the fixture file, byte for byte.
+    const L3_APP: &str = include_str!("../../../skills/caddis/calibration/fixtures/l3_app.py");
+    let card = Card::parse(L3).unwrap();
+    assert!(card.validate_strict().is_ok());
+    let exec = card.execution().expect("L3 parses an EXECUTION contract");
+    assert_eq!(exec.anchors.len(), 2, "one change, two anchored files");
+    assert_eq!(exec.anchors[0].content, "FACTOR = 1\n");
+    let want: String = L3_APP.replace("\r\n", "\n");
+    assert_eq!(
+        exec.anchors[1].content, want,
+        "blank lines survive the yaml round-trip"
+    );
+}
