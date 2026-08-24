@@ -37,7 +37,10 @@ fn h1_cards_and_deeper_headings_are_unchanged() {
     let card = Card::parse(mixed).unwrap();
     assert!(card.validate().is_ok());
     assert!(
-        card.section("Done-When").unwrap().body.contains("### detail stays body"),
+        card.section("Done-When")
+            .unwrap()
+            .body
+            .contains("### detail stays body"),
         "H3 never opens a section"
     );
     assert!(card.section("RED-TEST").unwrap().body.contains("- y"));

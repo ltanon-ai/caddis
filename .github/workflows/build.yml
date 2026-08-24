@@ -44,7 +44,7 @@ jobs:
           python-version: "3.12"
       - name: Python tests
         run: |
-          python -m pip install --quiet pytest
+          python -m pip install --quiet pytest defusedxml
           python -m pytest -q adapters/claude-code/test_warden_gate.py \
             skills/caddis/test_ladder.py tools/test_sonar_coverage.py
       - name: Test

@@ -1,14 +1,15 @@
 """sonar-coverage.py — prepare real coverage for the SonarQube scan.
 
 One entry point for the pre-push coverage pipeline (operator ruling
-2026-08-24, option 1):
+2026-08-24, option 1). Prerequisites: `pip install pytest pytest-cov
+defusedxml`, `cargo llvm-cov` (with llvm-tools-preview):
 
     python -m pytest -q skills/caddis/test_ladder.py \
         adapters/claude-code/test_warden_gate.py tools/test_sonar_coverage.py \
         --cov=skills/caddis --cov=adapters/claude-code --cov=tools \
         --cov-report=xml:.sonar-scan/coverage-python.xml
-reports are produced on the host:
-
+    cargo llvm-cov --lcov --output-path .sonar-scan/coverage-rust.lcov
+Both reports are produced on the host:
 1. cobertura XML: rewrite the host-absolute <source> elements to
    project-relative paths so the sensor can resolve the files at
    /usr/src (otherwise the coverage is silently ignored).
@@ -18,6 +19,7 @@ reports are produced on the host:
 """
 import os
 import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as SafeET
 
 PY_XML = ".sonar-scan/coverage-python.xml"
 LCOV_IN = ".sonar-scan/coverage-rust.lcov"
@@ -40,7 +42,7 @@ def _repo_relative(filename: str, sources: list, here: str) -> str:
 
 
 def fix_cobertura_sources() -> None:
-    tree = ET.parse(PY_XML)
+    tree = SafeET.parse(PY_XML)
     root = tree.getroot()
     # Non-package modules (loaded by path) get a "." package and a BARE
     # class filename; the directory truth lives in the host-absolute
@@ -74,6 +76,19 @@ def to_relative(path: str) -> str:
     return p
 
 
+def _da_line(fe, line: str) -> None:
+    """Append one <lineToCover> for a `DA:<num>,<hits>` record."""
+    number, hits, *_ = line[3:].split(",")
+    ET.SubElement(
+        fe,
+        "lineToCover",
+        {
+            "lineNumber": number,
+            "covered": "true" if int(hits) > 0 else "false",
+        },
+    )
+
+
 def lcov_to_generic() -> None:
     root = ET.Element("coverage", {"version": "1"})
     for block in open(LCOV_IN, encoding="utf-8", errors="replace").read().split(
@@ -86,15 +101,7 @@ def lcov_to_generic() -> None:
         fe = ET.SubElement(root, "file", {"path": to_relative(sf)})
         for line in lines:
             if line.startswith("DA:"):
-                number, hits, *_ = line[3:].split(",")
-                ET.SubElement(
-                    fe,
-                    "lineToCover",
-                    {
-                        "lineNumber": number,
-                        "covered": "true" if int(hits) > 0 else "false",
-                    },
-                )
+                _da_line(fe, line)
     ET.indent(root)
     ET.ElementTree(root).write(GENERIC_OUT, encoding="utf-8", xml_declaration=True)
     print(f"wrote {GENERIC_OUT}: {len(root)} file(s)")
