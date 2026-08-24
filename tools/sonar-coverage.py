@@ -26,13 +26,23 @@ LCOV_IN = ".sonar-scan/coverage-rust.lcov"
 GENERIC_OUT = ".sonar-scan/coverage-rust-generic.xml"
 
 
+def _probe(s: str, cands: tuple, here: str):
+    """The first candidate that exists under this <source>, prefixed by
+    the source's project-relative path (a root source adds no "./")."""
+    rel = os.path.relpath(s, here).replace("\\", "/")
+    prefix = "" if rel == "." else rel + "/"
+    for cand in cands:
+        if os.path.isfile(os.path.join(s, cand)):
+            return f"{prefix}{cand}"
+    return None
+
+
 def _repo_relative(filename: str, sources: list, here: str, package: str) -> str:
     """One cobertura class filename, resolved against the <source>
     directories (and the Cobertura package path) that actually contain
     it on disk, then made project-relative for the scanner's /usr/src
     view. Nested packages (assets under tools) resolve through their
-    package segment, not only the source root; a source that IS the
-    project root yields no "./" prefix (sonar resolves neither)."""
+    package segment, not only the source root."""
     fn = filename.replace("\\", "/")
     if "/" in fn and os.path.isfile(fn):
         return os.path.relpath(fn, here).replace("\\", "/")
@@ -40,11 +50,9 @@ def _repo_relative(filename: str, sources: list, here: str, package: str) -> str
     pkg = package.replace(".", "/") if package and package != "." else ""
     cands = (f"{pkg}/{bare}", bare) if pkg else (bare,)
     for s in sources:
-        rel = os.path.relpath(s, here).replace("\\", "/")
-        prefix = "" if rel == "." else rel + "/"
-        for cand in cands:
-            if os.path.isfile(os.path.join(s, cand)):
-                return f"{prefix}{cand}"
+        hit = _probe(s, cands, here)
+        if hit is not None:
+            return hit
     return cands[0]
 
 
@@ -93,6 +101,21 @@ def _xml_escape(text: str) -> str:
     )
 
 
+def _record_lines(block: str):
+    """Yield the generic-XML line elements for one lcov record."""
+    lines = block.splitlines()
+    sf = next((ln[3:].strip() for ln in lines if ln.startswith("SF:")), None)
+    if not sf:
+        return
+    yield f'  <file path="{_xml_escape(to_relative(sf))}">'
+    for line in lines:
+        if line.startswith("DA:"):
+            number, hits, *_ = line[3:].split(",")
+            covered = "true" if int(hits) > 0 else "false"
+            yield f'    <lineToCover lineNumber="{number}" covered="{covered}"/>'
+    yield "  </file>"
+
+
 def lcov_to_generic() -> None:
     # Built as text, not via xml.etree builders: the safe parser
     # (defusedxml) does not re-export the builder API, and importing the
@@ -101,19 +124,7 @@ def lcov_to_generic() -> None:
     for block in open(LCOV_IN, encoding="utf-8", errors="replace").read().split(
         "end_of_record"
     ):
-        lines = block.splitlines()
-        sf = next((ln[3:].strip() for ln in lines if ln.startswith("SF:")), None)
-        if not sf:
-            continue
-        out.append(f'  <file path="{_xml_escape(to_relative(sf))}">')
-        for line in lines:
-            if line.startswith("DA:"):
-                number, hits, *_ = line[3:].split(",")
-                covered = "true" if int(hits) > 0 else "false"
-                out.append(
-                    f'    <lineToCover lineNumber="{number}" covered="{covered}"/>'
-                )
-        out.append("  </file>")
+        out.extend(_record_lines(block))
     out.append("</coverage>")
     with open(GENERIC_OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(out) + "\n")
