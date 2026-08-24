@@ -32,25 +32,21 @@ def _repo_relative(filename: str, sources: list, here: str, package: str) -> str
     directories (and the Cobertura package path) that actually contain
     it on disk, then made project-relative for the scanner's /usr/src
     view. Nested packages (assets under tools) resolve through their
-    package segment, not only the source root."""
+    package segment, not only the source root; a source that IS the
+    project root yields no "./" prefix (sonar resolves neither)."""
     fn = filename.replace("\\", "/")
     if "/" in fn and os.path.isfile(fn):
         return os.path.relpath(fn, here).replace("\\", "/")
     bare = fn.rsplit("/", 1)[-1]
     pkg = package.replace(".", "/") if package and package != "." else ""
+    cands = (f"{pkg}/{bare}", bare) if pkg else (bare,)
     for s in sources:
         rel = os.path.relpath(s, here).replace("\\", "/")
-        if rel == ".":
-            # A <source> that IS the project root must not produce a
-            # "./" prefix — sonar resolves neither "./x" nor "x/./y".
-            for cand in (f"{pkg}/{bare}", bare) if pkg else (bare,):
-                if os.path.isfile(os.path.join(s, cand)):
-                    return cand
-            continue
-        for cand in (f"{pkg}/{bare}", bare) if pkg else (bare,):
+        prefix = "" if rel == "." else rel + "/"
+        for cand in cands:
             if os.path.isfile(os.path.join(s, cand)):
-                return f"{rel}/{cand}"
-    return f"{pkg}/{bare}" if pkg else bare
+                return f"{prefix}{cand}"
+    return cands[0]
 
 
 def fix_cobertura_sources() -> None:
