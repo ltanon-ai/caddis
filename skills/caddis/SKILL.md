@@ -62,10 +62,11 @@ The card is the PLANNING side; the ladder adapts it to the EXECUTOR you
 have. Honest claim: local execution EARNS levels by measurement — never
 promise local-by-default.
 
-**Before a model's first dispatch**: run the calibration pack
-(`skills/caddis/calibration/` — copy fixtures to a scratch dir, dispatch
-each card one-shot, record outcomes). Profiles live in
-`~/.caddis/executor-profiles/<model>.json` via `skills/caddis/ladder.py`
+**Before a model's first dispatch**: run the calibration pack — copy the
+whole `skills/caddis/calibration/` tree to a scratch dir, work with that
+directory as cwd (every pack's anchors and allowlists are rooted at its
+`fixtures/`), dispatch each card one-shot, record outcomes. Profiles live
+in `~/.caddis/executor-profiles/<model>.json` via `skills/caddis/ladder.py`
 — capability telemetry, not memory.
 
 **Mechanical rules (never override by judgment):**
@@ -75,9 +76,10 @@ each card one-shot, record outcomes). Profiles live in
   hit → immediate −1, floor L1
 - a transform with ≥3 uses and 0 conversions is RETIRED — never proposed
   again
-- fallback tax (strong-lane closures) per level is the honest cost: when
-  closures exceed accepts at a level across ≥6 cards, go strong-first at
-  that level and note it in the profile
+- fallback tax (strong-lane closures) per level is the honest cost,
+  recorded in the profile; a preset SWITCH to strong-first is mechanical
+  hysteresis (BC4): four consecutive non-accept outcomes under the
+  current preset, never a judgment call
 
 **The loop (bounded):** dispatch the card one-shot to the local model
 with a FRESH context each attempt (no contamination). Gates decide —
