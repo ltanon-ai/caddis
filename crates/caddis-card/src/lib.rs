@@ -38,6 +38,7 @@ fn heading_title(line: &str) -> Option<&str> {
 /// fenced mode: headings and `---` INSIDE a fence are content — the
 /// plan-review packs embed whole plan cards in ```text fences, and their
 /// `# CHILDREN` must never leak out as wrapper sections.
+#[derive(Clone, Copy)]
 enum Line<'a> {
     Fence,
     Frontmatter,
@@ -63,8 +64,28 @@ fn classify<'a>(line: &'a str, fenced: &mut bool) -> Line<'a> {
 }
 
 impl Card {
-    /// Parse'ina kortos tekstą: `---` frontmatter blokas, po to `#`/`##`
-    /// `Sekcija` antraštės (H2 leidžiama, nes markdownlint MD025 reikalauja
+    /// The frontmatter walker: consumes `---` toggles and `key: value`
+    /// lines. Returns true when the caller must `continue` past this line.
+    fn fm_step(
+        line: &str,
+        cls: Line<'_>,
+        in_fm: &mut bool,
+        frontmatter: &mut BTreeMap<String, String>,
+        no_sections: bool,
+    ) -> bool {
+        if let Line::Frontmatter = cls {
+            *in_fm = !*in_fm && frontmatter.is_empty() && no_sections;
+            return true;
+        }
+        if *in_fm {
+            if let Some((k, v)) = line.split_once(':') {
+                frontmatter.insert(k.trim().to_string(), v.trim().to_string());
+            }
+            return true;
+        }
+        false
+    }
+
     /// vienintelio H1 dokumente — CARD-0097; gilesnės antraštės lieka
     /// turiniu). Fenced blokų antraštės — turinys (plan-review paketai).
     pub fn parse(text: &str) -> Result<Self, CardErr> {
@@ -77,14 +98,7 @@ impl Card {
             let line = raw.trim_end();
             let n = i + 1;
             let cls = classify(line, &mut fenced);
-            if let Line::Frontmatter = cls {
-                in_fm = !in_fm && frontmatter.is_empty() && sections.is_empty();
-                continue;
-            }
-            if in_fm {
-                if let Some((k, v)) = line.split_once(':') {
-                    frontmatter.insert(k.trim().to_string(), v.trim().to_string());
-                }
+            if Self::fm_step(line, cls, &mut in_fm, &mut frontmatter, sections.is_empty()) {
                 continue;
             }
             if let Line::Heading(title) = cls {
