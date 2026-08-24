@@ -6,6 +6,7 @@ defusedxml`, `cargo llvm-cov` (with llvm-tools-preview):
 
     python -m pytest -q skills/caddis/test_ladder.py \
         adapters/claude-code/test_warden_gate.py tools/test_sonar_coverage.py \
+        tools/test_assets.py \
         --cov=skills/caddis --cov=adapters/claude-code --cov=tools \
         --cov-report=xml:.sonar-scan/coverage-python.xml
     cargo llvm-cov --lcov --output-path .sonar-scan/coverage-rust.lcov
@@ -39,6 +40,13 @@ def _repo_relative(filename: str, sources: list, here: str, package: str) -> str
     pkg = package.replace(".", "/") if package and package != "." else ""
     for s in sources:
         rel = os.path.relpath(s, here).replace("\\", "/")
+        if rel == ".":
+            # A <source> that IS the project root must not produce a
+            # "./" prefix — sonar resolves neither "./x" nor "x/./y".
+            for cand in (f"{pkg}/{bare}", bare) if pkg else (bare,):
+                if os.path.isfile(os.path.join(s, cand)):
+                    return cand
+            continue
         for cand in (f"{pkg}/{bare}", bare) if pkg else (bare,):
             if os.path.isfile(os.path.join(s, cand)):
                 return f"{rel}/{cand}"
