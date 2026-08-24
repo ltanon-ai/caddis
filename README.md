@@ -13,7 +13,7 @@ this repository, works locally, and has no cloud anywhere.
 | **Ledger** | append-only audit: what, when, why, which agent |
 | **Cards** | falsifiable work units: Done-When + RED-TEST |
 | **Ladder** | measured L1–L3 levels for local model executors |
-| **Goal tree** | ordered child cards on a resumable event log |
+| **Skill** | the manual the agent itself loads and obeys |
 | **Adapters** | one thin nerve per harness, no policy inside |
 | **Onboard** | one command; proves itself with a live denial |
 | **Replay** | preview law changes against your own history |
@@ -252,6 +252,33 @@ replace, a function stub, a two-file change, and two plan-review exercises.
 The pack's `KEY.md` stays with the operator: the model under calibration
 never sees the expected verdicts it is being scored against.
 
+## The skill — the manual the agent reads
+
+Everything above describes the system for you, the operator. The skill
+is the same system written for the other side: `skills/caddis/` is a
+self-contained skill a harness loads, and it changes how the agent
+works — not only what it may run.
+
+| Part | Role |
+| --- | --- |
+| `SKILL.md` | operating rules: card-first, conscience commands |
+| `ladder.py` | the profile store: levels, streaks, transforms |
+| `calibration/` | the packs that measure a model before dispatch |
+
+- **Card-first is the default.** The agent writes the card before any
+  unit of work beyond a one-liner, validates it, works RED-first, and
+  lands the evidence — the skill says so, with the commands.
+- **The conscience commands.** The nightly question, one agent's story,
+  replay before a warden swap: shell commands the agent itself runs.
+- **The ladder, mechanized.** The rules of the section above, as rules
+  the agent must not override by judgment; local gates always win.
+
+The distinction, stated once: these documents are the **description** —
+what caddis is, written for humans. The skill is the **instruction** —
+how an agent works inside caddis, loaded by the harness and fired on
+its triggers: a blocked call, the start of non-trivial work, a
+dispatch to a local model, a question about what an agent did.
+
 ## The goal tree — many cards, one goal
 
 Real work is rarely one card. `crates/caddis-tree` organizes a goal as a
@@ -350,8 +377,7 @@ cargo test --workspace 2>&1 | grep -oE "[0-9]+ passed" \
 | `crates/caddis-card` | the work-unit law: strict + plan oracles |
 | `crates/caddis-tree` | the goal tree: events, walker, plan gates, bench |
 | `adapters/` | the nerve: one thin adapter file, no policy |
-| `skills/caddis/` | the ladder + calibration packs (agent-side, no daemon) |
-| `tools/` | the deterministic asset renderer + the coverage pipeline glue |
+| `skills/caddis/` | the agent-side skill: card-first work, ladder, commands |
 | `THREAT-MODEL.md` | what is protected, against what, and where it ends |
 | `DISTRIBUTION.md` | requirements, verification, update, rollback, removal |
 | `MEMORY.md` | how the plugin remembers: the ledger as memory |
