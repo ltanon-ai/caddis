@@ -262,12 +262,15 @@ The log's laws are the tree's whole durability story:
   shows every gated leaf, a re-dispatch of a finished one refuses with
   AlreadyDone, and the caller continues with the next unfinished
   child.
-- **Failures bubble.** A rejected leaf does not vanish: the failure map
-  bubbles up to the plan, which may replan exactly once before a strong
-  close.
-- **Dispatches carry a strategy stamp.** Every dispatched event records the
-  preset that produced it — the stamped rows are what the ladder's
-  determinism and hysteresis rules read.
+- **Failures bubble, in stages.** A rejected leaf is retried up to the
+  attempt cap; if it still fails, the failure bubbles up to the plan,
+  which may replan exactly once — and a subtree that cannot converge is
+  strong-closed on a later walk, not inside the same call.
+- **Dispatches carry a strategy stamp.** Every LeafDispatch event
+  records the preset that produced it, in the tree's log. The ladder's
+  determinism and hysteresis rules read a SEPARATE store — the
+  executor profile — which the orchestrator feeds via
+  `record_dispatch`; the tree never reads it back.
 
 The bench that proves all this is honest by construction: the leaf gate is
 the **target repository's own checker**, run as a real subprocess — never a

@@ -134,9 +134,10 @@ Two annexes may ride on a strict card, and neither can broaden it:
   parent's gate is all children green.
 
 A card of `class: plan` is decomposition, not execution — a different
-oracle for a different job. Its sections are `CHILDREN` (ordered: `id`,
-`order`, `paths`, `symbols`) and a `REVIEW` receipt (`reviewer`,
-`verdict`, `checks`):
+oracle for a different job. Done-When and RED-TEST stay mandatory (the
+plan oracle runs the v1 check first); a plan ADDS two sections:
+`CHILDREN` (ordered: `id`, `order`, `paths`, `symbols`) and a `REVIEW`
+receipt (`reviewer`, `verdict`, `checks`):
 
 ```text
 cargo run -p caddis-card --example validate -- plan.md --plan

@@ -195,7 +195,7 @@ def draw_tree():
         label(d, 1144, 272 + j * 24, line, 17, DIM)
     label(d, 1144, 400, "walk_goal", 20, TEAL, bold=True)
     for j, line in enumerate(_wrap(
-        "applies the failure map end-to-end: reject, bubble-up to the plan, one replan, then a strong close", 42
+        "retries a failing leaf to the attempt cap, bubbles up, replans once - a stuck subtree strong-closes on a later walk", 42
     )):
         label(d, 1144, 432 + j * 24, line, 17, DIM)
     label(d, 1144, 560, "BenchCols", 20, TEAL, bold=True)
