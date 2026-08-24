@@ -4,6 +4,21 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+## 0.2.7 — the logo finally is a caddis
+
+The old mark was abstract geometry — teal fins around an orange circle —
+with no connection to the caddisfly story the project is named for. The
+new logo, generated with Higgsfield's Nano Banana Pro and picked by the
+operator from six candidates, is the larva's case itself: a spiral of
+glossy teal pebbles around a glowing orange heart on a dark riverbed —
+alive, legible at favicon size, and unmistakably the thing the name says.
+
+
+## 0.2.6 — changelog block order fix
+
+The 0.2.4 block sat below 0.2.3 where its author left it; descending
+version order restored (pure move, no content change).
+
 ## 0.2.5 — the description catches up with the shipped code
 
 A docs-only release: the code shipped in 0.2.3, the words catch up now.

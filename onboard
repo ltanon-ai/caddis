@@ -3,6 +3,13 @@
 # An install that cannot show you a denial is not an install.
 set -u
 if [ -z "${HOME:-}" ]; then HOME="$USERPROFILE"; fi
+# WHERE AM I. `$0` is the SOURCING script when this file is sourced, and the
+# GitHub matrix sources it (`. ./onboard`), so every "$(dirname "$0")/..." path
+# pointed outside the repository there: the skill install looked for a helper
+# that was not there, failed, and — before the install grew a check — said
+# nothing. ${BASH_SOURCE[0]} names THIS file under both invocations.
+SELF="${BASH_SOURCE[0]:-$0}"
+HERE="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 HARNESS="${1:-}"
 BIN_DIR="$HOME/.caddis/bin"
 EXE="$BIN_DIR/caddis-warden.exe"
@@ -53,8 +60,8 @@ row=$(tail -5 "$LEDGER" 2>/dev/null | grep '"body":"deny|git push --force origin
 # The install is IDEMPOTENT and lives in its own script, because `cp -r` into an
 # existing directory nests instead of replacing — and this runs a second time on
 # every update, which is the path a one-shot self-proof can never exercise.
-SRC_SKILL="$(dirname "$0")/skills/caddis"
-bash "$(dirname "$0")/tools/install-skill.sh" "$SRC_SKILL" \
+SRC_SKILL="$HERE/skills/caddis"
+bash "$HERE/tools/install-skill.sh" "$SRC_SKILL" \
     "$HOME/.claude/skills/caddis" "$HOME/.agents/skills/caddis" \
     || die "the agent helper did not install anywhere (see the warnings above)"
 
@@ -63,8 +70,8 @@ echo "onboard: the conscience is live. Next: wire your harness (ONBOARD.md step 
      "as '${HARNESS:-<harness>}' if you want in-ledger attribution."
 
 # If a harness was named, stamp the local adapter copy's CALLER constant.
-if [ -n "$HARNESS" ] && [ -f "$(dirname "$0")/adapters/caddis-warden.ts" ]; then
-    src="$(dirname "$0")/adapters/caddis-warden.ts"
+if [ -n "$HARNESS" ] && [ -f "$HERE/adapters/caddis-warden.ts" ]; then
+    src="$HERE/adapters/caddis-warden.ts"
     case "$HARNESS" in
       little-coder) dest="$HOME/.config/little-coder/extensions/caddis-warden.ts" ;;
       prime-agent)   dest="$HOME/.prime/agent/extensions/caddis-warden.ts" ;;

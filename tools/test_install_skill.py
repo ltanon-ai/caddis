@@ -147,3 +147,100 @@ def test_a_partial_failure_still_installs_the_good_destination(tmp_path):
     assert (foreign / "their-file.txt").is_file()
     assert "WARNING" in result.stderr, "the refused destination must be reported"
     assert result.returncode == 0, "one good install is still an install"
+
+
+# ── the sourced invocation ──────────────────────────────────────────────────
+#
+# The GitHub matrix runs `. ./onboard`. Sourcing does NOT change `$0`, so a
+# script that locates its own files through `$0` reaches for the SOURCING
+# script's directory instead of its own — and the skill install quietly went
+# looking outside the repository. These tests run the real `onboard` from a
+# synthetic repo so they stay fast and portable.
+
+REPO = Path(__file__).resolve().parents[1]
+NL = chr(10)
+
+
+def _fake_repo(tmp_path):
+    """A minimal repo layout: onboard, its helper, a skill, and the binary."""
+    onboard = REPO / "onboard"
+    tools = REPO / "tools" / "install-skill.sh"
+    if not onboard.is_file() or not tools.is_file():
+        pytest.skip("onboard and its helper are not beside this test")
+    exe = None
+    for root in (REPO, REPO.parent):
+        for name in ("caddis-warden.exe", "caddis-warden"):
+            candidate = root / "target" / "release" / name
+            if candidate.is_file():
+                exe = candidate
+                break
+        if exe:
+            break
+    if exe is None:
+        pytest.skip("no release binary built; nothing to onboard")
+
+    repo = tmp_path / "repo"
+    (repo / "tools").mkdir(parents=True)
+    (repo / "target" / "release").mkdir(parents=True)
+    (repo / "skills" / "caddis" / "calibration").mkdir(parents=True)
+    shutil.copy(onboard, repo / "onboard")
+    shutil.copy(tools, repo / "tools" / "install-skill.sh")
+    shutil.copy(exe, repo / "target" / "release" / exe.name)
+    (repo / "skills" / "caddis" / "SKILL.md").write_text("skill" + NL, encoding="utf-8")
+    (repo / "skills" / "caddis" / "ladder.py").write_text("x = 1" + NL, encoding="utf-8")
+
+    # `cargo build --release` is not what these tests measure, and building here
+    # would make them minutes long: a shim satisfies onboard's build step.
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    shim = shim_dir / "cargo"
+    shim.write_text("#!/bin/sh" + NL + "exit 0" + NL, encoding="utf-8")
+    shim.chmod(0o755)
+    return repo, shim_dir
+
+
+def _run_onboard(tmp_path, repo, shim_dir, sourced):
+    home = tmp_path / "home"
+    (home / ".caddis").mkdir(parents=True)
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env["PATH"] = str(shim_dir) + os.pathsep + env.get("PATH", "")
+    env["CADDIS_WARDEN_LEDGER"] = (home / ".caddis" / "warden-ledger.jsonl").as_posix()
+    if sourced:
+        # Deliberately in ANOTHER directory: that is what makes $0 wrong.
+        sourcer = tmp_path / "elsewhere" / "sourcer.sh"
+        sourcer.parent.mkdir(parents=True, exist_ok=True)
+        sourcer.write_text(". ./onboard e2e" + NL, encoding="utf-8")
+        argv = [_bash(), sourcer.as_posix()]
+    else:
+        argv = [_bash(), (repo / "onboard").as_posix(), "e2e"]
+    result = subprocess.run(
+        argv, cwd=str(repo), env=env, capture_output=True, text=True
+    )
+    return result, home / ".claude" / "skills" / "caddis" / "SKILL.md"
+
+
+def test_onboard_installs_the_skill_when_sourced(tmp_path):
+    repo, shim = _fake_repo(tmp_path)
+    result, skill = _run_onboard(tmp_path, repo, shim, sourced=True)
+    assert skill.is_file(), (
+        "sourcing left the skill uninstalled — $0 is the sourcing script, "
+        f"not onboard.{NL}{result.stdout}{result.stderr}"
+    )
+    assert result.returncode == 0
+
+
+def test_onboard_installs_the_skill_when_executed(tmp_path):
+    repo, shim = _fake_repo(tmp_path)
+    result, skill = _run_onboard(tmp_path, repo, shim, sourced=False)
+    assert skill.is_file(), result.stdout + result.stderr
+    assert result.returncode == 0
+
+
+def test_a_destination_whose_parent_cannot_be_made_is_reported(tmp_path):
+    src = _make_src(tmp_path)
+    blocker = tmp_path / "wall"
+    blocker.write_text("i am a file, not a directory" + NL, encoding="utf-8")
+    result = _install(src, blocker / "skills" / "caddis")
+    assert result.returncode != 0
+    assert "WARNING" in result.stderr
