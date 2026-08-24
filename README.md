@@ -2,14 +2,31 @@
 
 ![caddis — a conscience for coding agents](assets/banner.png)
 
-**A conscience for coding agents.**
+## Caddis at a glance
 
-Your AI agent can run any command. Including the ones it shouldn't.
+One binary between your agent and its tools; every part below ships in
+this repository, works locally, and has no cloud anywhere.
 
-Caddis is a tiny law engine that sits between a coding agent and its tools.
-Every tool call the harness routes through the installed adapter is judged
-before it runs: **allowed, steered, or denied**, with the reason, every time,
-in a local ledger you can audit.
+| Node | What it is |
+| --- | --- |
+| **Warden** | judges every tool call: allow, steer or deny |
+| **Ledger** | append-only audit: what, when, why, which agent |
+| **Cards** | falsifiable work units: Done-When + RED-TEST |
+| **Ladder** | measured L1–L3 levels for local model executors |
+| **Goal tree** | ordered child cards on a resumable event log |
+| **Adapters** | one thin nerve per harness, no policy inside |
+| **Onboard** | one command; proves itself with a live denial |
+| **Replay** | preview law changes against your own history |
+
+**A conscience — and a work discipline — for coding agents.**
+
+Caddis is a small local system for agent work you can trust. A law
+engine judges every tool call; an append-only ledger remembers every
+decision; cards make completion falsifiable and its proof mechanical;
+the ladder measures what a local model can do unsupervised; the goal
+tree carries a plan through kills and resumes. It is not only about
+what your agent may run — it is how the work itself is governed,
+recorded, and proven.
 
 The caddisfly larva builds its own protective case from materials it finds
 around it. An agent that grows a conscience from what's already on the
