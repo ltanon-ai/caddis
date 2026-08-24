@@ -262,10 +262,10 @@ The log's laws are the tree's whole durability story:
   shows every gated leaf, a re-dispatch of a finished one refuses with
   AlreadyDone, and the caller continues with the next unfinished
   child.
-- **Failures bubble, in stages.** A rejected leaf is retried up to the
-  attempt cap; if it still fails, the failure bubbles up to the plan,
-  which may replan exactly once — and a subtree that cannot converge is
-  strong-closed on a later walk, not inside the same call.
+- **Failures bubble, in stages.** A rejected leaf is retried — up to
+  three attempts per leaf; if it still fails, the failure bubbles up to
+  the plan, which may replan exactly once — and a subtree that cannot
+  converge is strong-closed on a later walk, not inside the same call.
 - **Dispatches carry a strategy stamp.** Every LeafDispatch event
   records the preset that produced it, in the tree's log. The ladder's
   determinism and hysteresis rules read a SEPARATE store — the

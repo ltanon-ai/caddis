@@ -145,7 +145,6 @@ def draw_tree():
     d.text((60, 44), "THE GOAL TREE", font=mono(34, bold=True), fill=TEXT)
     label(d, 60, 92, "plans decompose into ordered children; an append-only event log is the only state; a killed walk resumes from the file alone", 22)
 
-    label(d, 84, 190, "goal.jsonl (append-only events)", 19, TEAL, bold=True)
     events = [
         ("seq 7  PlanAccepted", DIM),
         ("seq 8  SubtreeLive", DIM),
@@ -153,10 +152,12 @@ def draw_tree():
         ("seq 10 LeafGated accept", DIM),
         ("seq 11 LeafDispatch{strategy}", TEAL),
         ("seq 12 LeafGated reject", AMBER),
-        ("seq 13 BubbleUp -> PLAN", AMBER),
-        ("seq 14 ReplanParent", AMBER),
-        ("seq 15 StrongClose", AMBER),
-        ("... the file only grows", DIM),
+        ("seq 13 LeafDispatch{strategy}", TEAL),
+        ("seq 14 LeafGated reject", AMBER),
+        ("seq 15 BubbleUp -> PLAN", AMBER),
+        ("seq 16 ReplanParent", AMBER),
+        ("... StrongClose on a LATER", DIM),
+        ("    walk, after retries exhaust", DIM),
     ]
     for i, (s, c) in enumerate(events):
         label(d, 84, 232 + i * 40, s, 18, c, bold=(c in (TEAL, AMBER)))
@@ -165,9 +166,9 @@ def draw_tree():
     label(d, 84, 696, "(AlreadyDone); the caller continues", 18)
     label(d, 684, 190, "PLAN (children + review)", 19, TEAL, bold=True)
     panel(d, 700, 250, 150, 90, None)
-    label(d, 716, 274, "CARD-A", 20, TEXT, bold=True)
-    label(d, 716, 302, "order 1", 16, DIM)
-    panel(d, 880, 250, 150, 90, None)
+    label(d, 84, 670, "rebuild: passed or strong-closed leaves", 18)
+    label(d, 84, 696, "refuse re-dispatch (AlreadyDone);", 18)
+    label(d, 84, 722, "the caller continues", 18)
     label(d, 896, 274, "CARD-B", 20, TEXT, bold=True)
     label(d, 896, 302, "order 2", 16, DIM)
     arrow(d, 775, 250, 775, 230)
@@ -195,7 +196,7 @@ def draw_tree():
         label(d, 1144, 272 + j * 24, line, 17, DIM)
     label(d, 1144, 400, "walk_goal", 20, TEAL, bold=True)
     for j, line in enumerate(_wrap(
-        "retries a failing leaf to the attempt cap, bubbles up, replans once - a stuck subtree strong-closes on a later walk", 42
+        "retries a failing leaf up to 3 attempts, bubbles up, replans once - a stuck subtree strong-closes on a later walk", 42
     )):
         label(d, 1144, 432 + j * 24, line, 17, DIM)
     label(d, 1144, 560, "BenchCols", 20, TEAL, bold=True)
