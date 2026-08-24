@@ -117,3 +117,33 @@ def test_both_destinations_are_installed(tmp_path):
     b = tmp_path / "home" / ".agents" / "skills" / "caddis"
     assert _install(src, a, b).returncode == 0
     assert (a / "SKILL.md").is_file() and (b / "SKILL.md").is_file()
+
+
+def test_zero_destinations_is_a_usage_error(tmp_path):
+    src = _make_src(tmp_path)
+    result = subprocess.run(
+        [_bash(), SCRIPT.as_posix(), src.as_posix()], capture_output=True, text=True
+    )
+    assert result.returncode == 2, "a call that installs nowhere must not read as success"
+
+
+def test_the_source_is_never_installed_over_itself(tmp_path):
+    # The destination is removed before the copy, so a destination that resolves
+    # to the source would delete the very tree being installed.
+    src = _make_src(tmp_path)
+    result = _install(src, src)
+    assert (src / "SKILL.md").is_file(), "the source tree was destroyed"
+    assert result.returncode != 0
+
+
+def test_a_partial_failure_still_installs_the_good_destination(tmp_path):
+    src = _make_src(tmp_path)
+    foreign = tmp_path / "somebody-elses"
+    foreign.mkdir()
+    (foreign / "their-file.txt").write_text("keep me\n", encoding="utf-8")
+    good = tmp_path / "home" / ".claude" / "skills" / "caddis"
+    result = _install(src, foreign, good)
+    assert (good / "SKILL.md").is_file()
+    assert (foreign / "their-file.txt").is_file()
+    assert "WARNING" in result.stderr, "the refused destination must be reported"
+    assert result.returncode == 0, "one good install is still an install"

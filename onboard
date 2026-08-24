@@ -56,7 +56,7 @@ row=$(tail -5 "$LEDGER" 2>/dev/null | grep '"body":"deny|git push --force origin
 SRC_SKILL="$(dirname "$0")/skills/caddis"
 bash "$(dirname "$0")/tools/install-skill.sh" "$SRC_SKILL" \
     "$HOME/.claude/skills/caddis" "$HOME/.agents/skills/caddis" \
-    || echo "onboard: the agent helper did not install everywhere (see above)" >&2
+    || die "the agent helper did not install anywhere (see the warnings above)"
 
 echo "onboard: PROOF — force-push DENIED (ledger seq $seq), echo ALLOWED."
 echo "onboard: the conscience is live. Next: wire your harness (ONBOARD.md step 2)" \
