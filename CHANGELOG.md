@@ -42,7 +42,7 @@ the destructive-command class, and a third harness family gets its nerve.
   out of scope, the same register as THREAT-MODEL's embedded-program
   boundary.
 
-## 0.2.3 — onboarding stops lying about the skill
+## 0.2.4 — onboarding stops lying about the skill
 
 - **Re-running `onboard` updates the skill again.** `cp -r SRC DEST` copies
   INTO an existing DEST, so the second onboarding — the one ONBOARD.md tells
