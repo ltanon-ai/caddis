@@ -45,3 +45,31 @@ fn plan_review_packs_hold_the_v1_contract() {
         );
     }
 }
+
+#[test]
+fn plan_review_fences_keep_the_nested_plan_in_one_section() {
+    // The wrapper's ```text fence embeds a whole plan card whose
+    // `# CHILDREN` / `# REVIEW` must never leak as wrapper sections.
+    for (name, text) in [("review-a", REVIEW_A), ("review-b", REVIEW_B)] {
+        let card = Card::parse(text).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let plan = card
+            .section("PLAN")
+            .unwrap_or_else(|| panic!("{name}: PLAN"));
+        assert!(
+            plan.body.contains("# CHILDREN"),
+            "{name}: nested children intact"
+        );
+        assert!(
+            plan.body.contains("# REVIEW"),
+            "{name}: nested review intact"
+        );
+        assert!(
+            card.section("CHILDREN").is_none(),
+            "{name}: no leaked section"
+        );
+        assert!(
+            card.section("REVIEW").is_none(),
+            "{name}: no leaked section"
+        );
+    }
+}

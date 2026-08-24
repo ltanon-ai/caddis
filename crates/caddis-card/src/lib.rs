@@ -34,24 +34,51 @@ pub enum CardErr {
 fn heading_title(line: &str) -> Option<&str> {
     line.strip_prefix("## ").or_else(|| line.strip_prefix("# "))
 }
+/// One body line, classified for the section walker. A ``` fence toggles
+/// fenced mode: headings and `---` INSIDE a fence are content — the
+/// plan-review packs embed whole plan cards in ```text fences, and their
+/// `# CHILDREN` must never leak out as wrapper sections.
+enum Line<'a> {
+    Fence,
+    Frontmatter,
+    Heading(&'a str),
+    Body,
+}
+
+fn classify<'a>(line: &'a str, fenced: &mut bool) -> Line<'a> {
+    if line.starts_with("```") {
+        *fenced = !*fenced;
+        return Line::Fence;
+    }
+    if *fenced {
+        return Line::Body;
+    }
+    if line == "---" {
+        return Line::Frontmatter;
+    }
+    match heading_title(line) {
+        Some(title) => Line::Heading(title),
+        None => Line::Body,
+    }
+}
 
 impl Card {
     /// Parse'ina kortos tekstą: `---` frontmatter blokas, po to `#`/`##`
     /// `Sekcija` antraštės (H2 leidžiama, nes markdownlint MD025 reikalauja
-    /// vienintelio H1 dokumente — CARD-0097; gilesnės antraštės lieka turiniu).
+    /// vienintelio H1 dokumente — CARD-0097; gilesnės antraštės lieka
+    /// turiniu). Fenced blokų antraštės — turinys (plan-review paketai).
     pub fn parse(text: &str) -> Result<Self, CardErr> {
         let mut frontmatter = BTreeMap::new();
         let mut in_fm = false;
         let mut sections = Vec::new();
         let mut cur: Option<Section> = None;
+        let mut fenced = false;
         for (i, raw) in text.lines().enumerate() {
             let line = raw.trim_end();
             let n = i + 1;
-            if line == "---" {
+            let cls = classify(line, &mut fenced);
+            if let Line::Frontmatter = cls {
                 in_fm = !in_fm && frontmatter.is_empty() && sections.is_empty();
-                if in_fm {
-                    continue;
-                }
                 continue;
             }
             if in_fm {
@@ -60,7 +87,7 @@ impl Card {
                 }
                 continue;
             }
-            if let Some(title) = heading_title(line) {
+            if let Line::Heading(title) = cls {
                 if let Some(s) = cur.take() {
                     sections.push(s);
                 }
@@ -69,7 +96,9 @@ impl Card {
                     start_line: n,
                     body: String::new(),
                 });
-            } else if let Some(s) = cur.as_mut() {
+                continue;
+            }
+            if let Some(s) = cur.as_mut() {
                 s.body.push_str(raw);
                 s.body.push('\n');
             }
