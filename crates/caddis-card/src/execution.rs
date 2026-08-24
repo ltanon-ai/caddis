@@ -109,12 +109,18 @@ fn parse_anchors(body: &str) -> Vec<Anchor> {
 }
 
 /// Scalar `key: value` fields, one pass (level normalizes LOW on garbage;
-/// blast parses or stays None so the caller can hard-error once).
+/// blast parses or stays None so the caller can hard-error once). Parsing
+/// STOPS at the top-level `anchors:` line: anchor bodies are EXACT-verbatim
+/// file bytes, and a fixture line like `blast: 4` or `level: int` must
+/// never retune or reject the declared contract above it.
 fn parse_fields(body: &str) -> (String, Option<u32>, bool) {
     let mut level = String::new();
     let mut blast = None;
     let mut claims = false;
     for line in body.lines() {
+        if line == "anchors:" {
+            break;
+        }
         if let Some((k, v)) = line.split_once(':') {
             match k.trim() {
                 "level" => level = normalize_level(v.trim()),

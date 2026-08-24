@@ -76,6 +76,20 @@ fn absent_level_defaults_to_l1_like_garbage_does() {
 }
 
 #[test]
+fn anchor_bytes_never_retune_the_contract() {
+    // A verbatim fixture mentioning contract keys inside content:| is
+    // DATA, not a declaration (doc-reality sentinel round).
+    let text = with_exec(
+        "level: L1\nblast: 1\nclaims-forbidden: true\nanchors:\n  - path: cfg.py\n    content: |\n      level: L3\n      blast: 4\n      claims-forbidden: false\nallowlist:\n  - edit cfg.py\n",
+    );
+    let card = Card::parse(&text).expect("parse");
+    let exec = card.validate_strict().expect("the declared contract holds");
+    assert_eq!(exec.level, "L1");
+    assert_eq!(exec.blast, 1);
+    assert!(exec.claims_forbidden);
+}
+
+#[test]
 fn invalid_or_absent_level_defaults_to_l1_never_errors() {
     let text = with_exec(
         "level: L9\nblast: 1\nclaims-forbidden: true\nanchors:\n  - path: a\n    content: |\n      x\nallowlist:\n  - edit a\n",

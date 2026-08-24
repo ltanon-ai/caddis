@@ -66,10 +66,8 @@ def draw_card_anatomy():
         label(d, x + 24, y + 18, t, 22, col, bold=True)
         for j, line in enumerate(g.split("\n")):
             label(d, x + 24, y + 52 + j * 24, line, 17)
-    for y in (240, 500):
-        arrow(d, 620, y, 700, y)
-
-    label(d, 60, H - 64, "sections sit at # or ## - and a fenced block is CONTENT: an embedded plan never leaks its sections into the wrapper", 19)
+    for x0, y0, y1 in ((620, 250, 237), (620, 408, 372), (620, 460, 512), (620, 512, 662)):
+        arrow(d, x0, y0, 700, y1)
     img.save(os.path.join(ASSETS, "diagram-card-anatomy.png"))
 
 
@@ -154,17 +152,19 @@ def draw_tree():
         ("seq 12 LeafGated reject", AMBER),
         ("seq 13 LeafDispatch{strategy}", TEAL),
         ("seq 14 LeafGated reject", AMBER),
-        ("seq 15 BubbleUp -> PLAN", AMBER),
-        ("seq 16 ReplanParent", AMBER),
+        ("seq 15 LeafDispatch{strategy}", TEAL),
+        ("seq 16 LeafGated reject", AMBER),
+        ("seq 17 BubbleUp -> PLAN", AMBER),
+        ("seq 18 ReplanParent", AMBER),
         ("... StrongClose on a LATER", DIM),
         ("    walk, after retries exhaust", DIM),
     ]
     for i, (s, c) in enumerate(events):
-        label(d, 84, 232 + i * 40, s, 18, c, bold=(c in (TEAL, AMBER)))
-    label(d, 84, 740, "KILLED MID-TREE ->", 19, AMBER, bold=True)
-    label(d, 84, 768, "rebuild: passed or strong-closed leaves", 18)
-    label(d, 84, 794, "refuse re-dispatch (AlreadyDone);", 18)
-    label(d, 84, 820, "the caller continues with the next child", 18)
+        label(d, 84, 228 + i * 34, s, 18, c, bold=(c in (TEAL, AMBER)))
+    label(d, 84, 726, "KILLED MID-TREE ->", 19, AMBER, bold=True)
+    label(d, 84, 754, "rebuild: passed or strong-closed leaves", 18)
+    label(d, 84, 780, "refuse re-dispatch (AlreadyDone);", 18)
+    label(d, 84, 806, "the caller continues with the next child", 18)
 
     # the tree shape
     panel(d, 660, 170, 400, 300, None, accent=TEAL)
