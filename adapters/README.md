@@ -22,6 +22,29 @@ steer → additionalContext on the same PreToolUse decision, allow → silence).
 Register it in your settings' `hooks.PreToolUse` with matcher `"*"` (snippet in
 the file's docstring).
 
+## Kernel-based harnesses: `rlm/`
+
+rlm-style harnesses run the model through a persistent IPython kernel, so
+every effect is a Python call and the shell-shaped ones funnel through
+`subprocess.*` and `os.system`/`os.popen`. `rlm/warden_repl.py` wraps THAT
+surface — the standard library, never the harness's internals, so harness
+versions cannot break the nerve:
+
+```python
+import warden_repl; warden_repl.install()   # from a cell or sitecustomize
+```
+
+deny raises `WardenRefusal` with the warden's reason (the call never runs;
+the exception text is the feedback the kernel shows the model); steer
+writes the law beside the output and runs; allow is silent. Every warden
+spawn is stamped `CADDIS_WARDEN_FROM=rlm` for ledger attribution.
+
+⚠ **The boundary, stated honestly:** this wraps SHELL exec. A pure-Python
+destructive act with no subprocess call — `shutil.rmtree(...)`,
+`open(path, "w")`, `os.remove` — is OUT of scope, the same register as
+THREAT-MODEL's embedded-program boundary: the warden parses shell grammar,
+not Python semantics.
+
 ## Stamping the caller — per adapter
 
 - **`caddis-warden.ts`**: the `CALLER` constant at the top of the adapter is

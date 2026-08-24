@@ -4,6 +4,44 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+## 0.2.3 — measurement, destructive laws, and the rlm nerve
+
+The ledger learns to answer questions about itself, the law engine grows
+the destructive-command class, and a third harness family gets its nerve.
+
+- **Every dispatch now carries its measured context.** Ladder profiles
+  (schema v3, tolerant of every older row) stamp each dispatch with
+  `context_bytes` — the measured utf-8 byte sum of card + anchors + annex
+  at dispatch time — and the goal tree's `LeafDispatch` event carries the
+  same number, with old logs parsing unchanged. Context rot becomes a
+  number you can plot, not a feeling.
+- **`caddis-warden report` reads the ledger back.** Counts by verdict and
+  caller, first/last timestamps, deny reasons grouped by the law id the
+  why field carries; `--from`/`--since`/`--verdict`/`--last` narrow it,
+  `--json` feeds machines. The nightly question now has a digest command.
+- **Replay counts what fired.** `--replay` gains a per-law summary —
+  deny and steer fires over the judged rows, plus the never-fired list
+  from the registry — so coverage is read, not assumed.
+- **The destructive-command laws landed** (council-shaped): `rm -rf`
+  against absolute roots (`/`, `/usr`, `C:\`, `%USERPROFILE%`, `$HOME`…),
+  `..` escapes above the workspace, and NULL variable expansions
+  (`rm -rf $UNSET_VAR/` is effectively `rm -rf /`) are DENIED in every
+  flag spelling and through `sudo`/`env` wrapper descent; named relative
+  subpaths (`build/`, `dist/`) stay free — build dirs are legitimate
+  work; bare `*` denies at the workspace root and steers after a `cd`;
+  `curl | bash` STEERS with a domain trustlist (rustup, Homebrew, bun
+  named; untrusted domains show the exact URL) and the class is never
+  hard-denied — installer false positives are what get a warden
+  switched off.
+- **The rlm adapter.** Kernel-based harnesses get a nerve too:
+  `adapters/rlm/warden_repl.py` wraps the standard-library exec surface
+  (`subprocess.*`, `os.system`, `os.popen`) — never harness internals —
+  denying before the exec with the warden's reason, steering beside the
+  output, stamped `CADDIS_WARDEN_FROM=rlm`. The boundary is stated where
+  a reader meets it: pure-Python destructiveness without a shell call is
+  out of scope, the same register as THREAT-MODEL's embedded-program
+  boundary.
+
 ## 0.2.2 — the latch fix
 
 - **`shell.exit-code-through-pipe` no longer inherits.** The check tracked

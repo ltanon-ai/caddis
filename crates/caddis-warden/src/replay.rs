@@ -18,103 +18,11 @@
 //!   the directory you run replay in, not from the agent's old cwd.
 //! - The report never changes anything; replay is read-only by construction.
 
-use caddis_warden::{decide, ToolCall, Verdict};
+use crate::rows::{first_line_capped, law_id_bracketed, parse_row, split_body, Row};
+use caddis_warden::{checks, decide, ToolCall, Verdict};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-struct Row {
-    seq: u64,
-    from: String,
-    ts: u64,
-    tool: String,
-    body: String,
-}
-
-/// Scan a JSONL row for the three fields replay needs — no serde, this
-/// crate carries zero dependencies by stated property. Returns None for
-/// lines that are not ledger rows; the unescape is the minimal JSON set
-/// the ledger writer produces (\", \\, \n, \t).
-fn parse_row(line: &str) -> Option<Row> {
-    let seq = extract(line, "\"seq\":")?.parse::<u64>().ok()?;
-    let typ = extract(line, "\"type\":\"")?;
-    let body = extract(line, "\"body\":\"")?;
-    let from = unescape(&extract(line, "\"from\":\"").unwrap_or_default());
-    let ts = extract(line, "\"ts\":")
-        .and_then(|t| t.parse::<u64>().ok())
-        .unwrap_or(0);
-    Some(Row {
-        seq,
-        from,
-        ts,
-        tool: unescape(&typ),
-        body: unescape(&body),
-    })
-}
-
-/// The raw text after `needle` up to the closing quote or digit end.
-fn extract(line: &str, needle: &str) -> Option<String> {
-    let start = line.find(needle)? + needle.len();
-    let rest = &line[start..];
-    if needle.ends_with('"') {
-        // string field: read to the unescaped closing quote
-        let mut out = String::new();
-        let mut chars = rest.chars();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                out.push(c);
-                out.push(chars.next()?);
-            } else if c == '"' {
-                return Some(out);
-            } else {
-                out.push(c);
-            }
-        }
-        None
-    } else {
-        // numeric-or-quoted field: the real ledger quotes ts ("ts":"1787…"),
-        // fixtures write it bare — accept both shapes.
-        Some(
-            rest.split(',')
-                .next()?
-                .trim_end_matches('}')
-                .trim_matches('"')
-                .to_string(),
-        )
-    }
-}
-
-fn unescape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some(other) => out.push(other),
-            None => out.push('\\'),
-        }
-    }
-    out
-}
-
-/// Split `tag|command|path|why` — the command may contain pipes (it is
-/// never re-derived from elsewhere), so the tail splits from the RIGHT.
-fn split_body(body: &str) -> Option<(String, String)> {
-    let (tag, rest) = body.split_once('|')?;
-    // rest = "command|path|why": strip why, then path — from the right, so
-    // pipes INSIDE the command survive.
-    let without_why = rest.rsplit_once('|')?.0;
-    let cmd = without_why.rsplit_once('|')?.0;
-    Some((tag.to_string(), cmd.to_string()))
-}
-
-fn first_line_capped(s: &str) -> String {
-    s.lines().next().unwrap_or("").chars().take(60).collect()
-}
 
 /// One row's re-judgement outcome.
 enum Outcome {
@@ -129,23 +37,28 @@ enum Outcome {
 /// Re-judge a single row against the current law. Skips what the ledger
 /// deliberately never kept (masked, elided, non-command tools) rather
 /// than guessing — the secrets and size doctrines outrank fidelity.
-fn classify(row: &Row) -> Outcome {
+/// REPLAY-COUNTS-1: also returns the law ids the CURRENT verdict fired
+/// (deny id, or every steer id) so the digest can count coverage — one
+/// `decide`, both facts, never a second judgement.
+fn classify(row: &Row) -> (Outcome, Vec<(&'static str, String)>) {
     if row.tool != "tool.bash" && row.tool != "tool.powershell" {
-        return Outcome::Skipped;
+        return (Outcome::Skipped, Vec::new());
     }
     let Some((old_tag, cmd)) = split_body(&row.body) else {
-        return Outcome::Skipped;
+        return (Outcome::Skipped, Vec::new());
     };
     if cmd.contains("***redacted") || cmd.contains("bytes truncated]") {
-        return Outcome::Skipped;
+        return (Outcome::Skipped, Vec::new());
     }
     let call = ToolCall::new(&row.tool["tool.".len()..]).command(&cmd);
-    let new_tag = match decide(&call) {
+    let verdict = decide(&call);
+    let fires = fired_ids(&verdict);
+    let new_tag = match &verdict {
         Verdict::Allow => "allow",
         Verdict::Steer { .. } => "steer",
         Verdict::Deny { .. } => "deny",
     };
-    if new_tag == old_tag {
+    let outcome = if new_tag == old_tag {
         Outcome::Unchanged
     } else if new_tag == "deny" {
         Outcome::NewDeny
@@ -153,6 +66,22 @@ fn classify(row: &Row) -> Outcome {
         Outcome::Freed
     } else {
         Outcome::Note
+    };
+    (outcome, fires)
+}
+
+/// The law ids one verdict fired: the bracketed id in a deny reason, or
+/// every id the steer's why field carries.
+fn fired_ids(verdict: &Verdict) -> Vec<(&'static str, String)> {
+    match verdict {
+        Verdict::Deny { reason } => law_id_bracketed(reason)
+            .map(|id| vec![("deny", id)])
+            .unwrap_or_default(),
+        Verdict::Steer { why, .. } => why
+            .split(", ")
+            .map(|id| ("steer", id.to_string()))
+            .collect(),
+        Verdict::Allow => Vec::new(),
     }
 }
 
@@ -215,6 +144,8 @@ pub fn run(args: &[String]) -> i32 {
     let (mut denies, mut freed, mut skipped) = (0u64, 0u64, 0u64);
     let mut news: Vec<String> = Vec::new();
     let mut frees: Vec<String> = Vec::new();
+    let mut deny_fires: BTreeMap<String, u64> = BTreeMap::new();
+    let mut steer_fires: BTreeMap<String, u64> = BTreeMap::new();
     let filters = parse_filters(args);
     for line in text.lines() {
         let Some(row) = parse_row(line) else {
@@ -225,7 +156,16 @@ pub fn run(args: &[String]) -> i32 {
         }
         rows += 1;
         let head = first_line_capped(&split_body(&row.body).map(|(_, c)| c).unwrap_or_default());
-        match classify(&row) {
+        let (outcome, fires) = classify(&row);
+        for (kind, id) in fires {
+            let slot = if kind == "deny" {
+                &mut deny_fires
+            } else {
+                &mut steer_fires
+            };
+            *slot.entry(id).or_default() += 1;
+        }
+        match outcome {
             Outcome::Skipped => skipped += 1,
             Outcome::Unchanged | Outcome::Note => {
                 judged += 1;
@@ -254,5 +194,33 @@ pub fn run(args: &[String]) -> i32 {
     for f in &frees {
         println!("{f}");
     }
+    print_law_fires(&deny_fires, &steer_fires);
     0
+}
+
+/// The REPLAY-COUNTS-1 summary: per law id, deny and steer fires over the
+/// judged rows, then every REGISTERED law that never fired — coverage the
+/// drift ratchet can read, never a claim that unfired means unnecessary.
+fn print_law_fires(deny_fires: &BTreeMap<String, u64>, steer_fires: &BTreeMap<String, u64>) {
+    let mut fired: BTreeSet<&str> = BTreeSet::new();
+    for id in deny_fires.keys().chain(steer_fires.keys()) {
+        fired.insert(id);
+    }
+    if fired.is_empty() {
+        println!("law fires: none");
+    } else {
+        println!("law fires (current law over judged rows):");
+        for id in &fired {
+            println!(
+                "  {id} deny={} steer={}",
+                deny_fires.get(*id).copied().unwrap_or(0),
+                steer_fires.get(*id).copied().unwrap_or(0)
+            );
+        }
+    }
+    let never: Vec<&str> = checks::registered_ids()
+        .into_iter()
+        .filter(|id| !fired.contains(id))
+        .collect();
+    println!("never fired: {}", never.join(", "));
 }

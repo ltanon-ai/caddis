@@ -113,7 +113,8 @@ fn walk_leaf(
     cols: &mut BenchCols,
 ) -> Result<LeafEnd, StateErr> {
     loop {
-        let pass = walker.dispatch_as(card, exec, &Lane::Weak("bench".into()), WEAK_FIRST)?;
+        let pass =
+            walker.dispatch_as(card, exec, &Lane::Weak("bench".into()), WEAK_FIRST, 0)?;
         if pass {
             return Ok(LeafEnd::Green);
         }

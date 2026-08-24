@@ -34,12 +34,16 @@ fn leaf_fields(kind: &EventKind) -> Option<Vec<(String, String)>> {
             cost,
             lane,
             strategy,
+            context_bytes,
         } => Some(vec![
             ("card".to_string(), esc(card)),
             ("attempt".to_string(), attempt.to_string()),
             ("cost".to_string(), cost.to_string()),
             ("lane".to_string(), esc(&lane.tag())),
             ("strategy".to_string(), esc(strategy)),
+            // Appended LAST so an older reader that stops at its known
+            // keys still parses the prefix — tolerance in both directions.
+            ("context_bytes".to_string(), context_bytes.to_string()),
         ]),
         EventKind::LeafGated { card, pass } => Some(vec![
             ("card".to_string(), esc(card)),
@@ -155,6 +159,8 @@ fn build_leaf(kind: &str, f: &[(String, String)]) -> Option<EventKind> {
             cost: take(f, "cost").parse().unwrap_or(0),
             lane: Lane::from_tag(&take(f, "lane")),
             strategy: take(f, "strategy"),
+            // Tolerant: v2-era lines carry no field — 0, never a refusal.
+            context_bytes: take(f, "context_bytes").parse().unwrap_or(0),
         }),
         "leaf_gated" => Some(EventKind::LeafGated {
             card: take(f, "card"),

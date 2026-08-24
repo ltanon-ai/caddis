@@ -165,3 +165,43 @@ fn replay_filters_by_recency() {
         "only rows inside the window are replayed, got: {report}"
     );
 }
+
+#[test]
+fn replay_counts_law_fires_exactly_and_lists_never_fired() {
+    // REPLAY-COUNTS-1: the replay digest gains per-law firing counts
+    // (deny/steer separately, CURRENT law over the judged rows) and the
+    // never-fired list — coverage the drift ratchet can read.
+    let path = std::env::temp_dir()
+        .join(format!("caddis-replay-{}-counts.jsonl", std::process::id()));
+    let rows = format!(
+        "{}{}{}{}{}",
+        row(1, "allow|echo ok||"),
+        row(2, "allow|git push --force origin main||"), // old law missed it
+        row(3, "deny|git push --force origin main||why"),
+        row(4, "steer|git show HEAD:a.txt | wc -l||git.git-show-piped-counter"),
+        row(5, "allow|git show HEAD:b.txt | wc -l||"),
+    );
+    std::fs::write(&path, rows).unwrap();
+    let report = replay(&path);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        report.contains("git.push.force-to-protected deny=2"),
+        "the force-push law fired on BOTH force-push rows, got: {report}"
+    );
+    assert!(
+        report.contains("shell.git-show-piped-counter deny=0 steer=2"),
+        "the piped-counter law steered both git-show rows, got: {report}"
+    );
+    assert!(
+        report.contains("never fired:"),
+        "the never-fired list is present, got: {report}"
+    );
+    assert!(
+        report.contains("git.hooks.skipped"),
+        "a registered law with zero fires appears in the never-fired list, got: {report}"
+    );
+    assert!(
+        !report.contains("git.push.force-to-protected,"),
+        "a FIRED law never appears in the never-fired list, got: {report}"
+    );
+}

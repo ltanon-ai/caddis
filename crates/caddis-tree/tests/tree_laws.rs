@@ -32,6 +32,7 @@ fn intake_laws_strong_root_red_once() {
         &pass_exec(),
         &Lane::Weak("sim".into()),
         "weak-first",
+            0,
     );
     assert!(
         matches!(over, Err(StateErr::OrphanCard)),
@@ -45,13 +46,13 @@ fn strong_lane_never_writes_under_a_live_subtree() {
     seed_repo(&root);
     let mut w = walking(&root);
     w.accept_plan("PLAN-T", &plan()).unwrap();
-    let strong = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong, "weak-first");
+    let strong = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong, "weak-first", 0);
     assert!(
         matches!(strong, Err(StateErr::StrongUnderLive)),
         "the strong lane closes, never writes under live"
     );
     w.record_strong_close("CARD-A").unwrap();
-    let after = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong, "weak-first");
+    let after = w.dispatch_as("CARD-A", &pass_exec(), &Lane::Strong, "weak-first", 0);
     assert!(
         matches!(after, Err(StateErr::AlreadyDone)),
         "closed is closed for every lane"
@@ -70,7 +71,8 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
                 "CARD-A",
                 &fail_exec(),
                 &Lane::Weak("sim".into()),
-                "weak-first"
+                "weak-first",
+                    0
             )
             .unwrap());
         match w.on_fail("CARD-A") {
@@ -83,7 +85,8 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
             "CARD-A",
             &fail_exec(),
             &Lane::Weak("sim".into()),
-            "weak-first"
+            "weak-first",
+                0
         )
         .unwrap());
     assert_eq!(
@@ -101,6 +104,7 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
             &fail_exec(),
             &Lane::Weak("sim".into()),
             "weak-first",
+                0,
         )
         .unwrap();
     }
@@ -148,7 +152,8 @@ fn dispatch_stamps_strategy_into_events() {
             "CARD-A",
             &pass_exec(),
             &Lane::Weak("sim".into()),
-            "weak-first"
+            "weak-first",
+                0
         )
         .unwrap());
     let st = TreeState::load(root.join("goal.jsonl"), caps()).unwrap();
@@ -158,6 +163,68 @@ fn dispatch_stamps_strategy_into_events() {
             EventKind::LeafDispatch { strategy, .. } if strategy == "weak-first"
         )),
         "strategy is stamped per dispatch"
+    );
+}
+
+#[test]
+fn dispatch_records_context_bytes() {
+    // CTXROT-1 RED: the LeafDispatch event carries the measured context
+    // byte sum (card + anchors + annex) beside cost — telemetry the
+    // replay can count on, not an estimate.
+    let root = scratch("ctxbytes");
+    seed_repo(&root);
+    let mut w = walking(&root);
+    w.accept_plan("PLAN-T", &plan()).unwrap();
+    assert!(w
+        .dispatch_as(
+            "CARD-A",
+            &pass_exec(),
+            &Lane::Weak("sim".into()),
+            "weak-first",
+            4321
+        )
+        .unwrap());
+    let st = TreeState::load(root.join("goal.jsonl"), caps()).unwrap();
+    assert!(
+        st.events().iter().any(|e| matches!(
+            &e.kind,
+            EventKind::LeafDispatch { context_bytes: 4321, .. }
+        )),
+        "the measured byte sum rides the dispatch event"
+    );
+    let log = fs::read_to_string(root.join("goal.jsonl")).unwrap();
+    assert!(
+        log.contains("\"context_bytes\":\"4321\""),
+        "and survives the log round-trip: {log}"
+    );
+}
+
+#[test]
+fn old_log_without_context_bytes_still_parses() {
+    // CTXROT-1 tolerant direction: a v2-era log line (no context_bytes
+    // field) replays with the field at 0 — the tree refuses only on seq
+    // mismatch, and the codec extends without breaking old logs.
+    let root = scratch("ctxold");
+    fs::write(root.join("root_red.md"), "assert!(tree_works());\n").unwrap();
+    let log = root.join("goal.jsonl");
+    fs::write(
+        &log,
+        concat!(
+            "{\"seq\":\"1\",\"writer\":\"w1\",\"kind\":\"goal_intake\",\"root_red\":\"r.md\"}\n",
+            "{\"seq\":\"2\",\"writer\":\"w1\",\"kind\":\"plan_accepted\",\"plan\":\"P\",\"children\":\"CARD-A\"}\n",
+            "{\"seq\":\"3\",\"writer\":\"w1\",\"kind\":\"subtree_live\",\"parent\":\"P\"}\n",
+            "{\"seq\":\"4\",\"writer\":\"w1\",\"kind\":\"leaf_dispatch\",\"card\":\"CARD-A\",",
+            "\"attempt\":\"1\",\"cost\":\"5\",\"lane\":\"weak:sim\",\"strategy\":\"weak-first\"}\n",
+        ),
+    )
+    .unwrap();
+    let st = TreeState::load(&log, caps()).unwrap();
+    assert!(
+        st.events().iter().any(|e| matches!(
+            &e.kind,
+            EventKind::LeafDispatch { context_bytes: 0, card, .. } if card == "CARD-A"
+        )),
+        "old line parses, missing field reads as 0"
     );
 }
 

@@ -55,6 +55,10 @@ pub enum EventKind {
         cost: u64,
         lane: Lane,
         strategy: String,
+        /// CTXROT-1: the measured byte sum of the context this dispatch
+        /// carried (card + anchors + annex). Old logs predate the field
+        /// and parse with 0 — the codec is tolerant by law.
+        context_bytes: u64,
     },
     LeafGated {
         card: String,

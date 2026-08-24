@@ -27,8 +27,10 @@ pub mod incident_log;
 pub mod incidents;
 pub(crate) mod lexer;
 pub(crate) mod naive;
+pub mod netpipe;
 pub(crate) mod positions;
 pub(crate) mod registry;
+pub mod rmrf;
 pub(crate) mod runners;
 pub(crate) mod scan;
 pub mod shell;
@@ -108,7 +110,13 @@ const REGISTRY: &[(&str, CheckFn, Severity)] = &[
         Severity::Soft,
     ),
     ("shell.posix-tmp-across-python", c_posix_tmp, Severity::Soft),
+    // DESTRUCTIVE-1 (gemini ruling): rm -rf against protected roots /
+    // escapes / null expansions is HARD; `*` after cd and curl|bash STEER.
+    ("fs.rmrf.protected-root", c_rmrf_root, Severity::Hard),
+    ("fs.rmrf.wildcard", c_rmrf_star, Severity::Soft),
+    ("net.pipe-to-shell", c_pipe_shell, Severity::Soft),
 ];
+
 
 fn c_reset(ctx: &Ctx) -> Finding {
     // The trigger belongs to the check. Without it the `git status` measurement
@@ -148,6 +156,18 @@ fn c_pipe_rc(ctx: &Ctx) -> Finding {
 }
 fn c_gate_chain(ctx: &Ctx) -> Finding {
     shell_local::gate_chained_into_commit(ctx.command)
+}
+
+fn c_rmrf_root(ctx: &Ctx) -> Finding {
+    rmrf::protected_root(ctx.command)
+}
+
+fn c_rmrf_star(ctx: &Ctx) -> Finding {
+    rmrf::wildcard(ctx.command)
+}
+
+fn c_pipe_shell(ctx: &Ctx) -> Finding {
+    netpipe::pipe_to_shell(ctx.command)
 }
 fn c_posix_tmp(ctx: &Ctx) -> Finding {
     shell_local::posix_tmp_across_python(ctx.command)

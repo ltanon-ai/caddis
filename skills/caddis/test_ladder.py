@@ -143,7 +143,7 @@ def test_plan_oracle_never_pollutes_exec_telemetry():
 def test_v2_stamped_rows_roundtrip_and_upgrade():
     with tempfile.TemporaryDirectory() as tmp:
         p = fresh(tmp, "ollama_gpt-oss-20b")
-        assert p.data["version"] == 2, "schema v2 is explicit, not implied"
+        assert p.data["version"] == 3, "schema v3 is explicit, not implied"
         assert p.data["stamped"] == []
         p.record_dispatch(
             goal_id="g1", card_id="CARD-A", strategy="weak-first",
@@ -165,7 +165,7 @@ def test_v2_stamped_rows_roundtrip_and_upgrade():
             json.dump(legacy, f)
         r = ladder.Profile(v1)
         r.load()
-        assert r.data["version"] == 2 and r.data["stamped"] == [], "v1 upgrades on load"
+        assert r.data["version"] == 3 and r.data["stamped"] == [], "v1 upgrades on load"
 
 
 def test_determinism_holds_over_tagged_rows_only():
@@ -197,3 +197,41 @@ def test_preset_switch_needs_four_consecutive_failures():
 def test_switching_to_the_preset_in_force_is_never_a_switch():
     rows = [{"strategy": "weak-first", "outcome": "reject"}] * 4
     assert not ladder.should_switch(rows, "weak-first", "weak-first")
+
+def test_dispatch_records_measured_context_bytes():
+    """CTXROT-1: a dispatch row carries the measured utf-8 BYTE sum of
+    card + anchors + annex at dispatch time — bytes, not chars, not an
+    estimate."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = fresh(tmp)
+        p.record_dispatch(
+            goal_id="g1", card_id="CARD-A", strategy="weak-first",
+            blast_set=["a.py"], outcome="accept",
+            card="åBCD", anchors="EF", annex="",
+        )
+        row = p.data["stamped"][-1]
+        assert row["context_bytes"] == 7, "å is two bytes: 2+4+2+0 measured"
+
+
+def test_v2_rows_without_context_bytes_parse_unchanged():
+    """CTXROT-1 tolerant read: a v2 profile's rows (no context_bytes
+    field) load untouched, and the determinism read still works over
+    them — schema v3 never rewrites history it inherited."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "v2.json")
+        v2 = {
+            "model": "m",
+            "version": 2,
+            "stamped": [{
+                "goal_id": "g0", "card_id": "CARD-OLD",
+                "strategy": "weak-first",
+                "model_fingerprint": {"model": "m", "noted_at": 1},
+                "blast_set": ["x.py"], "outcome": "reject",
+            }],
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(v2, f)
+        p = ladder.Profile(path).load()
+        assert "context_bytes" not in p.data["stamped"][0], "rows stay as written"
+        ok, offenders = ladder.determinism(p.data["stamped"])
+        assert ok and not offenders, "old rows still feed the determinism read"

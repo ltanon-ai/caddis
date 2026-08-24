@@ -120,6 +120,7 @@ impl Walker {
         exec: &dyn LeafExecutor,
         lane: &Lane,
         strategy: &str,
+        context_bytes: u64,
     ) -> Result<bool, StateErr> {
         self.state.can_dispatch()?;
         let attempt = self.state.dispatched(card) + 1;
@@ -130,6 +131,7 @@ impl Walker {
             cost: out.cost,
             lane: lane.clone(),
             strategy: strategy.to_string(),
+            context_bytes,
         })?;
         self.state.append(EventKind::LeafGated {
             card: card.to_string(),

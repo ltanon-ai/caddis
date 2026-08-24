@@ -23,6 +23,10 @@ Rules (quorum-pinned, correction #3/#4 + sol refinements adopted):
   extended into the warden envelope. Determinism = same (goal_id,
   strategy) → same blast_set over TAGGED rows only; hysteresis N=4 gates
   any preset switch; presets-only until determinism holds.
+- schema v3 (CTXROT-1): every stamped row gains context_bytes — the
+  measured utf-8 byte sum of card + anchors + annex at dispatch time.
+  Tolerant read: v2 rows without the field parse unchanged, history is
+  never rewritten by an upgrade.
 """
 import json
 import os
@@ -37,7 +41,7 @@ def blank(model):
     return {
         "model": model,
         "fingerprint": {"noted_at": int(time.time())},
-        "version": 2,
+        "version": 3,
         "stamped": [],
         "level": "L1",
         "levels": {
@@ -70,8 +74,11 @@ class Profile:
         return self
 
     def _upgrade(self):
-        """Schema v2 (BC4): stamped rows; a v1 file gains them empty."""
-        self.data.setdefault("version", 2)
+        """Schema upgrades, tolerant both ways (BC4 stamped rows; CTXROT-1
+        context_bytes): a v1 file gains the v2 fields empty; a v2 file's
+        rows (no context_bytes) load EXACTLY as written — an upgrade never
+        rewrites inherited history."""
+        self.data.setdefault("version", 3)
         self.data.setdefault("stamped", [])
         self.data.setdefault(
             "plan",
@@ -170,10 +177,14 @@ class Profile:
             pl["well_formed"] += 1
             pl["intent_rejected"] += 1
 
-    # ── schema v2: per-dispatch stamped rows (BC4) ──────────────────────
-    def record_dispatch(self, goal_id, card_id, strategy, blast_set, outcome):
+    # ── schema v3: context telemetry on the dispatch row (CTXROT-1) ────
+    def record_dispatch(self, goal_id, card_id, strategy, blast_set, outcome,
+                        card="", anchors="", annex=""):
         """One stamped row per dispatch: the strategy ledger determinism
-        and hysteresis read. NEVER extended into the warden envelope."""
+        and hysteresis read. NEVER extended into the warden envelope.
+        context_bytes is the measured utf-8 byte sum of the materials the
+        dispatch actually carried — card + anchors + annex at dispatch
+        time; an unmeasured dispatch records 0, never a guess."""
         self.data["stamped"].append({
             "goal_id": goal_id,
             "card_id": card_id,
@@ -184,6 +195,9 @@ class Profile:
             },
             "blast_set": sorted(blast_set),
             "outcome": outcome,
+            "context_bytes": sum(
+                len(m.encode("utf-8")) for m in (card, anchors, annex)
+            ),
         })
 
 
