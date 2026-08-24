@@ -26,35 +26,38 @@ LCOV_IN = ".sonar-scan/coverage-rust.lcov"
 GENERIC_OUT = ".sonar-scan/coverage-rust-generic.xml"
 
 
-def _repo_relative(filename: str, sources: list, here: str) -> str:
+def _repo_relative(filename: str, sources: list, here: str, package: str) -> str:
     """One cobertura class filename, resolved against the <source>
-    directories that actually contain it on disk, then made
-    project-relative for the scanner's /usr/src view."""
+    directories (and the Cobertura package path) that actually contain
+    it on disk, then made project-relative for the scanner's /usr/src
+    view. Nested packages (assets under tools) resolve through their
+    package segment, not only the source root."""
     fn = filename.replace("\\", "/")
     if "/" in fn and os.path.isfile(fn):
         return os.path.relpath(fn, here).replace("\\", "/")
     bare = fn.rsplit("/", 1)[-1]
+    pkg = package.replace(".", "/") if package and package != "." else ""
     for s in sources:
-        if os.path.isfile(os.path.join(s, bare)):
-            rel = os.path.relpath(s, here).replace("\\", "/")
-            return f"{rel}/{bare}"
-    return bare
+        rel = os.path.relpath(s, here).replace("\\", "/")
+        for cand in (f"{pkg}/{bare}", bare) if pkg else (bare,):
+            if os.path.isfile(os.path.join(s, cand)):
+                return f"{rel}/{cand}"
+    return f"{pkg}/{bare}" if pkg else bare
 
 
 def fix_cobertura_sources() -> None:
     tree = SafeET.parse(PY_XML)
     root = tree.getroot()
-    # Non-package modules (loaded by path) get a "." package and a BARE
-    # class filename; the directory truth lives in the host-absolute
-    # <source> elements. Resolve every class, then rewrite the XML with
-    # a single project-root source.
     srcs_el = root.find("sources")
     sources = [(s.text or "").strip() for s in (srcs_el or [])]
     here = os.getcwd()
     for pkg in root.iter("package"):
         for cls in pkg.iter("class"):
             cls.set(
-                "filename", _repo_relative(cls.get("filename") or "", sources, here)
+                "filename",
+                _repo_relative(
+                    cls.get("filename") or "", sources, here, pkg.get("name") or ""
+                ),
             )
     if srcs_el is not None:
         root.remove(srcs_el)

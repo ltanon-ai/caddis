@@ -44,9 +44,10 @@ jobs:
           python-version: "3.12"
       - name: Python tests
         run: |
-          python -m pip install --quiet pytest defusedxml
+          python -m pip install --quiet pytest defusedxml pillow
           python -m pytest -q adapters/claude-code/test_warden_gate.py \
-            skills/caddis/test_ladder.py tools/test_sonar_coverage.py
+            skills/caddis/test_ladder.py tools/test_sonar_coverage.py \
+            tools/test_assets.py
       - name: Test
         run: cargo test --workspace
       - name: Self-proof (deny + allow + ledger row)
