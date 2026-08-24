@@ -249,15 +249,19 @@ The log's laws are the tree's whole durability story:
 
 - **Events are append-only.** `seq` is monotonic; a log that mismatches its
   own sequence is refused at load.
-- **One writer per log.** The orchestrating session owns it; a second session
-  attaching to the same log is refused.
-- **Caps are global per goal.** Attempt and cost caps are checked
-  prospectively — used + incoming above cap refuses, before the spend
-  happens.
-- **The view is rebuilt, not remembered.** The in-memory state is only ever
-  reconstructed from the file — which is what makes **kill-mid-tree resume**
-  real: kill the walk anywhere, restart, and the walker picks up at the next
-  unfinished leaf from the log alone.
+- **One writer per log.** The orchestrating session owns it; a second
+  session attaching to the same log is refused.
+- **Caps are global per goal, checked in two phases.** Before a
+  dispatch, `can_dispatch` refuses when attempts used already sit at
+  the cap; after the executor returns, the append refuses when
+  used + incoming cost would exceed the cap — the row that breaks the
+  budget never lands.
+- **The view is rebuilt, not remembered.** The in-memory state is only
+  ever reconstructed from the file — which is what makes
+  **kill-mid-tree resume** real: restart after a kill, the rebuild
+  shows every gated leaf, a re-dispatch of a finished one refuses with
+  AlreadyDone, and the caller continues with the next unfinished
+  child.
 - **Failures bubble.** A rejected leaf does not vanish: the failure map
   bubbles up to the plan, which may replan exactly once before a strong
   close.

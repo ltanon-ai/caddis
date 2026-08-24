@@ -161,11 +161,8 @@ def draw_tree():
     for i, (s, c) in enumerate(events):
         label(d, 84, 232 + i * 40, s, 18, c, bold=(c in (TEAL, AMBER)))
     label(d, 84, 640, "KILLED MID-TREE ->", 19, AMBER, bold=True)
-    label(d, 84, 670, "rebuild the view from the file,", 18)
-    label(d, 84, 696, "resume at the next unfinished leaf", 18)
-
-    # the tree shape
-    panel(d, 660, 170, 400, 300, None, accent=TEAL)
+    label(d, 84, 670, "rebuild: gated leaves refuse re-dispatch", 18)
+    label(d, 84, 696, "(AlreadyDone); the caller continues", 18)
     label(d, 684, 190, "PLAN (children + review)", 19, TEAL, bold=True)
     panel(d, 700, 250, 150, 90, None)
     label(d, 716, 274, "CARD-A", 20, TEXT, bold=True)
@@ -178,13 +175,11 @@ def draw_tree():
     label(d, 684, 372, "the parent's gate is all children green", 17, DIM)
 
     # the laws of the log
-    panel(d, 660, 510, 400, 300, None)
-    label(d, 684, 530, "THE LOG'S LAWS", 19, TEXT, bold=True)
     for i, q in enumerate([
         "seq is monotonic - a mismatched log is refused",
         "ONE writer per log - a second session refused",
-        "attempt + cost caps are GLOBAL per goal,",
-        "  checked PROSPECTIVELY",
+        "caps: attempts checked before dispatch,",
+        "  cost checked at append (used + incoming)",
         "the in-memory view is ONLY ever rebuilt",
         "  from the file",
     ]):
