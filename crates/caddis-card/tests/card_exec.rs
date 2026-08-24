@@ -50,6 +50,31 @@ fn blast_above_three_is_a_hard_error_not_a_default() {
 }
 
 #[test]
+fn blast_zero_is_not_a_range_the_quorum_pinned() {
+    // The quorum pinned blast as an integer 1..=3; 0 touched-paths is
+    // not a card. Found by the doc-reality sentinel round (CARD-0099).
+    let text = with_exec("level: L1\nblast: 0\nclaims-forbidden: true\nanchors:\n  - path: a\n    content: |\n      x\nallowlist:\n  - edit a\n");
+    let card = Card::parse(&text).expect("parse");
+    let err = card.validate_strict().expect_err("blast 0 must hard-fail");
+    assert!(
+        format!("{err:?}").to_lowercase().contains("blast"),
+        "the error names blast, got {err:?}"
+    );
+}
+
+#[test]
+fn absent_level_defaults_to_l1_like_garbage_does() {
+    let text = with_exec(
+        "blast: 1\nclaims-forbidden: true\nanchors:\n  - path: a\n    content: |\n      x\nallowlist:\n  - edit a\n",
+    );
+    let card = Card::parse(&text).expect("parse");
+    let exec = card
+        .validate_strict()
+        .expect("absent level defaults LOW, never an error");
+    assert_eq!(exec.level, "L1", "the absent key defaults like garbage");
+}
+
+#[test]
 fn invalid_or_absent_level_defaults_to_l1_never_errors() {
     let text = with_exec(
         "level: L9\nblast: 1\nclaims-forbidden: true\nanchors:\n  - path: a\n    content: |\n      x\nallowlist:\n  - edit a\n",

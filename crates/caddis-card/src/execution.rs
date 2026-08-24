@@ -41,8 +41,8 @@ impl Execution {
         let (level, blast, claims) = parse_fields(body);
         let allowlist = parse_allowlist(body);
         let blast = blast.ok_or(CardErr::MissingSection("EXECUTION/blast"))?;
-        if blast > 3 {
-            return Err(CardErr::MissingSection("EXECUTION/blast>3"));
+        if !(1..=3).contains(&blast) {
+            return Err(CardErr::MissingSection("EXECUTION/blast-range"));
         }
         let anchors = parse_anchors(body);
         if anchors.is_empty() {
@@ -123,6 +123,11 @@ fn parse_fields(body: &str) -> (String, Option<u32>, bool) {
                 _ => {}
             }
         }
+    }
+    if level.is_empty() {
+        // The quorum pinned "level defaults LOW": an ABSENT key defaults
+        // to L1 exactly like a garbage one does (doc-reality round).
+        level = "L1".to_string();
     }
     (level, blast, claims)
 }

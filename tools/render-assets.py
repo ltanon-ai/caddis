@@ -4,9 +4,10 @@
 
 The renderer is split: assets/chrome.py (palette + primitives + the case
 motif), assets/mark.py (logo + banner), assets/diagrams.py (the system
-diagrams), assets/diagrams_records.py (the record-keeping diagrams).
+diagrams), assets/diagrams_records.py (the record-keeping diagrams),
+assets/diagrams_work.py (the work-system diagrams: card anatomy, ladder,
+tree).
 """
-
 import os
 import sys
 
@@ -25,6 +26,7 @@ if __name__ == "__main__":
     draw_flow()
     draw_onboard()
     draw_ledger()
+    draw_memory()
     draw_cards()
     draw_card_anatomy()
     draw_ladder()

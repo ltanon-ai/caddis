@@ -128,9 +128,9 @@ is and is not: [MEMORY.md](MEMORY.md).
 
 Caddis is built with a discipline where every unit of work is a **card**: a
 small document whose completion is *falsifiable* and whose proof is
-*mechanical*. That discipline ships as a zero-dependency Rust validator
-(`crates/caddis-card`, ~140 lines) you can use for your own work — the same
-law governs how this repository itself changes.
+*mechanical*. That discipline ships as a zero-dependency Rust validator —
+three small modules in `crates/caddis-card` — you can use for your own
+work; the same law governs how this repository itself changes.
 
 ![the card, anatomized: frontmatter, Done-When, RED-TEST, and the strict EXECUTION contract](assets/diagram-card-anatomy.png)
 
@@ -203,13 +203,14 @@ mechanical.
 ![the ladder: levels earned by measurement, a bounded retry loop, and a profile that is telemetry, not memory](assets/diagram-ladder.png)
 
 Three levels, three measured capabilities: **L1** — one verbatim line
-replace; **L2** — one small function; **L3** — one change across two anchored
-files. Promotion needs **two consecutive first-attempt, untransformed
-accepts**. A blast violation, a claims violation, or a retired-transform hit
-demotes immediately — floor L1. The dispatch loop is bounded: one-shot
-dispatch with a FRESH context each attempt, gates decide (never the model's
-own claim), on reject classify the mode and apply exactly ONE transform,
-retry at most three times, then close on the strong lane.
+replace; **L2** — one small function; **L3** — one change across two
+anchored files. Promotion needs **two consecutive first-attempt,
+untransformed accepts**. A blast violation, a claims violation, or a
+retired-transform hit demotes immediately — floor L1. The dispatch loop
+is bounded: one-shot dispatch with a FRESH context each attempt, gates
+decide (never the model's own claim), on reject classify the mode and
+apply exactly ONE transform — at most three attempts in total, then the
+strong lane closes it.
 
 Transforms are hypotheses, not habits: each retry records whether the
 transform actually converted the rejection. A transform with three or more
@@ -237,8 +238,10 @@ never sees the expected verdicts it is being scored against.
 
 Real work is rarely one card. `crates/caddis-tree` organizes a goal as a
 tree: a plan (validated by the plan oracle) decomposes into ordered child
-cards; a walker dispatches the leaves through the ladder; every step appends
-an event to a log that is the tree's only state.
+cards; a walker dispatches the leaves through a named executor trait —
+the substrate is deliberately pluggable, and ladder.py stays
+profiles-only telemetry alongside it; every step appends an event to a
+log that is the tree's only state.
 
 ![the goal tree: append-only events, one writer, resume from the file alone](assets/diagram-tree.png)
 

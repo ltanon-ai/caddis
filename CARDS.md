@@ -122,6 +122,17 @@ allowlist:
   - edit src/clamp.py
 ````
 
+Two annexes may ride on a strict card, and neither can broaden it:
+
+- **CONTINUATION** — carries context between chained cards (`parent`,
+  `carries`, `blast-cap`). The cap is stated and strict rejects a cap
+  above the card's own blast: a continuation is context, never
+  jurisdiction.
+- **SPLIT** — names ordered children (`parent`, `order`, `of`) when a
+  card is too thick for its executor. The model can split cards
+  automatically; each child is a full strict card of its own, and the
+  parent's gate is all children green.
+
 A card of `class: plan` is decomposition, not execution — a different
 oracle for a different job. Its sections are `CHILDREN` (ordered: `id`,
 `order`, `paths`, `symbols`) and a `REVIEW` receipt (`reviewer`,

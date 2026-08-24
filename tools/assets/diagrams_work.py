@@ -144,18 +144,17 @@ def draw_tree():
     d.text((60, 44), "THE GOAL TREE", font=mono(34, bold=True), fill=TEXT)
     label(d, 60, 92, "plans decompose into ordered children; an append-only event log is the only state; a killed walk resumes from the file alone", 22)
 
-    # the event log
-    panel(d, 60, 170, 540, 640, None, accent=TEAL)
-    label(d, 84, 190, "goal.tree (append-only events)", 19, TEAL, bold=True)
+    label(d, 84, 190, "goal.jsonl (append-only events)", 19, TEAL, bold=True)
     events = [
         ("seq 7  PlanAccepted", DIM),
         ("seq 8  SubtreeLive", DIM),
-        ("seq 9  Dispatched{strategy}", TEAL),
-        ("seq 10 Verdict accept", DIM),
-        ("seq 11 Dispatched{strategy}", TEAL),
-        ("seq 12 Verdict reject", AMBER),
+        ("seq 9  LeafDispatch{strategy}", TEAL),
+        ("seq 10 LeafGated accept", DIM),
+        ("seq 11 LeafDispatch{strategy}", TEAL),
+        ("seq 12 LeafGated reject", AMBER),
         ("seq 13 BubbleUp -> PLAN", AMBER),
-        ("seq 14 PlanRejected", AMBER),
+        ("seq 14 ReplanParent", AMBER),
+        ("seq 15 StrongClose", AMBER),
         ("... the file only grows", DIM),
     ]
     for i, (s, c) in enumerate(events):
