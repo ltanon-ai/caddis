@@ -9,7 +9,7 @@ this repository, works locally, and has no cloud anywhere.
 
 | Node | What it is |
 | --- | --- |
-| **Warden** | judges every tool call: allow, steer or deny |
+| **Warden** | judges each adapter-routed tool call: allow, steer, deny |
 | **Ledger** | append-only audit: what, when, why, which agent |
 | **Cards** | falsifiable work units: Done-When + RED-TEST |
 | **Ladder** | measured L1–L3 levels for local model executors |
@@ -21,9 +21,10 @@ this repository, works locally, and has no cloud anywhere.
 **A conscience — and a work discipline — for coding agents.**
 
 Caddis is a small local system for agent work you can trust. A law
-engine judges every tool call; an append-only ledger remembers every
-decision; cards make completion falsifiable and its proof mechanical;
-the ladder measures what a local model can do unsupervised; the goal
+engine judges every tool call the harness routes through the installed
+adapter; an append-only ledger remembers every decision; cards make
+completion falsifiable and its proof mechanical; the ladder measures
+what a local model can do unsupervised; the goal
 tree carries a plan through kills and resumes. It is not only about
 what your agent may run — it is how the work itself is governed,
 recorded, and proven.
