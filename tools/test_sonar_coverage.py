@@ -49,6 +49,38 @@ def test_to_relative_strips_cwd_and_scanner_root(tmp_path, monkeypatch):
     assert sc.to_relative("/usr/src/crates/x.rs") == "crates/x.rs"
     assert sc.to_relative("crates/x.rs") == "crates/x.rs"
 
+def test_nested_package_resolves_through_its_segment(tmp_path, monkeypatch):
+    # package="assets" under <source>.../tools: the class must land at
+    # tools/assets/diagrams.py, not a bare diagrams.py at repo root.
+    tools = tmp_path / "tools"
+    (tools / "assets").mkdir(parents=True)
+    (tools / "assets" / "diagrams.py").write_text("x = 1\n", encoding="utf-8")
+    xml = tmp_path / "coverage-python.xml"
+    xml.write_text(
+        COBERTURA_SAMPLE.format(src=tools)
+        .replace('name="."', 'name="assets"')
+        .replace('filename="mod.py"', 'filename="diagrams.py"'),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sc, "PY_XML", str(xml))
+    sc.fix_cobertura_sources()
+    text = xml.read_text(encoding="utf-8")
+    assert 'filename="tools/assets/diagrams.py"' in text
+    # a root-level <source> with a dotted package must not gain a "./"
+    root_xml = tmp_path / "root-coverage.xml"
+    root_xml.write_text(
+        COBERTURA_SAMPLE.format(src=tmp_path)
+        .replace('name="."', 'name="tools.assets"')
+        .replace('filename="mod.py"', 'filename="diagrams.py"'),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sc, "PY_XML", str(root_xml))
+    sc.fix_cobertura_sources()
+    text = root_xml.read_text(encoding="utf-8")
+    assert 'filename="tools/assets/diagrams.py"' in text
+    assert '"./' not in text
+
 
 def test_bare_filenames_resolve_against_the_real_source(tmp_path, monkeypatch):
     src = tmp_path / "pkg_a"
@@ -63,7 +95,6 @@ def test_bare_filenames_resolve_against_the_real_source(tmp_path, monkeypatch):
     assert "<source>.</source>" in text
     assert 'filename="pkg_a/mod.py"' in text, "bare name resolved via the source dir"
 
-
 def test_lcov_becomes_generic_with_relative_paths(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     lcov = tmp_path / "coverage-rust.lcov"
@@ -74,7 +105,10 @@ def test_lcov_becomes_generic_with_relative_paths(tmp_path, monkeypatch):
     sc.lcov_to_generic()
     from defusedxml import ElementTree as SafeET
 
-    root = SafeET.parse(out).getroot()
+    parsed = SafeET.parse(out)
+    assert parsed is not None
+    root = parsed.getroot()
+    assert root is not None
     assert root.tag == "coverage"
     assert root[0].get("path") == "crates/x/src/lib.rs"
     lines = root[0].findall("lineToCover")

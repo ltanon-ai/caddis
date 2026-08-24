@@ -8,8 +8,7 @@ and what catches a draw function that silently stops saving its file.
 
 import os
 import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import assets.diagrams
 import assets.diagrams_records
