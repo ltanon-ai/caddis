@@ -63,13 +63,32 @@ fn plan_review_fences_keep_the_nested_plan_in_one_section() {
             plan.body.contains("# REVIEW"),
             "{name}: nested review intact"
         );
+        assert!(card.section("CHILDREN").is_none(), "{name}: no leak");
+        assert!(card.section("REVIEW").is_none(), "{name}: no leak");
+    }
+}
+
+fn fenced_plan(plan_body: &str) -> String {
+    let open = "```text\n";
+    let start = plan_body.find(open).expect("```text fence") + open.len();
+    let end = start + plan_body[start..].find("\n```").expect("fence close");
+    plan_body[start..end].to_string()
+}
+
+#[test]
+fn plan_review_inner_plans_pass_the_plan_oracle() {
+    // KEY.md names `validate --plan` as the structure oracle; the fenced
+    // inner plan card is its proving input, not the wrapper.
+    for (name, text) in [("review-a", REVIEW_A), ("review-b", REVIEW_B)] {
+        let card = Card::parse(text).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let plan = card
+            .section("PLAN")
+            .unwrap_or_else(|| panic!("{name}: PLAN"));
+        let inner =
+            Card::parse(&fenced_plan(&plan.body)).unwrap_or_else(|e| panic!("{name} inner: {e:?}"));
         assert!(
-            card.section("CHILDREN").is_none(),
-            "{name}: no leaked section"
-        );
-        assert!(
-            card.section("REVIEW").is_none(),
-            "{name}: no leaked section"
+            inner.validate_plan().is_ok(),
+            "{name}: inner plan validates"
         );
     }
 }

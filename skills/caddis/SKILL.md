@@ -63,10 +63,12 @@ have. Honest claim: local execution EARNS levels by measurement — never
 promise local-by-default.
 
 **Before a model's first dispatch**: run the calibration pack — copy the
-whole `skills/caddis/calibration/` tree to a scratch dir, work with that
-directory as cwd (every pack's anchors and allowlists are rooted at its
-`fixtures/`), dispatch each card one-shot, record outcomes. Profiles live
-in `~/.caddis/executor-profiles/<model>.json` via `skills/caddis/ladder.py`
+pack's cards and `fixtures/` to a scratch dir and work with that
+directory as cwd (anchors and allowlists are rooted at `fixtures/`);
+`plan/KEY.md` stays OUT of the dispatched scratch — it is the operator's
+scoring oracle, never shown to the model under calibration. Dispatch
+each card one-shot, record outcomes. Profiles live in
+`~/.caddis/executor-profiles/<model>.json` via `skills/caddis/ladder.py`
 — capability telemetry, not memory.
 
 **Mechanical rules (never override by judgment):**
