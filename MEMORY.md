@@ -37,15 +37,30 @@ live in [PROTOCOL.md](PROTOCOL.md#the-ledger).
 
 ## Reading the memory
 
+`caddis-warden report` is the ledger's reading end — counts, callers and
+deny-by-law straight from the recorded rows (the ledger path is
+`CADDIS_WARDEN_LEDGER`, defaulting to `~/.caddis/warden-ledger.jsonl`):
+
 ```sh
-# the nightly question: everything denied today, newest last
-grep '"deny|' ~/.caddis/warden-ledger.jsonl | tail
+caddis-warden report --since 24        # the nightly question, as a digest
+caddis-warden report --from my-agent   # one agent's story
+caddis-warden report --verdict deny    # everything stopped, grouped by law
+caddis-warden report --last 50 --json  # tail of the filtered set, for machines
+```
 
-# one agent's story
-grep '"from":"my-agent"' ~/.caddis/warden-ledger.jsonl | tail -20
+The digest counts by verdict and caller, stamps first/last timestamps, and
+groups deny reasons by the law id the why field carries — no re-judgement,
+just what the ledger recorded.
 
+Raw grep is the power-user fallback — the ledger is a plain JSONL file, and
+grep answers questions report does not (sequence gaps, ad-hoc field filters):
+
+```sh
 # was the guard even running? (gaps in seq say it was not)
 grep -o '"seq":[0-9]*' ~/.caddis/warden-ledger.jsonl | tail -5
+
+# everything denied today, newest last
+grep '"deny|' ~/.caddis/warden-ledger.jsonl | tail
 ```
 
 ## What caddis memory is not

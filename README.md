@@ -17,6 +17,7 @@ this repository, works locally, and has no cloud anywhere.
 | **Adapters** | one thin nerve per harness, no policy inside |
 | **Onboard** | one command; proves itself with a live denial |
 | **Replay** | preview law changes against your own history |
+| **Report** | reads the ledger back: counts, callers, deny-by-law |
 
 **A conscience — and a work discipline — for coding agents.**
 
@@ -58,8 +59,9 @@ the adapter is judged and recorded.
 
 **Requirements, honestly split:** at *runtime* — the binary, nothing else
 (no libraries, no cloud, no background services). To *build* — the Rust
-toolchain and git. The Claude Code hook needs Python 3.8+. Platforms,
-verification, update and rollback: [DISTRIBUTION.md](DISTRIBUTION.md).
+toolchain and git. Both Python adapters (the Claude Code hook and the rlm
+kernel nerve) need Python 3.8+. Platforms, verification, update and
+rollback: [DISTRIBUTION.md](DISTRIBUTION.md).
 
 ## What it does
 
@@ -75,15 +77,26 @@ to rewrite — other clones already have it.
   through real shell grammar: `sudo`/`env`/`nohup` wrapper descent,
   `then`/`do`/`$()`/`bash -c` command positions, `#` comments, quoting, escaped
   separators, even getopt's own abbreviation rules. Not substring matching.
+- **Destructive commands are a class, not a substring.** `rm -rf` against a
+  protected root — `/`, `/usr`, `C:\`, `$HOME`… — is denied in every flag
+  spelling, through `sudo`/`env` wrapper descent, and so are the shapes that
+  become one: the NULL-variable expansion (`rm -rf $UNSET_VAR/` is
+  effectively `rm -rf /`), the `..` escape above the workspace, the `.*`
+  glob, and bare `*` at the workspace root. Named build dirs (`build/`,
+  `dist/`) stay free — build output is legitimate work. `curl | bash`
+  STEERS, never denies: a domain trustlist names rustup, Homebrew and bun;
+  everything else shows the untrusted URL verbatim, so the reader judges the
+  source with the evidence in hand.
 - **Deny, steer, allow — and log everything.** HARD findings block the call.
   SOFT findings let it run and deliver the law attached to the *result* —
   doctrine at the moment it applies, not a lecture at session start. Every
   verdict lands in a local append-only ledger: what was attempted, what was
   stopped, when, why, and **which agent** did it.
-- **One binary, zero dependencies.** ~5 700 lines of Rust across four
-  first-party crates, no external deps. Builds in about two seconds, runs
-  anywhere, reads one length-prefixed frame and answers one JSON verdict.
-  No cloud, no telemetry, no trust required.
+- **One binary, zero dependencies.** ~6 400 lines of Rust source across four
+  first-party crates (plus a ~5 200-line red-first test corpus), no external
+  deps. Builds in about two seconds, runs anywhere, reads one
+  length-prefixed frame and answers one JSON verdict. No cloud, no telemetry,
+  no trust required.
 - **Broad attachment.** It does not care whose brain it guards. Any
   harness built on extensions, hooks, or headless RPC can wire it in with
   one thin adapter file — the adapter holds no policy, so harness API
@@ -93,8 +106,10 @@ to rewrite — other clones already have it.
   <ledger>` re-judges recorded history against the current law and
   reports the diff: every NEW-DENY is a future false positive caught
   for free, every FREED is a historical over-fire the new law fixes.
-  The only guard you can safely update — because you can preview the
-  update against your own nights.
+  It also counts what fired — a per-law deny/steer summary over the
+  judged rows, plus the never-fired list straight from the registry —
+  so law coverage is read, not assumed. The only guard you can safely
+  update — because you can preview the update against your own nights.
 - **Fails honestly.** Binary missing? Tools keep flowing, loudly — a
   deployment problem must not brick your agent at 3am. Binary ran but the
   verdict is unreadable? **Blocked** — a judgement you cannot read is not an
@@ -132,6 +147,12 @@ the verdict with the command's first line, a timestamp. The engine never
 edits or deletes what it wrote, and the file only grows. A gap in sequence
 numbers means rows were not written at that time — what that does and does
 not prove is stated precisely in PROTOCOL.md.
+
+Reading it back is a first-class command: `caddis-warden report --since 24`
+aggregates the ledger *as recorded* — no re-judgement — into counts by
+verdict and caller, first/last timestamps, and deny reasons grouped by the
+law id; `--from`, `--verdict`, `--last` narrow it and `--json` feeds
+machines.
 
 ## Memory — how caddis remembers
 
@@ -239,12 +260,16 @@ four consecutive non-accept outcomes under the current preset, never a ratio
 and never a judgment call.
 
 Every dispatch stamps a row — `{goal_id, card_id, strategy, blast_set,
-outcome}` — into the model's profile at
+context_bytes, outcome}` (schema v3) — into the model's profile at
 `~/.caddis/executor-profiles/<model>.json`. The profile is capability
 telemetry: it is never "memory", never merged into the warden ledger, and it
-never broadens what a card allows. The ladder also has its own plan oracle:
-plans proposed / well-formed / intent-accepted / intent-rejected, with its
-own promotion streak — plan outcomes never contaminate execution telemetry.
+never broadens what a card allows. `context_bytes` is the measured card +
+anchors + annex byte sum the dispatch actually carried, because a small
+model's capability is context-size-conditioned — the same card can be
+trivial at 2 KB and hopeless at 20. The ladder also has its own plan
+oracle: plans proposed / well-formed / intent-accepted / intent-rejected,
+with its own promotion streak — plan outcomes never contaminate execution
+telemetry.
 
 Before any model's first dispatch it runs the shipped **calibration packs**
 (`skills/caddis/calibration/`): real cards with real fixtures — a line
@@ -328,10 +353,10 @@ no weak plan-review code path exists to silently fall back to.
 
 ![build, wire, prove — the install fails unless it can show you a denial](assets/diagram-onboard.png)
 
-## The adapters — one nerve, two shapes
+## The adapters — one nerve, three shapes
 
 No policy lives in an adapter; it marshals one tool call into the wire frame
-and applies the verdict. Two shapes ship:
+and applies the verdict. Three shapes ship, one per harness family:
 
 - **`adapters/caddis-warden.ts`** — for extension-based harnesses. A steer is
   delivered on the tool *result* (the action was legitimate; the law arrives
@@ -344,6 +369,14 @@ and applies the verdict. Two shapes ship:
   where the filesystem folds it); unmapped sessions are stamped
   `claude-code`, and `CADDIS_WARDEN_STAND_ASIDE=1` makes unmapped sessions
   stand aside silently — a fleet wiring only some directories.
+- **`adapters/rlm/warden_repl.py`** — the code-exec nerve for kernel-based
+  harnesses: it wraps the *standard library* exec surface (`subprocess.*`,
+  `os.system`, `os.popen`), never harness internals, so harness versions
+  cannot break it. Deny raises before the exec with the warden's reason;
+  steer lands the law beside the output and runs. Its boundary is stated
+  where a reader meets it: pure-Python destructiveness with no shell call is
+  out of scope — the same register as THREAT-MODEL's embedded-program
+  boundary.
 
 One rule with teeth lives in every adapter, for every tool shape: for edits,
 only the text being **written** is ever scanned — the warden must never
@@ -353,10 +386,10 @@ punish you for cleaning up the very thing it dislikes.
 
 The repository eats its own cooking:
 
-- **Rust**: `cargo test --workspace` — every law lands red-first with its
-  fixture file; the corpus is the evidence.
-- **Python**: the adapter, ladder and renderer suites run in the CI matrix on
-  Linux, Windows and macOS.
+- **Rust**: `cargo test --workspace` — 253 tests at this release; every law
+  lands red-first with its fixture file, the corpus is the evidence.
+- **Python**: the adapter, ladder, renderer and install suites — 43 tests —
+  run in the CI matrix on Linux, Windows and macOS.
 - **Coverage**: `cargo llvm-cov` and `pytest --cov` feed the SonarQube wiring
   in `sonar-project.properties` (via `tools/sonar-coverage.py`, which makes
   the reports scanner-relative) — overall coverage is displayed on the

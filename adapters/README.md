@@ -55,18 +55,24 @@ not Python semantics.
 - **`claude-code/caddis-warden-gate.py`**: the `from:` stamp comes from an
   optional `~/.caddis/lanes.json` cwd-prefix → label map (longest prefix wins,
   either path separator); unmapped sessions are stamped `claude-code`.
+- **`rlm/warden_repl.py`**: every warden spawn is stamped
+  `CADDIS_WARDEN_FROM=rlm` — the nerve is the whole adapter, so there is
+  no per-agent stamp to configure; kernel attribution is the harness's
+  lane entry.
 
 ## Two behaviors worth knowing
 
 - **Only written content is scanned**, never the text an edit replaces — in
-  both adapters, for every tool shape: the warden must never punish you for
+  every adapter, for every tool shape: the warden must never punish you for
   removing the very thing it dislikes.
 - **A steer arrives when it applies — per adapter**: the TS extension delivers
   it on the tool RESULT (the action was legitimate, it runs, and the law
   arrives attached to its outcome; the map of owed laws is keyed by tool-call
   id and deleted on delivery, so a long session cannot grow it). The Python
   hook delivers it as PreToolUse `additionalContext` — the same moment the
-  decision is made, because a hook has no tool-result channel.
+  decision is made, because a hook has no tool-result channel. The rlm
+  nerve writes the law beside the exec's output on the stream — the kernel's
+  equivalent of the result channel.
 
 ## Scanner exceptions (written, deliberate)
 

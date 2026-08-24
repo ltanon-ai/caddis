@@ -12,6 +12,7 @@ The matrix, in full (each row links to its claim's repro below):
 | --- | --- | --- | --- | --- |
 | extension `.ts` | supported | call + result | allow-loud/block | routed only |
 | Claude Code `.py` | supported | PreToolUse | allow-loud/block | per-machine |
+| rlm `.py` | supported | exec surface | allow-loud/block | per-machine |
 | generic hook | proto-compat. | what you route | you implement | untested |
 | headless / RPC | proto-compat. | what you route | you implement | untested |
 
@@ -24,17 +25,26 @@ The matrix, in full (each row links to its claim's repro below):
   NotebookEdit. Same failure doctrine; the warning rides stderr plus a
   context line. Registered per machine; a stand-aside mode exists for
   fleets wiring only some directories.
+- **rlm `.py`** — `adapters/rlm/warden_repl.py`, the code-exec nerve for
+  kernel-based harnesses: it wraps the standard-library exec surface
+  (`subprocess.run/call/check_call/Popen`, `os.system`, `os.popen`) — never
+  harness internals, so harness versions cannot break it. Same failure
+  doctrine in exception form: absent binary allows loudly, unreadable
+  verdict refuses the exec. Registered per machine; pure-Python
+  destructiveness with no shell call is out of scope (THREAT-MODEL
+  register).
 - **generic hook / RPC** — protocol-compatible: the wire contract
   (PROTOCOL.md) is enough to wire any harness that can intercept a call
   and spawn a process; we have not run those integrations.
 
 ## Contract, per supported adapter
 
-Both supported adapters answer the same questions the same way:
+All three supported adapters answer the same questions the same way:
 
 - **Tool coverage.** The extension adapter scans the tool's command, path
   and written content fields; the hook adapter scans the tool_input shapes
-  listed above. Unknown tools degrade to scanning what is there —
+  listed above; the rlm nerve scans every command string handed to the
+  wrapped exec surface. Unknown tools degrade to scanning what is there —
   over-scanning, never a silent hole.
 - **Edits scan only what is written.** `old_string` / replaced text is
   never sent: the warden must never punish you for removing the very thing
@@ -73,10 +83,23 @@ echo '{"cwd":"/tmp","tool_name":"Bash","tool_input":
 Expected: `{"decision":"block","reason":"caddis-warden [...]"}` naming
 `git.push.force-to-protected`.
 
+rlm nerve — in any Python with the binary installed:
+
+```sh
+python -c "import sys; sys.path.insert(0, 'adapters/rlm'); \
+  import warden_repl as w; w.install(); import subprocess; \
+  subprocess.run('git push --force origin main', shell=True)"
+```
+
+Expected: a `WardenRefusal` traceback naming
+`git.push.force-to-protected` — the call never runs.
+
 ## Version note
 
-Both supported adapters were proven live on 2026-08-23 against engine
-build `8ed3ef0` (three extension-API harnesses and one hook-based
-harness, force-push denials in the shared ledger). When the engine
-changes, re-run the self-proof — an adapter claim without a fresh proof
-is history, not support.
+The extension and hook adapters were proven live on 2026-08-23 against
+engine build `8ed3ef0` (three extension-API harnesses and one hook-based
+harness, force-push denials in the shared ledger). The rlm nerve was proven
+2026-08-24 by its real-binary integration test — a destructive `rm -rf`
+denied before the exec — against the workshop build of the same engine.
+When the engine changes, re-run the self-proof — an adapter claim without
+a fresh proof is history, not support.

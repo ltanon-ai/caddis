@@ -35,9 +35,9 @@ def draw_arch():
 
     ANY_AGENT = "any agent"
     harnesses = [
-        (ANY_AGENT, "extension"),
-        (ANY_AGENT, "hook"),
-        (ANY_AGENT, "rpc"),
+        (ANY_AGENT, "extension .ts"),
+        (ANY_AGENT, "hook .py"),
+        (ANY_AGENT, "kernel .py"),
         ("your agent", "here"),
     ]
     hy = 180
@@ -70,6 +70,7 @@ def draw_arch():
     label(d, 568, 196, "the nerve", 19, TEAL, bold=True)
     label(d, 568, 222, "~160-ln", 15)
     label(d, 568, 240, "adapter", 15)
+    label(d, 568, 258, "3 shapes", 15)
     arrow(d, 660, 460, 800, 460)
 
     # the brain
@@ -126,6 +127,7 @@ def draw_flow():
         ["tool 4", "bash", "command 28", "git push --force origin main"]
     ):
         label(d, 84, 240 + i * 28, s, 18, TEAL if i < 3 else AMBER)
+    label(d, 84, 352, "via extension .ts / hook .py / kernel .py", 15, DIM)
 
     arrow(d, 490, 275, 640, 275)
 

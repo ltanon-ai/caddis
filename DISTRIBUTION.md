@@ -12,6 +12,7 @@ execute — verify it, or build it yourself from a commit you can read.
 | Build | Rust toolchain (cargo), a C linker for your platform |
 | Clone | git |
 | Claude Code hook adapter | Python 3.8+ |
+| rlm kernel nerve | Python 3.8+ |
 | Extension adapters | a harness that loads TypeScript extensions |
 
 "One binary, zero dependencies" is a *runtime* claim: no runtime libraries

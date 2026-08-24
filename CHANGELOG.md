@@ -4,6 +4,34 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+## 0.2.5 — the description catches up with the shipped code
+
+A docs-only release: the code shipped in 0.2.3, the words catch up now.
+The engine is unchanged.
+
+- **LAWS.md shows the whole registry.** The HARD table grows from five
+  rows to the full eleven (the destructive-command class, the
+  rewritten-repo latch, the hook/signing/skip-ci/osv laws beside the
+  originals), and the SOFT section gains its first table — nine steers,
+  one line each, severities taken from the one registry table in code.
+- **README answers 0.2.3's questions.** The glance table gains the Report
+  row; the destructive-command class gets its own bullet; the ledger
+  section names `report` with its full flag set; replay documents the
+  law-fires summary and the never-fired list; the adapters section is
+  three shapes — extension, hook, kernel; the ladder row is schema v3
+  with `context_bytes` and why; every number is re-measured (6 448
+  source lines, 253 Rust tests, 43 in the CI matrix) and the
+  requirements cover the rlm nerve (Python 3.8+).
+- **MEMORY.md leads with the reading end.** `caddis-warden report`
+  examples first; raw grep is demoted to the power-user fallback it
+  always was.
+- **SUPPORT.md ships three supported rows** — the rlm nerve with its own
+  repro (a `WardenRefusal` naming the law, the call never runs) — and the
+  version note records all three live proofs.
+- **The diagrams caught up too.** The architecture and verdict diagrams
+  draw three adapter shapes (extension `.ts`, hook `.py`, kernel `.py`),
+  regenerated from the shipped renderer and visually verified.
+
 ## 0.2.3 — measurement, destructive laws, and the rlm nerve
 
 The ledger learns to answer questions about itself, the law engine grows

@@ -31,7 +31,13 @@ own rules — but the escape hatch is line-scoped, never file-wide.
 
 | Law | Catches |
 | --- | --- |
-| `git.push.force-to-protected` | force-push to `main`/`master` |
+| `git.push.force-to-protected` | force-push to `main`/`master` — the force flag OR a leading-plus refspec |
+| `git.push.into-rewritten-repo` | publishing more history into a repo whose protected history was rewritten |
+| `git.hooks.skipped` | `commit` with the hook-skip flag, long or `-n` <!-- nobs-allow: no-verify-flag — law documentation: naming the exact flag git.hooks.skipped denies; nothing here invokes it --> — skipping the hooks that are the only quality control here |
+| `git.signing.bypassed` | the signing-off flags on `commit`/`push` — denied with their own reason, never the hooks' |
+| `shell.skip-ci` | `[skip ci]` in a commit message — a marker with exactly one meaning |
+| `shell.osv-no-resolve` | turning dependency resolution off so a scanner reports clean on a set it never examined |
+| `fs.rmrf.protected-root` | `rm -rf` against absolute roots, `..` escapes, `.*` globs, NULL variable expansions, bare `*` at the workspace root — every flag spelling, through `sudo`/`env` wrapper descent |
 | suppression-marker laws | skip markers smuggled into tracked files |
 | secret literals | credential-shaped writes into files |
 | sensitive paths | never-read-or-expose files, any tool, even read |
@@ -43,6 +49,18 @@ A steer does not block: the action was legitimate, so it runs — and the law
 arrives attached to its **result**, which is the moment it applies. Every soft
 finding that fired is carried; silently dropping one is how a channel stops
 being worth reading.
+
+| Law | Catches |
+| --- | --- |
+| `git.reset.discards-uncommitted` | `git reset --hard` with uncommitted work in the tree |
+| `git.stage.blanket-in-shared-worktree` | `git add -A` / `add .` / `commit -a` — staging whatever is in the tree, in a worktree that may be shared with another writer |
+| `fs.rmrf.wildcard` | bare `rm -rf *` in a directory the command `cd`'d into — the workspace-root case is the hard law's; this steer never stacks |
+| `net.pipe-to-shell` | `curl`/`wget` piped into a shell — steers with a domain trustlist (rustup, Homebrew, bun named); everything else shows the exact URL |
+| `shell.exit-code-through-pipe` | `$?` read after a pipeline reports the LAST process — a false green; `${PIPESTATUS[0]}` and `pipefail` stay silent |
+| `shell.gate-chained-into-commit` | a gate chained with `&&` into `git commit` — the chain commits on red the moment the short-circuit is misread |
+| `shell.git-show-piped-counter` | `git show rev:path` piped into a counter — a missing path exits 128 with empty stdout and the count reads as an authoritative 0 |
+| `shell.process-query-self-match` | a process listing filtered by a literal the query itself contains — the query matches itself, dead reported alive |
+| `shell.posix-tmp-across-python` | a POSIX `/tmp` path handed across the bash-to-Windows-Python boundary — the write and the read touch different files (fires on Windows only) |
 
 ## One documented cycle, start to finish
 
@@ -89,7 +107,7 @@ Red-first, measured:
    `gitgrammar`); policies go in `law.rs`. One law, one name, both directions:
    it must catch the hole AND stop denying what it never had jurisdiction over.
    3. **Tests pin it forever.** Each law lands with its fixture file in
-   `crates/caddis-warden/tests/`. 170+ tests currently pin 25 hardening
+   `crates/caddis-warden/tests/`. 197 warden tests currently pin 25 hardening
    iterations; a regression is a failing name, not a debate.
 
 Known honest limits are stated in the source, not hidden: the runner table is
