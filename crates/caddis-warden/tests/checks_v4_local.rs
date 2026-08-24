@@ -60,6 +60,17 @@ fn a_later_unpiped_command_does_not_inherit_an_earlier_pipeline() {
 }
 
 #[test]
+fn a_dollar_question_that_is_itself_a_pipe_stage_is_silent() {
+    // Every stage of a pipeline starts CONCURRENTLY, so this `$?` reports the
+    // statement before the pipeline, never the upstream stage. Firing here
+    // would attach a diagnosis ("reports the LAST process") that is false on
+    // this shape — and it fired on the three-stage form while staying silent
+    // on the two-stage one, which is the same shape judged two ways.
+    assert_eq!(sl::exit_code_through_pipe("a | b | echo $?"), None);
+    assert_eq!(sl::exit_code_through_pipe("a | echo $?"), None);
+}
+
+#[test]
 fn a_pipeline_with_no_exit_code_read_is_silent() {
     assert_eq!(sl::exit_code_through_pipe("cargo test | tail -5"), None);
 }
