@@ -48,6 +48,18 @@ fn an_exit_code_read_with_no_pipe_at_all_is_silent() {
 }
 
 #[test]
+fn a_later_unpiped_command_does_not_inherit_an_earlier_pipeline() {
+    // `$?` reads the command IMMEDIATELY before it. A pipeline earlier on the
+    // line is already settled, so condemning a later direct capture flags the
+    // very shape this finding's own message prescribes as the remedy.
+    assert_eq!(
+        sl::exit_code_through_pipe("ls | head -5; echo done; foo > out 2>&1; rc=$?"),
+        None,
+        "an earlier pipeline must not condemn a later direct capture"
+    );
+}
+
+#[test]
 fn a_pipeline_with_no_exit_code_read_is_silent() {
     assert_eq!(sl::exit_code_through_pipe("cargo test | tail -5"), None);
 }

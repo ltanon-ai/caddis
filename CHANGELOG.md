@@ -4,6 +4,21 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+## 0.2.2 — the latch fix
+
+- **`shell.exit-code-through-pipe` no longer inherits.** The check tracked
+  "a pipeline appeared somewhere earlier on this line" rather than "the
+  command immediately before this `$?` was a pipeline", so
+  `a | b; c > out 2>&1; rc=$?` was flagged — the exact shape the finding's
+  own message prescribes as the remedy. A check that fires on the correct
+  idiom trains its reader to skip the channel, which is the single failure
+  this crate keeps warning about. Found by dogfooding: it fired on a session
+  that was already capturing the status directly.
+- **The warden crate is projected, not hand-synced.** It was byte-identical
+  in both repos and kept so by hand — parallel maintenance the twin-repo
+  doctrine forbids. It is in the publish manifest now, so drift is
+  impossible by construction.
+
 ## 0.2.1 — the work-discipline release
 
 The warden engine is unchanged; everything around it grew a second half.

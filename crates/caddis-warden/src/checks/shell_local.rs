@@ -43,13 +43,7 @@ pub fn exit_code_through_pipe(command: &str) -> Finding {
     }
     let mut after_a_pipe = false;
     for segment in segments_detailed(command) {
-        if segment.sep_before.as_deref() == Some("|") {
-            after_a_pipe = true;
-        }
-        if !after_a_pipe {
-            continue;
-        }
-        if segment.tokens.iter().any(|t| t.contains("$?")) {
+        if after_a_pipe && segment.tokens.iter().any(|t| t.contains("$?")) {
             return Some(format!(
                 "`$?` is read after a pipeline, so it reports the LAST process rather than the one \
                  being judged: `{}`. A command that exited 127 reads as success here. Capture the \
@@ -57,6 +51,12 @@ pub fn exit_code_through_pipe(command: &str) -> Finding {
                 segment.tokens.join(" ")
             ));
         }
+        // ASSIGNED, never latched: `$?` reads the command IMMEDIATELY
+        // before it, so being "after a pipeline" is a fact about ONE
+        // segment, not a state the rest of the line inherits. Latching it
+        // condemned `a | b; c > out 2>&1; rc=$?` — the very shape the
+        // message above prescribes as the remedy.
+        after_a_pipe = segment.sep_before.as_deref() == Some("|");
     }
     None
 }
