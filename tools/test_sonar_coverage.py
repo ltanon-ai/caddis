@@ -105,10 +105,7 @@ def test_lcov_becomes_generic_with_relative_paths(tmp_path, monkeypatch):
     sc.lcov_to_generic()
     from defusedxml import ElementTree as SafeET
 
-    parsed = SafeET.parse(out)
-    assert parsed is not None
-    root = parsed.getroot()
-    assert root is not None
+    root = SafeET.parse(out).getroot()
     assert root.tag == "coverage"
     assert root[0].get("path") == "crates/x/src/lib.rs"
     lines = root[0].findall("lineToCover")
