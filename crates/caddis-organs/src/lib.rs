@@ -12,8 +12,14 @@
 //! PROVE; the host (harness adapter, heartbeat runner) decides and halts.
 //! Zero runtime dependencies beyond caddis-core; sync, std only.
 
+pub mod blocker;
 pub mod canary;
+pub mod canary_state;
 pub mod checkpoint;
+pub mod hop;
+pub mod hops_core;
+pub mod hops_organs;
+pub mod shell;
 pub mod util;
 pub mod watchdog;
 

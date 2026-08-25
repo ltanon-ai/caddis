@@ -155,6 +155,7 @@ mod tests {
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("caddis-ck-{name}-{}", std::process::id()));
+        // swallow: best-effort-cleanup — stale temp dir from a previous run.
         let _ = std::fs::remove_dir_all(&d);
         d
     }

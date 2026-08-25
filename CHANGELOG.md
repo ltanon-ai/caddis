@@ -141,6 +141,32 @@ skill no longer lists commands; it lists the moments — writing a handoff,
 finishing a unit, a bee reporting done, reviewing a bundle, hitting a red gate —
 and what to run at each, together with what each answer does *not* mean.
 
+### `caddis-organs` — watchdog, canary and checkpoint, present but NOT WIRED
+
+A new crate carrying three self-watching organs ported harness-agnostic from
+proven modules: a **watchdog** (probe → restart → backoff → blocker, blockers
+persisted as JSONL so they outlive the process that filed them), a **canary**
+(an 11-hop golden path over the real substrate — envelope, policy, idempotency,
+ledger append and read-back, checkpoint round-trip, watchdog self-probe — where
+any RED tells the host to halt and DEGRADED never does), and a **checkpoint**
+store (pre-mutation snapshots, with absent files tombstoned so created-file
+mutations undo too). Zero dependencies beyond the kernel; sync, std only.
+
+**What it does not do yet: anything, unless you call it.** Nothing in the
+shipped `caddis-warden` binary depends on this crate — it is a library with no
+caller in-tree, which by this project's own standard is a writer with no reader.
+It ships because the code is real, tested and cross-platform, not because it is
+part of the loop. Wiring it is a later release, and this note exists so the gap
+is stated rather than discovered.
+
+Landed with three defects fixed that its own arrival exposed: it did not compile
+on Linux or macOS (`if cfg!(windows)` type-checks both arms, so a Windows-only
+import was compiled everywhere — the attribute form removes the arm), a hang
+fixture that only made sense on Windows, and, in the split that brought the
+files under this project's 280-line law, a public path broken by an alias. The
+last of those is now pinned from outside the crate by an integration test,
+because in-crate tests import through `use super::*` and cannot see it.
+
 ## 0.2.9 — the tools stop lying about themselves
 
 Five defects, all of the same family: a thing that reported success, or

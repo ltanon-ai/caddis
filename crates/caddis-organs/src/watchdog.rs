@@ -15,36 +15,24 @@
 //! `{"source":"watchdog:<label>","reason":"...","ts":"..."}` — resolving is
 //! deleting the line (the operator's act, or an automation with sanction).
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::util::{iso8601_now, json_escape, json_str_field};
+use crate::blocker::{file_blocker, resolve_source};
+use crate::util::iso8601_now;
+
+// The blocker record and the shell runner moved out under the 280-line law
+// (blocker.rs, shell.rs). They are re-exported HERE so every existing path —
+// `watchdog::Blocker`, `watchdog::list_open_blockers`,
+// `watchdog::run_with_timeout` — still resolves. A split that silently moves
+// a public symbol is an API break wearing a refactor's clothes.
+pub use crate::blocker::{list_open_blockers, Blocker};
+pub use crate::shell::run_with_timeout;
 
 pub const DEFAULT_MAX_FAILURES: u32 = 3;
 pub const DEFAULT_PROBE_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_RESTART_TIMEOUT_MS: u64 = 30_000;
-
-/// One filed blocker (a self-flag the operator must resolve).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Blocker {
-    pub source: String,
-    pub reason: String,
-    pub ts: String,
-}
-
-impl Blocker {
-    fn to_jsonl(&self) -> String {
-        format!(
-            "{{\"source\":\"{}\",\"reason\":\"{}\",\"ts\":\"{}\"}}",
-            json_escape(&self.source),
-            json_escape(&self.reason),
-            json_escape(&self.ts)
-        )
-    }
-}
 
 /// What one probe cycle did.
 #[derive(Debug, Clone, PartialEq)]
@@ -201,125 +189,13 @@ impl Watchdog {
     }
 }
 
-/// Append a blocker line (best-effort file create).
-fn file_blocker(path: &Path, b: &Blocker) -> io::Result<()> {
-    use std::fs::OpenOptions;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
-    f.write_all(b.to_jsonl().as_bytes())?;
-    f.write_all(b"\n")
-}
-
-/// Read all open blockers from the JSONL file (absent file = none).
-pub fn list_open_blockers(path: &Path) -> Vec<Blocker> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    text.lines().filter_map(parse_blocker_line).collect()
-}
-
-/// Minimal JSONL reader for the three-field blocker object.
-fn parse_blocker_line(line: &str) -> Option<Blocker> {
-    let line = line.trim();
-    if line.is_empty() {
-        return None;
-    }
-    Some(Blocker {
-        source: json_str_field(line, "source")?,
-        reason: json_str_field(line, "reason").unwrap_or_default(),
-        ts: json_str_field(line, "ts").unwrap_or_default(),
-    })
-}
-
-/// Delete every blocker line for `source`; returns the number removed.
-/// Absent file = 0.
-fn resolve_source(path: &Path, source: &str) -> io::Result<usize> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Ok(0);
-    };
-    let mut kept = String::new();
-    let mut removed = 0;
-    for line in text.lines() {
-        let drop = parse_blocker_line(line)
-            .map(|b| b.source == source)
-            .unwrap_or(false);
-        if drop {
-            removed += 1;
-        } else {
-            kept.push_str(line);
-            kept.push('\n');
-        }
-    }
-    if removed > 0 {
-        std::fs::write(path, kept)?;
-    }
-    Ok(removed)
-}
-
-/// Run a shell command string under a hard deadline. Pure std: spawn via the
-/// platform shell, poll `try_wait`, kill the child when the deadline passes.
-/// Exit status 0 within the deadline = true.
-///
-/// SAFETY/TRUST: `cmd` is operator-configured (schedules/settings), never
-/// model or channel output — the same contract the TinyAGI source carries.
-pub fn run_with_timeout(cmd: &str, timeout: Duration) -> bool {
-    let mut child = match spawn_shell(cmd) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                return false;
-            }
-        }
-    }
-}
-
-fn spawn_shell(cmd: &str) -> io::Result<std::process::Child> {
-    if cfg!(windows) {
-        // raw_arg passes the command string VERBATIM on the Windows command
-        // line. Plain `.arg(cmd)` would escape inner quotes as \" which
-        // cmd.exe cannot parse — every quoted path inside an operator
-        // command (echo x > "C:\a b\m.flag") would die with a syntax error.
-        use std::os::windows::process::CommandExt;
-        let mut c = Command::new("cmd");
-        c.arg("/C");
-        c.raw_arg(cmd);
-        c.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-    } else {
-        Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("caddis-wd-{name}-{}", std::process::id()));
+        // swallow: best-effort-cleanup — stale temp dir from a previous run.
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -380,17 +256,5 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut wd = Watchdog::new("svc", &dir.join("b.jsonl"));
         assert_eq!(wd.run_probe().action, ProbeAction::ReportOnly);
-    }
-
-    #[test]
-    fn timeout_kills_hung_probe() {
-        let ok = run_with_timeout("ping -n 10 127.0.0.1", Duration::from_millis(150));
-        assert!(!ok, "hung command must count as a failed probe");
-    }
-
-    #[test]
-    fn command_zero_exit_is_healthy() {
-        assert!(run_with_timeout("exit 0", Duration::from_secs(5)));
-        assert!(!run_with_timeout("exit 3", Duration::from_secs(5)));
     }
 }
