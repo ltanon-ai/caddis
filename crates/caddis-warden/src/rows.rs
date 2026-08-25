@@ -98,6 +98,26 @@ pub(crate) fn first_line_capped(s: &str) -> String {
     s.lines().next().unwrap_or("").chars().take(60).collect()
 }
 
+/// Does this row's caller belong to the caller the reader asked for?
+/// (CARD-0109)
+///
+/// `from` is `<label>` on older rows and `<label>.<session>` on newer ones, so
+/// an exact comparison would silently drop every session-scoped row the moment
+/// sessions became distinguishable — the operator asks what his session did and
+/// is told half of it, with nothing saying anything was withheld.
+///
+/// THE MATCH IS ON A DOT BOUNDARY, NOT A BARE PREFIX. `starts_with` alone is the
+/// obvious wrong fix: it makes `--from peleda` also match a different lane
+/// called `peleda-two`, quietly merging two agents' histories into one answer.
+pub(crate) fn from_matches(row_from: &str, want: &str) -> bool {
+    if row_from == want {
+        return true;
+    }
+    row_from
+        .strip_prefix(want)
+        .is_some_and(|rest| rest.starts_with('.'))
+}
+
 /// The law id a deny reason names (`caddis-warden [id]: …`); text without
 /// the bracket form (sensitive-path denials) has no id to group by, and
 /// the caller decides what to call that bucket rather than this parser
@@ -108,3 +128,7 @@ pub(crate) fn law_id_bracketed(why: &str) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "rows_tests.rs"]
+mod tests;

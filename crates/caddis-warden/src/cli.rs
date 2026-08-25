@@ -21,8 +21,30 @@ USAGE:
                                     re-judge recorded history against today's law
   caddis-warden report [--from NAME] [--since HOURS] [--json]
                                     summarise what the ledger recorded
+  caddis-warden receipt [--from NAME] [--since HOURS] [--json]
+                                    what one caller did, reconstructed from the ledger
+  caddis-warden laws [--from NAME] [--since HOURS] [--json]
+                                    which laws EARN their place, are WALLPAPER, or are DEAD
+  caddis-warden propose-laws [--since HOURS] [--json]
+                                    candidate laws mined from allow-then-undo history
+  caddis-warden card open <card.md> declare a card open for THIS session
+  caddis-warden card status         which card this session holds open
+  caddis-warden card close          close it; refuses if the card file changed
+  caddis-warden attest --card <CARD-ID> [--json]
+                                    a proof bundle for one card, from the ledger
+  caddis-warden attest --verify <bundle.json>
+                                    re-check a bundle against the ledger
   caddis-warden --version           print the version
   caddis-warden --help              print this
+
+`--from NAME` matches a lane and every session in it: `--from peleda` selects
+`peleda` and `peleda.a1b2c3d4`, but never a different lane called `peleda-two`.
+
+A card is state DERIVED FROM THE LEDGER, so it survives this process, is visible
+to `report`, and cannot drift from the record the way a side file would. It is
+per SESSION: opening a card requires an adapter that stamps
+`CADDIS_WARDEN_FROM=<label>.<session>`, because a card held under a bare harness
+label would bound a different session's writes.
 
 The frame path writes one JSON verdict to stdout and exits 0 even for a denial:
 adapters read the verdict, never the exit code. Installing: ONBOARD.md.";
@@ -65,3 +87,7 @@ pub fn version_line() -> String {
         _ => format!("caddis-warden {crate_version} (unreleased build)"),
     }
 }
+
+#[cfg(test)]
+#[path = "cli_tests.rs"]
+mod tests;

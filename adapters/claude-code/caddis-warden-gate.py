@@ -80,6 +80,32 @@ def _label_for(cwd: str) -> str:
         return ""
     return "claude-code"
 
+
+def _session_scoped(label: str, session_id: str) -> str:
+    """`<label>.<8-hex>` — the caller as a SESSION, not just a harness
+    (CARD-0109).
+
+    A lane label is a constant, so two of the operator's sessions in the same
+    lane are indistinguishable in the ledger. That is not a deduction: among the
+    torn rows CARD-0108 diagnosed, one splice reads `"from":"ompomp"` — two
+    warden processes writing the same label at the same instant. The card gate
+    derives "which card is open" from this field, so without a session
+    component one session's card would bound another session's writes.
+
+    Needs NO schema change: `caller_id()` already admits `.` and keeps 32
+    characters, so the dotted form passes through untouched.
+
+    A MISSING SESSION ID DEGRADES TO TODAY'S STAMP rather than inventing one.
+    A fabricated per-process id would be worse than none: it would look
+    session-scoped to every reader while changing on every single tool call,
+    since the warden is spawned once per call.
+    """
+    if not label:
+        return label
+    clean = "".join(c for c in session_id if c.isalnum())[:8]
+    return f"{label}.{clean}" if clean else label
+
+
 def _fold(path: str) -> str:
     """Slash-fold to "/" and case-fold ONLY where the filesystem does:
     os.path.normcase is an identity on POSIX and a lowercase + backslash
@@ -269,6 +295,7 @@ def main() -> None:
     caller = _label_for(str(data.get("cwd") or ""))
     if not caller:
         return  # stand-aside mode: deliberately unwired, no ledger row
+    caller = _session_scoped(caller, str(data.get("session_id") or ""))
 
     tool, command, path, content = _marshal(
         data.get("tool_name") or "", data.get("tool_input") or {}

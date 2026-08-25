@@ -20,7 +20,7 @@
 
 use crate::replay_report::{print_capped, print_coverage, print_law_fires, DRIFT_SHOWN};
 use crate::rows::{first_line_capped, law_id_bracketed, parse_row, split_body, Row};
-use caddis_warden::{decide, ToolCall, Verdict};
+use crate::{decide, ToolCall, Verdict};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -123,7 +123,7 @@ fn parse_filters(args: &[String]) -> Filters {
 impl Filters {
     fn admits(&self, row: &Row) -> bool {
         if let Some(from) = &self.from {
-            if &row.from != from {
+            if !crate::rows::from_matches(&row.from, from) {
                 return false;
             }
         }
@@ -228,3 +228,7 @@ pub fn run(args: &[String]) -> i32 {
     print_law_fires(&deny_fires, &steer_fires);
     0
 }
+
+#[cfg(test)]
+#[path = "replay_tests.rs"]
+mod tests;

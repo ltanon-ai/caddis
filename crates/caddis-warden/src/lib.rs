@@ -24,9 +24,32 @@
 //! engineer might do on purpose is `Steer` instead. Being ignorable is the
 //! failure mode; being obstructive is how you get ignored.
 
+pub mod allowlist;
+pub mod attest;
+pub mod attest_verify;
+pub mod card;
+pub mod card_state;
 pub mod checks;
+pub mod cli;
+pub mod identity;
 pub mod law;
+pub mod laws;
+pub mod propose;
+pub mod receipt;
+pub mod receipt_report;
+pub mod replay;
+pub mod report;
 pub mod wire;
+
+// Rendering for `replay`, and the ONE ledger-row parser both `replay` and
+// `report` read through. Neither is public API: the binary reaches the ledger
+// through `replay::run` and `report::run`, and `rows` stays `pub(crate)`
+// deliberately (rows.rs:1-4) so a second copy of the row parser cannot appear.
+// Locating a card's window in the ledger. Internal: callers reach it through
+// `attest`, and it speaks in `Row`, which stays pub(crate) by design.
+mod attest_window;
+mod replay_report;
+mod rows;
 
 /// What the warden decided about one tool call.
 #[derive(Debug, Clone, PartialEq)]

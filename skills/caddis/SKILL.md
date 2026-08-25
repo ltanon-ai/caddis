@@ -6,8 +6,11 @@ description: Operate the caddis conscience AND work card-first — query the
   EXECUTION when dispatching to a local model). Use when any tool call was
   blocked by caddis-warden, when starting any non-trivial task (write the
   card first), when dispatching code work to a local/weak model (the
-  ladder), when the user asks what an agent did, or mentions caddis,
-  cards, the ledger, the ladder, or replay.
+  ladder), when the user asks what an agent did, when a bee reports done
+  (attest its card), when writing a handoff or report (paste a receipt),
+  when a law keeps getting in the way (check whether it is WALLPAPER), or
+  when the user mentions caddis, cards, the ledger, the ladder, replay,
+  receipts, attestation or proof bundles.
 ---
 
 # caddis — the conscience and the card ladder
@@ -42,22 +45,43 @@ session — stop, write the card, continue. (This same nudge arrives
 mechanically from the skill environment; never fight it, never bypass a
 law to make work pass — a wrong law is fixed by a card, not a detour.)
 
-## 2. The conscience commands
+## 2. Read the ledger AT THESE MOMENTS — not when you remember to
 
-```sh
-grep '"deny|' ~/.caddis/warden-ledger.jsonl | tail     # nightly question
-grep '"from":"NAME"' ~/.caddis/warden-ledger.jsonl | tail -20
-caddis-warden --replay ~/.caddis/warden-ledger.jsonl [--from NAME] [--since 24h]
-```
+⛔ **This section is keyed to moments, not to commands, and that is the
+whole design.** caddis spent its first two versions being write-mostly:
+15k rows in, almost nothing out. 0.3.0 added five readers, and five
+readers nobody invokes is the same defect one storey up. So: do not read
+this as a command reference. Find the moment you are in.
 
-Replay re-judges history against the current law: every NEW-DENY is a
-future false positive caught free; every FREED a fixed over-fire, and
-NOW-STEERS / NO-LONGER-STEERS the soft-finding noise the change adds or
-removes. **Read the coverage line before believing the counts** — only
-command rows carry a replayable body, so a clean result covers the
-fraction it names and no more. Run it before swapping an updated warden
-binary; re-run `./onboard <name>` after the swap. A blocked call: explain the reason in one sentence; if
-it looks wrong, pull the ledger row — a false positive is a card.
+| the moment you are in | run this | because |
+|---|---|---|
+| **writing a handoff or a report** | `caddis-warden receipt --from <you> --since <hours>` | paste it in. Your prose is then checkable against a record instead of against your memory — and the receipt names any card you left `STILL OPEN` |
+| **starting a non-trivial unit** | `caddis-warden card open <card.md>` | it prints whether the card BOUNDS anything. `NOT BOUNDED` means a v1 card with no allowlist: real, allowed, and it protects nothing |
+| **finishing that unit** | `caddis-warden card close` | it refuses if the card file changed since you opened it |
+| **a bee says "done"** | `caddis-warden attest --card <ID>` | read `OUTSIDE` first — files it wrote that its card never declared |
+| **reviewing someone else's bundle** | `caddis-warden attest --verify <bundle.json>` | non-zero exit means the bundle does not match the ledger. This is the one command that makes *the builder never grades its own work* mechanical |
+| **after a red gate or a surprising block** | `caddis-warden laws --since 2` | did a law fire, or did something slip past one |
+| **before swapping an updated warden binary** | `caddis-warden --replay <ledger>` | every NEW-DENY is a future false positive caught free; every FREED an over-fire you fixed |
+| **when a law keeps annoying you** | `caddis-warden laws` | WALLPAPER means it fires and is routed around. Bring the number, not the irritation |
+| **when the law set feels thin** | `caddis-warden propose-laws` | candidates mined from allow-then-undo. **Read the FALSIFIER line before adopting one** — most candidates would deny more real work than they would catch |
+
+### What these answers do NOT mean
+
+- **A receipt cannot tell you what most commands WERE.** Masking and
+  elision are doing their job; on a real 24h window ~90% of command text
+  is withheld. The receipt says so on every run — read that line.
+- **`attest` never proves a test PASSED.** The warden fires BEFORE a tool
+  runs and no row carries an exit code. `RED-TEST: ATTEMPTED` is the
+  strongest honest claim available, and every bundle carries its limits.
+- **`laws` worked-around counts are a HEURISTIC**, and an honest
+  fix-and-retry counts the same as a circumvention. A lead, never a
+  verdict about an agent.
+- **Cite rows by position, not by `seq`,** for anything before
+  2026-08-25: the ledger's counter was not unique for 56% of its history
+  (fixed in 0.3.0, but the old rows are never rewritten).
+
+A blocked call: explain the reason in one sentence; if it looks wrong,
+pull the ledger row — a false positive is a card, never a detour.
 
 ## 3. The ladder — dispatching to a local model
 

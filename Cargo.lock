@@ -21,5 +21,6 @@ dependencies = [
 name = "caddis-warden"
 version = "0.1.0"
 dependencies = [
+ "caddis-card",
  "caddis-core",
 ]

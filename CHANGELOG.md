@@ -4,6 +4,143 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+## 0.3.0 — a conscience that PROVES, not one that comments
+
+0.2.x made caddis a conscience that *comments*. This makes it a system that
+*proves*. Five new readers over a ledger that was, until now, write-mostly —
+15k rows in and almost nothing out, which is a writer with no reader.
+
+The version is a deliberate exception to this project's patch-only cadence: it
+changes what the product is.
+
+### The ledger was corrupt, and everything else stood on it
+
+Found by an adversarial review before any feature was built, then confirmed
+against a live 15411-row ledger:
+
+```
+20 rows torn (not parseable JSON)
+6733 distinct seq values for 15411 rows
+8678 rows (56%) carrying a DUPLICATE seq
+19 counter resets
+```
+
+`writeln!` onto an unbuffered file issues **one write syscall per format
+fragment**, and `O_APPEND` is atomic per syscall rather than per call, so two
+wardens appending at once interleaved mid-token. A torn row then defeated the
+counter recovery in `Ledger::open`, which reset to zero and re-issued the whole
+sequence. Reproduced at 286 torn rows out of 320 with eight concurrent writers.
+
+Fixed three ways, each with a test that fails without it: one `write_all` per
+row; counter recovery as the maximum over *intact* rows; and the number chosen
+under an advisory lock, because an atomic append fixes torn ROWS and does
+nothing for duplicate NUMBERS — read-then-write is a race wherever the read sits
+outside the exclusion.
+
+**The historical damage is permanent.** An append-only ledger is never rewritten
+to hide what happened to it, so for rows written before this release a citation
+is a physical position, never a `seq`. Every reader below already does that, and
+`Ledger::unreadable()` now reports the count so an EMPTY ledger and a DAMAGED
+one stop looking alike.
+
+### `caddis receipt` — what one caller actually did
+
+Reconstructs a window from the ledger alone: verdict counts, per-tool counts,
+distinct files written with a count each, denials grouped by the law that drew
+them *with the rows cited*, laws fired, and cards opened — naming any left
+`STILL OPEN`, because work declared and never closed is work whose bounds nobody
+confirmed.
+
+It states what it could not see. On a real 24-hour window: 109 rows, of which
+**99 commands were withheld** by the masking and size doctrines. Those doctrines
+are right; a receipt that hid the consequence would not be.
+
+### `caddis card open|status|close` — a card becomes a fact in the ledger
+
+The card schema has declared `allowlist` and `blast` since the beginning, and
+the warden has always seen every write path; nothing connected them. Card state
+now lives *in the ledger* — not in a side file that drifts from it, and not in
+an environment variable that leaves no trace in an audit.
+
+Four refusals, each an honest floor rather than a restriction: a caller that
+names a harness instead of a session cannot hold a card at all; opening twice
+refuses instead of nesting; a card whose allowlist names more distinct paths
+than its own `blast` allows is refused before any work starts; and `close`
+refuses if the card file changed since it was opened, because an executor that
+can rewrite its own allowlist mid-work has no card.
+
+`open` prints whether the card BOUNDS anything, because a v1 card declares no
+allowlist and there is nothing to enforce. Saying so is the difference between a
+mechanism and a reassurance.
+
+### The open card bounds the edits
+
+With a card open, a write outside its declared allowlist is **denied** when the
+target was handed over — a file tool's path, or a literal `>` redirect — and
+**steered** when it was recovered from command text. Violating your own pinned
+declaration is self-contradiction; guessing at a shell command's effects is not.
+
+With no card open, every verdict is byte-for-byte what it was. The gate is
+invisible until someone opts in.
+
+**Scope, stated rather than implied:** this is a declaration gate over write
+targets the warden is handed, not a filesystem sandbox. Measured on a real
+ledger, file-write tools are 13.5% of rows and shell is 75.6%, and a shell
+command's write targets are not recoverable in general. Cost: +6.3 ms per
+write-tool call.
+
+### `caddis laws` — which rules earn their place
+
+Per law: fires, the deny/steer split, how often a denial was followed by the
+same caller getting the same command through, and one of three verdicts —
+EARNING, WALLPAPER, DEAD. Every *registered* law appears, including those that
+never fired, because a market that lists only what fired cannot report a dead
+rule.
+
+First run on a real ledger: **16 laws — 6 DEAD, 1 WALLPAPER, 9 EARNING**, with
+one law that had fired twice in its entire life and been routed around both
+times.
+
+The worked-around figure is a **heuristic** and is labelled one in the module,
+in the report and inside the JSON: the ledger records what a tool was asked to
+do, never what happened, so an honest fix-and-retry counts the same as a
+circumvention. A lead, never a verdict about an agent.
+
+### `caddis propose-laws` — candidates with their own falsifier attached
+
+Mines the ledger for a signature nobody reads: a command allowed and then
+immediately undone. **Every candidate states what it would have cost** — how
+many rows across the whole ledger a law on that signature would have denied — so
+the false-positive price is visible before adoption rather than after.
+
+On a real ledger this promptly condemned its own output: four candidates, each
+seen undone once or twice, each of which would have denied between 87 and 380
+real commands. Without that number, a proposal engine would have suggested
+banning `python -c`. Nothing here installs a law, and it says so on every run.
+
+### `caddis attest` — proof that travels with the work
+
+For a card that was opened and closed, a proof bundle assembled from data
+already recorded: the card and its content hash, the declared allowlist and
+blast, the ledger window, every verdict drawn, every distinct file written, and
+**the files written outside what the card declared**. `attest --verify` recomputes
+every counted claim against the ledger and exits non-zero if any is
+contradicted — pinned by tests that tamper with a bundle by hand, because a
+verifier nobody has watched go red is not a verifier.
+
+**What it refuses to claim.** The warden fires *before* a tool runs and no row
+carries an exit code, so a bundle cannot say a test failed before and passed
+after. It says a matching command was ATTEMPTED, and every bundle carries that
+limit in a field of its own, so a reader who only ever sees the JSON still sees
+what it cannot prove.
+
+### The skill is now keyed to moments, not to commands
+
+Five readers nobody invokes would be the original defect one storey up. The
+skill no longer lists commands; it lists the moments — writing a handoff,
+finishing a unit, a bee reporting done, reviewing a bundle, hitting a red gate —
+and what to run at each, together with what each answer does *not* mean.
+
 ## 0.2.9 — the tools stop lying about themselves
 
 Five defects, all of the same family: a thing that reported success, or

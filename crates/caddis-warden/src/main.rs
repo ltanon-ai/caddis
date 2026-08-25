@@ -19,44 +19,40 @@
 //! effect-level idempotency is ever wanted.
 
 mod body;
-mod cli;
-mod replay;
-mod replay_report;
-mod report;
-mod rows;
 
 use body::{body_command, mask_at_rest, why_field};
-use caddis_warden::{decide, wire, Verdict};
+use caddis_warden::identity::{caller_id, fnv1a, ledger_path, unix_seconds};
+use caddis_warden::{
+    attest, card, cli, decide, laws, propose, receipt, replay, report, wire, Verdict,
+};
 use std::io::{Read, Write};
+use std::process::ExitCode;
 
-fn main() {
+/// ⛔ NOTHING HERE MAY CALL `std::process::exit`, AND THAT IS A MEASUREMENT
+/// CONTRACT, not a style preference (CARD-0107). A process that ends that way
+/// discards its LLVM coverage counters, so every subcommand dispatched through
+/// it contributed NOTHING to coverage — `cargo llvm-cov --test report` ran five
+/// passing spawn tests and reported TOTAL 0.00%, `main.rs` included. Returning
+/// an `ExitCode` lets the process wind down normally and the counters survive.
+/// The observable contract is unchanged: same codes, same streams.
+fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    match args.get(1).map(String::as_str) {
-        Some("--replay") => std::process::exit(replay::run(&args)),
-        Some("report") => std::process::exit(report::run(&args)),
-        // Anything else that looks like an argument is ANSWERED, never fed to
-        // the frame parser: falling through is what made `--version` a denial.
-        Some(other) => match cli::for_flag(other) {
-            cli::Reply::Out(text) => {
-                println!("{text}");
-                std::process::exit(0)
-            }
-            cli::Reply::Err(text, code) => {
-                eprintln!("{text}");
-                std::process::exit(code)
-            }
-        },
-        None => {}
+    if let Some(code) = dispatch(&args) {
+        return code;
     }
     let mut buf = Vec::new();
     if std::io::stdin().read_to_end(&mut buf).is_err() {
-        return fail_closed("warden: could not read the request frame");
+        fail_closed("warden: could not read the request frame");
+        return ExitCode::SUCCESS;
     }
     let call = match wire::parse(&buf) {
         Ok(c) => c,
         // FAIL CLOSED. An unparsable request is not an allowed one: if the
         // warden cannot see what it is judging, the safe answer is no.
-        Err(e) => return fail_closed(&format!("warden: unreadable request ({e})")),
+        Err(e) => {
+            fail_closed(&format!("warden: unreadable request ({e})"));
+            return ExitCode::SUCCESS;
+        }
     };
 
     let verdict = decide(&call);
@@ -68,6 +64,46 @@ fn main() {
         Verdict::Deny { reason } => (reason.clone(), String::new()),
     };
     emit(&wire::reply(verdict.tag(), &reason, &law, seq));
+    ExitCode::SUCCESS
+}
+
+/// The human-facing arguments, answered without ever touching stdin. `None`
+/// means "no argument claimed this invocation" — the frame path, which is the
+/// only one an adapter ever takes.
+///
+/// Anything that looks like an argument is ANSWERED, never fed to the frame
+/// parser: falling through is what made `--version` reply with a denial.
+fn dispatch(args: &[String]) -> Option<ExitCode> {
+    match args.get(1).map(String::as_str) {
+        Some("--replay") => Some(exit_code(replay::run(args))),
+        Some("report") => Some(exit_code(report::run(args))),
+        Some("card") => Some(exit_code(card::run(args))),
+        Some("receipt") => Some(exit_code(receipt::run(args))),
+        Some("laws") => Some(exit_code(laws::run(args))),
+        Some("propose-laws") => Some(exit_code(propose::run(args))),
+        Some("attest") => Some(exit_code(attest::run(args))),
+        Some(other) => Some(match cli::for_flag(other) {
+            cli::Reply::Out(text) => {
+                println!("{text}");
+                ExitCode::SUCCESS
+            }
+            cli::Reply::Err(text, code) => {
+                eprintln!("{text}");
+                exit_code(code)
+            }
+        }),
+        None => None,
+    }
+}
+
+/// A subcommand's `i32` as a process exit code. Values outside a byte cannot be
+/// reported faithfully by any platform here, so they clamp to 1 (failure)
+/// rather than wrapping into a code that would read as success.
+fn exit_code(code: i32) -> ExitCode {
+    match u8::try_from(code) {
+        Ok(byte) => ExitCode::from(byte),
+        Err(_) => ExitCode::FAILURE,
+    }
 }
 
 fn emit(s: &str) {
@@ -143,44 +179,6 @@ fn record(call: &caddis_warden::ToolCall, verdict: &Verdict) -> u64 {
     }
 }
 
-fn ledger_path() -> std::path::PathBuf {
-    // An unset override is the NORMAL case here, and the default path below is
-    // the lawful fallback rather than an error path.
-    // swallow: fail-safe-by-law
-    if let Ok(p) = std::env::var("CADDIS_WARDEN_LEDGER") {
-        if !p.is_empty() {
-            return std::path::PathBuf::from(p);
-        }
-    }
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    std::path::Path::new(&home)
-        .join(".caddis")
-        .join("warden-ledger.jsonl")
-}
-
-/// The calling harness's name, for the ledger's `from` field (CARD-FROM-1).
-/// One conscience serves several harnesses — omp, little-coder, prime-agent,
-/// Claude Code — and the adapter stamps CADDIS_WARDEN_FROM so the shared
-/// ledger can answer "which of my agents did this", the only question a
-/// shared ledger exists to answer. Sanitized like a type name: a hostile value
-/// must not corrupt the JSONL row, and an unusable one falls back to "omp"
-/// rather than losing the record (the envelope rejects an empty `from`).
-fn caller_id() -> String {
-    let cleaned: String = std::env::var("CADDIS_WARDEN_FROM")
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
-        .take(32)
-        .collect();
-    if cleaned.is_empty() {
-        "omp".to_string()
-    } else {
-        cleaned
-    }
-}
-
 /// The envelope `type` must start with an ASCII letter (envelope.rs); this
 /// keeps a future exotic tool name from losing its ledger row.
 fn sanitize_type(tool: &str) -> String {
@@ -192,21 +190,4 @@ fn sanitize_type(tool: &str) -> String {
         Some(c) if c.is_ascii_alphabetic() => cleaned,
         _ => format!("x{cleaned}"),
     }
-}
-
-fn unix_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
-/// FNV-1a — stable envelope ids only, never security (nothing here rests on
-/// collision resistance; a crypto hash would cost the zero-dep property).
-fn fnv1a(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in s.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x1000_0000_01b3);
-    }
-    h
 }

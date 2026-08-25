@@ -13,7 +13,7 @@
 //! zero-dependency law, escaping via wire::json_escape.
 
 use crate::rows::{parse_row, Row};
-use caddis_warden::wire::json_escape;
+use crate::wire::json_escape;
 use std::collections::BTreeMap;
 
 /// Optional narrowing, mirroring replay's filters plus report's own:
@@ -56,7 +56,7 @@ fn parse_filters(args: &[String]) -> Result<Filters, String> {
 impl Filters {
     fn admits(&self, row: &Row, tag: &str) -> bool {
         if let Some(from) = &self.from {
-            if &row.from != from {
+            if !crate::rows::from_matches(&row.from, from) {
                 return false;
             }
         }
@@ -247,3 +247,7 @@ fn load_rows(path: &str, filters: &Filters) -> Result<Vec<Row>, std::io::Error> 
     }
     Ok(kept)
 }
+
+#[cfg(test)]
+#[path = "report_tests.rs"]
+mod tests;

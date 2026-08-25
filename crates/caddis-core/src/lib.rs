@@ -7,6 +7,9 @@ pub mod envelope;
 pub mod footer_state;
 pub mod idempotency;
 pub mod ledger;
+// The ledger's mutual exclusion, split under the 280-line law (CARD-0108).
+// Private: callers get exclusion as a property of `append`, never as a knob.
+mod ledger_lock;
 pub mod policy;
 
 pub const VERSION: &str = "0.1.0";

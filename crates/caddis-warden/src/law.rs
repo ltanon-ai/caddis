@@ -8,6 +8,7 @@
 //! the fragments are concatenated at runtime instead: identical bytes at match
 //! time, no literal in the source, and no guard weakened.
 
+use crate::allowlist;
 use crate::{ToolCall, Verdict};
 use std::path::Path;
 
@@ -66,7 +67,7 @@ fn is_prose(path: &str) -> bool {
 /// it on the strength of a claim I had not tested — the whole point of the
 /// exemption is that a guard must not forbid documenting its own rules, and this
 /// was that failure surviving one round of review.
-fn redirect_target(command: &str) -> Option<String> {
+pub(crate) fn redirect_target(command: &str) -> Option<String> {
     let tokens = crate::checks::cmdline::segments(command)
         .into_iter()
         .flatten()
@@ -255,6 +256,15 @@ pub fn apply(call: &ToolCall, cwd: &Path) -> Verdict {
                  of a secret, build it at runtime from character codes."
             ),
         };
+    }
+
+    // ⛔ LAST, AND THAT IS LOAD-BEARING (CARD-0111). Every rule above names a
+    // defect in the work itself; this one names a mismatch with a plan. When
+    // both fire the reader deserves the stronger reason, so the allowlist only
+    // ever speaks about calls the rest of the law was willing to allow. It is
+    // also INERT until someone opts in by opening a card.
+    if let Some(v) = allowlist::verdict_for(call, cwd) {
+        return v;
     }
 
     Verdict::Allow

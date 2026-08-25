@@ -8,6 +8,10 @@ edition = "2021"
 # design — the kernel must be auditable by reading it (AGENT-LAW, WORKSPACE C3).
 [dependencies]
 caddis-core = { path = "../caddis-core" }
+# CARD-0110: `card open` validates against the real schema rather than a
+# second copy of it. A PATH dependency inside the workspace; the dependency
+# gate refuses REGISTRY deps in the TCB, not these.
+caddis-card = { path = "../caddis-card" }
 
 [[bin]]
 name = "caddis-warden"
