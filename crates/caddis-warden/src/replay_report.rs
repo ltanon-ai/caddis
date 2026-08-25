@@ -37,8 +37,18 @@ pub fn coverage_lines(
     } else {
         (judged as f64) * 100.0 / (rows as f64)
     };
+    // ⛔ NEVER PRINT 100.0% FOR AN INCOMPLETE READING. 4655 of 4656 rows is
+    // 99.978%, which `{:.1}` renders as "100.0%" — and a reader takes that as
+    // "all of it", which is exactly the omission this line was added to close.
+    // Found by the pre-push review, which caught that the test guarding this
+    // asserted the OPPOSITE of what its own name and comment promised.
+    let shown = if judged < rows && pct > 99.9 {
+        ">99.9".to_string()
+    } else {
+        format!("{pct:.1}")
+    };
     let mut out = vec![format!(
-        "coverage: {judged} of {rows} rows re-judged ({pct:.1}%); {skipped} could not be"
+        "coverage: {judged} of {rows} rows re-judged ({shown}%); {skipped} could not be"
     )];
     out.extend(reasons.iter().map(|(r, c)| format!("  {c} {r}")));
     out

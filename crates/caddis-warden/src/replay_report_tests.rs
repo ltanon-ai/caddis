@@ -40,12 +40,24 @@ fn an_empty_ledger_reports_zero_percent_and_never_divides_by_zero() {
 }
 
 #[test]
-fn full_coverage_is_not_rounded_up_from_a_near_miss() {
-    // 4655/4656 must not print as 100.0% — a reader would take that as "all of
-    // it", which is exactly the omission this line exists to close.
+fn a_near_miss_never_renders_as_one_hundred_percent() {
+    // ⛔ THIS TEST USED TO ASSERT THE OPPOSITE OF ITS OWN NAME. It was called
+    // `full_coverage_is_not_rounded_up_from_a_near_miss`, its comment said
+    // 4655/4656 "must not print as 100.0%", and then it asserted that it DID —
+    // pinning the defect in place under a name that promised the fix. The
+    // pre-push review caught the contradiction.
     let lines = coverage_lines(4656, 4655, 1, &reasons(&[]));
-    assert!(lines[0].contains("(100.0%)"), "got: {}", lines[0]);
+    assert!(!lines[0].contains("100.0%"), "got: {}", lines[0]);
+    assert!(lines[0].contains(">99.9%"), "got: {}", lines[0]);
     assert!(lines[0].contains("1 could not be"), "got: {}", lines[0]);
+}
+
+#[test]
+fn genuinely_complete_coverage_still_says_one_hundred() {
+    // The fix must not overcorrect: when every row WAS judged, 100.0% is the
+    // truth and hedging it would be its own kind of dishonesty.
+    let lines = coverage_lines(4656, 4656, 0, &reasons(&[]));
+    assert!(lines[0].contains("(100.0%)"), "got: {}", lines[0]);
 }
 
 #[test]
