@@ -189,8 +189,8 @@ to rewrite — other clones already have it.
   doctrine at the moment it applies, not a lecture at session start. Every
   verdict lands in a local append-only ledger: what was attempted, what was
   stopped, when, why, and **which agent** did it.
-- **One binary, zero dependencies.** ~6 400 lines of Rust source across four
-  first-party crates (plus a ~5 200-line red-first test corpus), no external
+- **One binary, zero dependencies.** ~10 400 lines of Rust source across five
+  first-party crates (plus a ~6 300-line red-first test corpus), no external
   deps. Builds in about two seconds, runs anywhere, reads one
   length-prefixed frame and answers one JSON verdict. No cloud, no telemetry,
   no trust required.
@@ -543,9 +543,9 @@ punish you for cleaning up the very thing it dislikes.
 
 The repository eats its own cooking:
 
-- **Rust**: `cargo test --workspace` — 253 tests at this release; every law
+- **Rust**: `cargo test --workspace` — 492 tests at this release; every law
   lands red-first with its fixture file, the corpus is the evidence.
-- **Python**: the adapter, ladder, renderer and install suites — 43 tests —
+- **Python**: the adapter, ladder, renderer and install suites — 53 tests —
   run in the CI matrix on Linux, Windows and macOS.
 - **Coverage**: `cargo llvm-cov` and `pytest --cov` feed the SonarQube wiring
   in `sonar-project.properties` (via `tools/sonar-coverage.py`, which makes
@@ -566,6 +566,7 @@ cargo test --workspace 2>&1 | grep -oE "[0-9]+ passed" \
 | `crates/caddis-core` | envelope → policy → idempotency → ledger kernel |
 | `crates/caddis-card` | the work-unit law: strict + plan oracles |
 | `crates/caddis-tree` | the goal tree: events, walker, plan gates, bench |
+| `crates/caddis-organs` | watchdog, canary, checkpoint — **present, not yet wired** |
 | `adapters/` | the nerve: one thin adapter file, no policy |
 | `skills/caddis/` | the agent-side skill: card-first work, ladder, commands |
 | `THREAT-MODEL.md` | what is protected, against what, and where it ends |

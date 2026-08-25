@@ -38,10 +38,17 @@ nothing for duplicate NUMBERS — read-then-write is a race wherever the read si
 outside the exclusion.
 
 **The historical damage is permanent.** An append-only ledger is never rewritten
-to hide what happened to it, so for rows written before this release a citation
-is a physical position, never a `seq`. Every reader below already does that, and
-`Ledger::unreadable()` now reports the count so an EMPTY ledger and a DAMAGED
-one stop looking alike.
+to hide what happened to it, so a `seq` from before this release does not
+identify one row: 8678 of them share a number with something else.
+
+⚠ **The readers below DO cite `seq`** — `receipt` prints `(seq N)` beside each
+denial and `propose-laws` stores an `example_seq`. That is exact for rows written
+from this release onward, where the counter is chosen under a lock, and only
+approximate for the damaged era, where the same number may name several rows.
+An earlier draft of this entry claimed every reader cited a physical position
+instead. It did not, and a changelog asserting a property the code does not have
+is the failure this release is named for. `Ledger::unreadable()` reports the
+damaged count, so an EMPTY ledger and a DAMAGED one stop looking alike.
 
 ### `caddis receipt` — what one caller actually did
 
