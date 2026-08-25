@@ -1,0 +1,14 @@
+[package]
+name = "caddis-organs"
+version = "0.1.0"
+edition = "2021"
+description = "ORGANS WAVE 1 (sergeant unit caddis-organs-wave1, 2026-08-25): watchdog + canary + checkpoint — the self-heal / self-test / self-undo organs, ported harness-agnostic from proven modules (TinyAGI watchdog A3, qpi-cli golden-path canary D29, git-checkpoint). Zero runtime deps, sync, std only."
+# Origin: OMP sergeant BUILD-QUEUE caddis-organs-wave1. Sources (proven, read-only ports):
+#   watchdog  — infra_tinyagi_engine packages/core/src/watchdog.ts (probe -> restart -> backoff -> blocker)
+#   canary    — qpi-cli packages/coding-agent/src/canary/ (11-hop golden path; RED halts, DEGRADED never halts)
+#   checkpoint— qpi-cli git-checkpoint example + QPI TODO "wire the pre-mutation snapshot"
+
+[dependencies]
+caddis-core = { path = "../caddis-core" }
+
+[dev-dependencies]

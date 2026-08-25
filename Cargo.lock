@@ -11,6 +11,13 @@ name = "caddis-core"
 version = "0.1.0"
 
 [[package]]
+name = "caddis-organs"
+version = "0.1.0"
+dependencies = [
+ "caddis-core",
+]
+
+[[package]]
 name = "caddis-tree"
 version = "0.1.0"
 dependencies = [
