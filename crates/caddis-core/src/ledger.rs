@@ -66,36 +66,6 @@ fn row_seq(line: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-/// CARD-WARDEN-1: escape a string for a JSON string literal.
-///
-/// The v0 line escaped `\` and `"` only, which held for as long as every body
-/// was a short ASCII test string. A warden body carries real tool input — a
-/// multi-line bash command, file content — and a RAW newline inside a JSONL
-/// record ENDS the record: one append reads back as two lines, the second
-/// unparsable, and `open` then recovers `seq` from a fragment.
-///
-/// Escapes the two structural characters, the five short forms JSON defines,
-/// and every remaining C0 control as `\u00XX`. Nothing above U+001F needs
-/// escaping in JSON, so text and emoji pass through as themselves (the file is
-/// UTF-8 by contract — see rules/common/encoding.md).
-fn esc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 impl Ledger {
     /// Recover the counter as the MAXIMUM seq over intact rows (CARD-0108).
     ///
@@ -195,15 +165,21 @@ impl Ledger {
         // two writers spliced mid-token as the normal case: a reproduction with
         // 8 concurrent writers tore 286 of 320 rows.
         //
-        // HONEST SCOPE: a single `write_all` is one syscall for a row of this
-        // size, and `body.rs` caps the body at 500 bytes, so rows stay far below
-        // any partial-write threshold. This is not a claim that an append of any
-        // size is atomic — `write_all` loops on a short write, and a loop is
-        // where tearing would return.
-        let row = format!(
-            "{{\"seq\":{},\"v\":{},\"id\":\"{}\",\"idem_key\":\"{}\",\"type\":\"{}\",\"from\":\"{}\",\"to\":\"{}\",\"body\":\"{}\",\"ts\":\"{}\"}}\n",
-            self.seq, env.v, esc(&env.id), esc(&env.idem_key), esc(&env.r#type),
-            esc(&env.from), esc(&env.to), esc(&env.body), esc(&env.ts));
+        // ⛔ THE CAP IS ENFORCED HERE, BY THE FUNCTION THAT MAKES THE PROMISE.
+        // This comment used to say rows stay small because "body.rs caps the body
+        // at 500 bytes". That cap lives in a DIFFERENT CRATE (caddis-warden), it
+        // bounds only the COMMAND rather than the whole `tag|command|path|why`
+        // body, and `envelope::validate` has no body limit at all -- `body` is an
+        // opaque String. The kernel was stating an unconditional guarantee that
+        // rested on a downstream crate it cannot see, and callers outside the
+        // warden (card.rs, the organs canary) never passed through that cap. An
+        // atomicity claim depending on someone else's discipline is not a
+        // guarantee; it is a hope with a comment on it.
+        //
+        // The row is now bounded before it is written, and an elided body SAYS so
+        // -- the rule body.rs already applies to commands: a shortened record must
+        // never masquerade as the whole one.
+        let row = crate::ledger_row::row_for(self.seq, env);
         f.write_all(row.as_bytes())?;
         // Everything on disk is now accounted for by `self.seq`, so the next
         // append under the lock reads only what arrives after this point.

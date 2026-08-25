@@ -10,6 +10,10 @@ pub mod ledger;
 // The ledger's mutual exclusion, split under the 280-line law (CARD-0108).
 // Private: callers get exclusion as a property of `append`, never as a knob.
 mod ledger_lock;
+// How a row is ENCODED and BOUNDED, split under the 280-line law. Private for
+// the same reason as the lock: callers get a bounded row as a property of
+// `append`, never as a knob they can widen.
+mod ledger_row;
 pub mod policy;
 
 pub const VERSION: &str = "0.1.0";
