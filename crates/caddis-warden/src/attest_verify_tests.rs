@@ -12,6 +12,7 @@ fn bundle() -> Bundle {
         card_hash: "abc123".into(),
         allowlist: vec!["src/a.rs".into()],
         blast: 2,
+        card_readable: true,
         opened_at_row: 3,
         closed_at_row: 9,
         from: "peleda.s1".into(),

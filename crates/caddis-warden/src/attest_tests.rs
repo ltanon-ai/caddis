@@ -160,6 +160,47 @@ fn a_red_test_attempt_is_recorded_as_attempted_and_nothing_stronger() {
 }
 
 #[test]
+fn a_card_whose_file_is_gone_reports_unknown_and_never_clean() {
+    // ⛔ THE REASSURING ARTIFACT THIS WHOLE PROGRAM EXISTS AGAINST. `declared()`
+    // used to return an empty allowlist for EVERY failure, and an empty
+    // allowlist makes the fold skip the outside-check entirely — so a bundle
+    // for a card that had been DELETED printed `OUTSIDE: none`, which reads as
+    // clean. The one case where nothing could be checked is the case where a
+    // reader most needs to be told so. (Pre-push review, finding #6.)
+    let c = CardFile::new("gone", &["src/a.rs"]);
+    let path = c.path();
+    let led = ledger(&c, &r(2, "t.s1", "tool.write", "allow|x|src/SNEAKY.rs|"));
+    // Delete the card AFTER the ledger records it, exactly as a later attest
+    // over old history would find it.
+    drop(c);
+    assert!(std::fs::read_to_string(&path).is_err(), "the card is gone");
+
+    let b = build(&led, "CARD-A").expect("the bundle still assembles");
+    assert!(
+        !b.card_readable,
+        "the bundle must know its card is unreadable"
+    );
+    let text = crate::attest_verify::render_text(&b);
+    assert!(text.contains("OUTSIDE     : UNKNOWN"), "{text}");
+    assert!(text.contains("NOTHING was checked"), "{text}");
+    assert!(!text.contains("OUTSIDE     : none"), "{text}");
+    assert!(
+        crate::attest_verify::render_json(&b).contains("\"card_readable\":false"),
+        "a machine reader must see it too"
+    );
+}
+
+#[test]
+fn a_readable_card_reports_its_outside_list_normally() {
+    let c = CardFile::new("present", &["src/a.rs"]);
+    let led = ledger(&c, &r(2, "t.s1", "tool.write", "allow|x|src/a.rs|"));
+    let b = build(&led, "CARD-A").expect("bundle");
+    assert!(b.card_readable);
+    let text = crate::attest_verify::render_text(&b);
+    assert!(text.contains("OUTSIDE     : none"), "{text}");
+}
+
+#[test]
 fn a_card_never_opened_is_an_error_not_an_empty_bundle() {
     assert!(build("", "CARD-MISSING").is_err());
 }

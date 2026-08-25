@@ -41,7 +41,14 @@ pub fn render_text(b: &Bundle) -> String {
         b.deny,
         b.files.len()
     );
-    if b.outside.is_empty() {
+    if !b.card_readable {
+        // ⛔ NOT "none". The one case where nothing could be checked is the case
+        // where a reader most needs to be told so (pre-push review, finding #6).
+        s.push_str(
+            "\n  OUTSIDE     : UNKNOWN — the card file could not be read at attest time, \
+             so NOTHING was checked against its allowlist",
+        );
+    } else if b.outside.is_empty() {
         s.push_str("\n  OUTSIDE     : none");
     } else {
         s.push_str(&format!(
@@ -95,7 +102,8 @@ pub fn render_json(b: &Bundle) -> String {
         "{{\"card_id\":\"{}\",\"card_path\":\"{}\",\"card_hash\":\"{}\",\"from\":\"{}\",\
          \"opened_at_row\":{},\"closed_at_row\":{},\"blast\":{},\"allowlist\":[{}],\
          \"allow\":{},\"steer\":{},\"deny\":{},\"files\":{{{}}},\
-         \"files_outside_allowlist\":[{}],\"red_test_attempted\":{},\"laws\":{{{}}},\
+         \"files_outside_allowlist\":[{}],\"card_readable\":{},\
+         \"red_test_attempted\":{},\"laws\":{{{}}},\
          \"unreadable\":{},\"limits\":[{}]}}",
         json_escape(&b.card_id),
         json_escape(&b.card_path),
@@ -110,6 +118,7 @@ pub fn render_json(b: &Bundle) -> String {
         b.deny,
         files.join(","),
         arr(&b.outside),
+        b.card_readable,
         b.red_test_seen,
         laws.join(","),
         b.unreadable,

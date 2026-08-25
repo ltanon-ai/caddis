@@ -28,6 +28,10 @@ pub struct Bundle {
     pub card_hash: String,
     pub allowlist: Vec<String>,
     pub blast: u32,
+    /// False when the card FILE could not be read or parsed at attest time.
+    /// A bundle whose card is gone can check nothing against it, and must say
+    /// so rather than printing `OUTSIDE: none` (pre-push review, finding #6).
+    pub card_readable: bool,
     pub opened_at_row: usize,
     pub closed_at_row: usize,
     pub from: String,
@@ -62,7 +66,9 @@ pub fn build(text: &str, card_id: &str) -> Result<Bundle, String> {
     let found = locate(&rows, card_id).ok_or_else(|| {
         format!("{card_id}: no matching card.open followed by a card.close in this ledger")
     })?;
-    let (allowlist, blast) = declared(&found.path);
+    let declared_now = declared(&found.path);
+    let card_readable = declared_now.is_some();
+    let (allowlist, blast) = declared_now.unwrap_or_default();
     let red_lines = red_test_lines(&found.path);
     let mut b = Bundle {
         card_id: card_id.to_string(),
@@ -70,6 +76,7 @@ pub fn build(text: &str, card_id: &str) -> Result<Bundle, String> {
         card_hash: found.hash,
         allowlist,
         blast,
+        card_readable,
         opened_at_row: found.open_idx,
         closed_at_row: found.close_idx,
         from: found.from.clone(),

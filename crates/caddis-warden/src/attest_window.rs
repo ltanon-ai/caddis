@@ -54,13 +54,28 @@ pub fn locate(rows: &[Row], card_id: &str) -> Option<Located> {
     None
 }
 
-pub fn declared(card_path: &str) -> (Vec<String>, u32) {
-    std::fs::read_to_string(card_path)
-        .ok()
-        .and_then(|b| caddis_card::Card::parse(&b).ok())
-        .and_then(|c| c.execution())
-        .map(|e| (e.allowlist, e.blast))
-        .unwrap_or_default()
+/// What the card declared: `Some((allowlist, blast))`, or `None` when the card
+/// could not be READ at all.
+///
+/// ⛔ THE `None` AND THE EMPTY VEC ARE DIFFERENT FACTS AND THE BUNDLE MUST NOT
+/// CONFLATE THEM (found by the pre-push review, finding #6, and it matters more
+/// than its severity suggested). This used to return `(vec![], 0)` for every
+/// failure — file deleted, unparsable, no EXECUTION section alike. An empty
+/// allowlist makes `attest`'s fold skip the outside-check entirely, so a bundle
+/// for a card whose file had been DELETED printed `OUTSIDE: none`, which reads
+/// as CLEAN. That is exactly the reassuring artifact this program exists
+/// against: the one case where nothing could be checked is the case where a
+/// reader most needs to be told so.
+///
+/// `Some(empty)` still means a legitimate v1 card that bounds nothing.
+pub fn declared(card_path: &str) -> Option<(Vec<String>, u32)> {
+    let bytes = std::fs::read_to_string(card_path).ok()?;
+    let card = caddis_card::Card::parse(&bytes).ok()?;
+    Some(
+        card.execution()
+            .map(|e| (e.allowlist, e.blast))
+            .unwrap_or_default(),
+    )
 }
 
 /// The RED-TEST section's substantial lines, against which a command is
