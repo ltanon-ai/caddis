@@ -25,6 +25,19 @@ use std::path::{Path, PathBuf};
 /// recording. Recording fails open; the JUDGEMENT still fails closed.
 pub(crate) struct Lock {
     path: PathBuf,
+    /// Did WE create the lock file? False when `acquire` gave up after `WAIT`
+    /// and proceeded without exclusion. A lock we never took is a lock we must
+    /// never release.
+    owned: bool,
+    /// What we wrote INTO the file when we created it.
+    ///
+    /// Ownership at acquire-time is not ownership at drop-time. A stale-breaker
+    /// may have unlinked our file and created its own while we were slow — and
+    /// then our `Drop` would unlink THEIRS, handing the ledger to a third racer
+    /// while they still believed they held it. `owned` alone closed that only
+    /// on the timeout path; the token closes it on the stale path too, which is
+    /// the same cascade arriving through the other door.
+    token: String,
 }
 
 impl Lock {
@@ -33,10 +46,33 @@ impl Lock {
 
     pub(crate) fn acquire(ledger: &Path) -> std::io::Result<Self> {
         let path = ledger.with_extension("lock");
+        // pid + nanoseconds: unique per acquisition on this machine without a
+        // dependency. pids recycle, so the clock is what keeps two lifetimes of
+        // one pid apart.
+        let token = format!(
+            "{}:{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
         let start = std::time::Instant::now();
         loop {
             match OpenOptions::new().create_new(true).write(true).open(&path) {
-                Ok(_) => return Ok(Self { path }),
+                Ok(mut f) => {
+                    // Best effort: an unwritten token only costs us the right
+                    // to release our OWN lock, which the stale-breaker then
+                    // reclaims. It can never release someone else's.
+                    use std::io::Write;
+                    // swallow: best-effort-telemetry
+                    let _ = f.write_all(token.as_bytes());
+                    return Ok(Self {
+                        path,
+                        owned: true,
+                        token,
+                    });
+                }
                 // ⚠ TWO ERROR KINDS MEAN "HELD", AND MISSING THE SECOND FAILS
                 // EVERY APPEND ON WINDOWS. Unlinking a name another handle has
                 // open leaves it DELETE-PENDING, and `CREATE_NEW` against a
@@ -51,15 +87,27 @@ impl Lock {
                         std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
                     ) =>
                 {
-                    if Self::is_stale(&path) || start.elapsed() > Self::WAIT {
+                    // STALE and TIMED-OUT are different facts and were fused
+                    // into one branch. Stale means nobody owns the file, so
+                    // breaking it is correct. Timed out means someone may own
+                    // it and simply be slow — breaking THAT file is not ours to
+                    // do, and the old code did it anyway on the way out.
+                    if Self::is_stale(&path) {
                         // A racer may have removed it already, which is the
                         // outcome we wanted anyway.
                         // swallow: best-effort-cleanup
                         let _ = fs::remove_file(&path);
-                        if start.elapsed() > Self::WAIT {
-                            return Ok(Self { path });
-                        }
                         continue;
+                    }
+                    if start.elapsed() > Self::WAIT {
+                        // The documented fail-open: record without exclusion
+                        // rather than stop recording. `owned: false` is the
+                        // whole fix — we hold no lock, so we release none.
+                        return Ok(Self {
+                            path,
+                            owned: false,
+                            token,
+                        });
                     }
                     std::thread::sleep(std::time::Duration::from_millis(2));
                 }
@@ -83,9 +131,144 @@ impl Lock {
 
 impl Drop for Lock {
     fn drop(&mut self) {
+        if !self.owned {
+            // We never created this file — `acquire` timed out and proceeded
+            // without exclusion. Deleting it here would release a lock still
+            // held by whoever DID create it.
+            return;
+        }
+        // We DID create one, but is the file on disk still ours? If a
+        // stale-breaker replaced it, the bytes belong to another holder and
+        // unlinking them would release a lock we do not hold.
+        //
+        // RELEASING FAILS CLOSED. `unwrap_or(true)` means an unreadable file is
+        // treated as NOT ours: the cost of declining is that our own lock file
+        // survives until the stale-breaker reclaims it one STALE later, while
+        // the cost of guessing wrong the other way is releasing a lock somebody
+        // is actively holding. Recording fails open; releasing must not.
+        if fs::read_to_string(&self.path)
+            .map(|s| s != self.token)
+            .unwrap_or(true)
+        {
+            return;
+        }
+        // ⚠ HONEST SCOPE — A RESIDUAL RACE REMAINS AND IS NOT CLOSED HERE.
+        // The confirm above and the unlink below are two separate operations on
+        // a path, so a stale-breaker that lands between them loses its file
+        // exactly as it did before the token existed. Closing that needs an
+        // atomic compare-and-delete, which no portable filesystem API offers —
+        // it would cost a dependency or `unsafe` FFI, and this crate has
+        // neither by design.
+        //
+        // What bounds it: the window is a single confirm-to-unlink gap, and
+        // reaching it requires our own lock to have aged past STALE while we
+        // still held it. The damage is one spurious release, which the
+        // stale-breaker recovers from within one STALE — the same bounded cost
+        // the documented fail-open already accepts. This comment exists because
+        // a mechanism that states its limits is the entire point of this
+        // project, and the previous version of this file over-claimed.
         // The stale-breaker in `acquire` is the backstop if this never runs, so
         // a failed unlink costs at most one STALE wait, never a wedged ledger.
         // swallow: best-effort-cleanup
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A lock that gave up after `WAIT` must not delete the incumbent's file.
+    ///
+    /// The old code fused "stale" and "timed out" into one branch and unlinked
+    /// on the way out of BOTH, then returned a `Lock` whose `Drop` unlinked
+    /// again. So a slow-but-alive holder had its lock removed twice by a racer
+    /// that never owned it — and the next acquirer would create a fresh lock
+    /// only for the timed-out racer's `Drop` to release THAT one too.
+    ///
+    /// Deliberately spends `WAIT`: the property only exists on the timeout
+    /// path, and a test that dodged the wait would not be testing it.
+    #[test]
+    fn a_timed_out_lock_does_not_release_the_incumbents_file() {
+        let dir = std::env::temp_dir().join(format!("caddis-lock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ledger = dir.join("t.jsonl");
+        let lockfile = ledger.with_extension("lock");
+
+        // An incumbent holds the lock, and it is FRESH — not stale, so the
+        // stale-breaker must not touch it.
+        std::fs::write(&lockfile, b"incumbent").unwrap();
+
+        let timed_out = Lock::acquire(&ledger).expect("acquire fails open, never errors");
+        assert!(
+            !timed_out.owned,
+            "acquire must report that it did NOT take the lock"
+        );
+        assert!(
+            lockfile.exists(),
+            "the incumbent's lock must survive another racer timing out"
+        );
+
+        drop(timed_out);
+        assert!(
+            lockfile.exists(),
+            "dropping a lock we never held must not release the incumbent's"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A stale-breaker took the lock from us; our `Drop` must leave THEIRS alone.
+    ///
+    /// The cascade this closes is the one `owned` did not reach. We create the
+    /// file and genuinely own it, so `owned` is true — then a breaker decides we
+    /// are stale, unlinks ours and creates its own. Ownership at acquire-time is
+    /// not ownership at drop-time, and unlinking on the strength of the former
+    /// hands the ledger to a third racer while the breaker still believes it
+    /// holds the lock. Fast by construction: no wait is involved, only the
+    /// substitution.
+    #[test]
+    fn dropping_a_lock_a_breaker_replaced_does_not_release_theirs() {
+        let dir = std::env::temp_dir().join(format!("caddis-lock-steal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ledger = dir.join("t.jsonl");
+        let lockfile = ledger.with_extension("lock");
+
+        let ours = Lock::acquire(&ledger).unwrap();
+        assert!(ours.owned, "we created this one");
+
+        // A stale-breaker unlinked ours and put its own lock in place.
+        std::fs::write(&lockfile, b"another-holder").unwrap();
+
+        drop(ours);
+        assert!(
+            lockfile.exists(),
+            "our Drop must not release a lock that is no longer ours"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&lockfile).unwrap(),
+            "another-holder",
+            "and it must be untouched, not rewritten"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The ordinary path still takes and releases its own lock.
+    #[test]
+    fn an_owned_lock_is_created_and_released() {
+        let dir = std::env::temp_dir().join(format!("caddis-lock-own-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ledger = dir.join("t.jsonl");
+        let lockfile = ledger.with_extension("lock");
+
+        let held = Lock::acquire(&ledger).unwrap();
+        assert!(held.owned, "a lock we created is ours");
+        assert!(lockfile.exists(), "the lock file exists while held");
+
+        drop(held);
+        assert!(!lockfile.exists(), "dropping our own lock releases it");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

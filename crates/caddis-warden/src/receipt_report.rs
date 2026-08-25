@@ -130,12 +130,25 @@ fn cards_section(r: &Receipt) -> String {
 
 pub fn render_json(r: &Receipt) -> String {
     format!(
-        "{{\"ledger\":\"{}\",\"rows\":{},\"verdicts\":{{\"allow\":{},\"steer\":{},\"deny\":{}}},\
+        "{{\"ledger\":\"{}\",\"from\":{},\"since_hours\":{},\"rows\":{},\"verdicts\":{{\"allow\":{},\"steer\":{},\"deny\":{}}},\
          \"first_ts\":{},\"last_ts\":{},\"tools\":{{{}}},\"files\":{{{}}},\
          \"deny_by_law\":{{{}}},\"law_fires\":{{{}}},\
          \"cards_opened\":[{}],\"cards_closed\":[{}],\
          \"unreadable\":{},\"withheld\":{}}}",
         json_escape(&r.ledger),
+        // The SCOPE the receipt covers. render_text has printed it since the
+        // beginning and render_json dropped it, so a JSON consumer could not tell
+        // a whole-ledger receipt from a one-caller one-hour slice — two readers of
+        // the same struct disagreeing about which window they describe. `null` is
+        // the honest rendering of unset; an empty string would read as a real
+        // filter that matched nothing.
+        r.from
+            .as_ref()
+            .map(|f| format!("\"{}\"", json_escape(f)))
+            .unwrap_or_else(|| "null".into()),
+        r.since_hours
+            .map(|h| h.to_string())
+            .unwrap_or_else(|| "null".into()),
         r.rows,
         r.allow,
         r.steer,

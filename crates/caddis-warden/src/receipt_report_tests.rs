@@ -110,6 +110,35 @@ fn the_json_is_one_object_and_escapes_what_it_embeds() {
 }
 
 #[test]
+fn the_json_states_the_window_it_covers() {
+    // render_text has always printed `scope: from=… since=…`; render_json
+    // omitted both, so a JSON consumer could not tell a whole-ledger receipt
+    // from a one-caller, one-hour slice. Two readers of one struct disagreeing
+    // about which window they describe is the same defect class this release
+    // is named for.
+    let unfiltered = render_json(&of(""));
+    assert!(
+        unfiltered.contains("\"from\":null"),
+        "an unset caller must render as null, never as a filter that matched nothing: {unfiltered}"
+    );
+    assert!(unfiltered.contains("\"since_hours\":null"), "{unfiltered}");
+
+    let scoped = build(
+        "L",
+        "",
+        &Filters {
+            from: Some("peleda".into()),
+            since_hours: Some(24),
+        },
+        1_000_000,
+    );
+    let json = render_json(&scoped);
+    assert!(json.contains("\"from\":\"peleda\""), "{json}");
+    assert!(json.contains("\"since_hours\":24"), "{json}");
+    assert!(json.starts_with('{') && json.ends_with('}'), "{json}");
+}
+
+#[test]
 fn the_json_carries_empty_containers_rather_than_omitting_them() {
     // A consumer must be able to read `files: {}` as "none" instead of having
     // to distinguish an absent key from an empty one.
