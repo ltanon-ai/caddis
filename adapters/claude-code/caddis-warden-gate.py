@@ -255,14 +255,20 @@ def _apply(reply: dict) -> None:
         _emit_context(PREFIX + " ".join(x for x in (reason, law) if x))
 
 
-def main() -> int:
+def main() -> None:
+    """Judge one tool call.
+
+    Returns NOTHING on purpose: this hook decides through stdout and always
+    leaves the process status at 0, so a declared `int` return that is always
+    the same constant claimed a status channel this contract does not use.
+    """
     data = _read_event()
     if data is None:
-        return 0
+        return
 
     caller = _label_for(str(data.get("cwd") or ""))
     if not caller:
-        return 0  # stand-aside mode: deliberately unwired, no ledger row
+        return  # stand-aside mode: deliberately unwired, no ledger row
 
     tool, command, path, content = _marshal(
         data.get("tool_name") or "", data.get("tool_input") or {}
@@ -270,12 +276,12 @@ def main() -> int:
     reply = _ask_warden(_binary(), _frame(tool, command, path, content), caller)
     if reply:
         _apply(reply)
-    return 0
 
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        main()
+        sys.exit(0)
     except Exception as exc:  # never let the nerve kill the session
         sys.stderr.write(f"{PREFIX}adapter internal error: {exc}\n")
         sys.exit(0)

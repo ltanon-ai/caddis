@@ -109,9 +109,20 @@ fn replay_skips_what_the_ledger_deliberately_never_kept() {
     .unwrap();
     let report = replay(&path);
     let _ = std::fs::remove_file(&path);
+    // The COUNT is not enough on its own: a reader who sees only how many rows
+    // were dropped cannot tell a clean history from an unreadable one, which is
+    // why the report now names the reason for every skip.
     assert!(
-        report.contains("skipped: 2"),
+        report.contains("2 could not be"),
         "masked commands and non-command tools are skipped, not guessed, got: {report}"
+    );
+    assert!(
+        report.contains("masked or elided"),
+        "the withheld row must say WHY it was withheld, got: {report}"
+    );
+    assert!(
+        report.contains("not a command tool"),
+        "the write row must say WHY it could not be judged, got: {report}"
     );
 }
 
@@ -171,14 +182,17 @@ fn replay_counts_law_fires_exactly_and_lists_never_fired() {
     // REPLAY-COUNTS-1: the replay digest gains per-law firing counts
     // (deny/steer separately, CURRENT law over the judged rows) and the
     // never-fired list — coverage the drift ratchet can read.
-    let path = std::env::temp_dir()
-        .join(format!("caddis-replay-{}-counts.jsonl", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("caddis-replay-{}-counts.jsonl", std::process::id()));
     let rows = format!(
         "{}{}{}{}{}",
         row(1, "allow|echo ok||"),
         row(2, "allow|git push --force origin main||"), // old law missed it
         row(3, "deny|git push --force origin main||why"),
-        row(4, "steer|git show HEAD:a.txt | wc -l||git.git-show-piped-counter"),
+        row(
+            4,
+            "steer|git show HEAD:a.txt | wc -l||git.git-show-piped-counter"
+        ),
         row(5, "allow|git show HEAD:b.txt | wc -l||"),
     );
     std::fs::write(&path, rows).unwrap();

@@ -4,9 +4,45 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+## 0.2.9 — the tools stop lying about themselves
+
+Five defects, all of the same family: a thing that reported success, or
+silence, where it had not actually looked.
+
+- **`--version` and `--help` answered with a denial and exit 0.** Every
+  invocation fell through to "read a request frame from stdin", so the first
+  command a new user types reported that their install had refused them —
+  while claiming success. Version and help now print and exit 0, an unknown
+  argument exits 2 with usage and emits no verdict, and a release build can
+  carry its release name so a downloaded binary can say which one it is. The
+  frame path is byte-for-byte unchanged and pinned by a test.
+- **`onboard` located itself with `$0`, which is wrong the moment it is
+  sourced** — and the CI matrix sources it. Every `$(dirname "$0")` path
+  pointed outside the repository there, so the skill install had been failing
+  in CI silently. It resolves through `${BASH_SOURCE[0]}` now, and a test
+  sources it the way the matrix does.
+- **`--replay` hid what it could not measure.** Soft-finding drift was folded
+  into "unchanged", and a bare skip count made a two-thirds-unreadable ledger
+  look like a clean one. The report now names NOW-STEERS / NO-LONGER-STEERS
+  and states its own coverage with a reason for every skipped row. On a real
+  14036-row ledger: 33.2% re-judged, 15 commands that had stopped steering
+  finally visible.
+- **The default branch did not pass its own `lint:rust`.** `cargo fmt --all
+  --check` was red on main. Formatting also pushed `checks/rmrf.rs` past the
+  280-line cap, so the destructive law is now split into the law itself and
+  `rmrf_operand.rs`, with the nested flag scan extracted — behaviour
+  unchanged, all seven rmrf tests still passing.
+- **The Sonar gate was ERROR.** A blocker (an adapter `main()` returning a
+  constant int on a contract that decides through stdout), a critical
+  (cognitive complexity 24 in the incident-log parser, now a loop that skips
+  quoted runs whole instead of carrying an `in_string` state machine), and
+  four smaller findings. The calibration fixtures leave issue scope rather
+  than being "fixed": they are deliberately unimplemented stubs and
+  implementing them would delete the exercise.
+
 ## 0.2.8 — the banner catches up with the logo
 
-The 0.2.7 logo never reached the public tree (generated PNGs are not
+The 0.2.7 logo never reached the public tree (generated image files are not
 projected — a copy step the release missed), and the README's top image
 is the banner, so nothing visibly changed. This release lands both: the
 new logo in `assets/logo.png` and a banner regenerated in the same style

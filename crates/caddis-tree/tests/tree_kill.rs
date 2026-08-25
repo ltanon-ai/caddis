@@ -25,7 +25,7 @@ fn kill_mid_tree_resume_completes_without_duplicate_dispatch() {
             &pass_exec(),
             &Lane::Weak("sim".into()),
             "weak-first",
-                0
+            0
         )
         .unwrap());
     drop(w); // KILL: all memory gone; the jsonl is the only survivor
@@ -39,7 +39,7 @@ fn kill_mid_tree_resume_completes_without_duplicate_dispatch() {
         &pass_exec(),
         &Lane::Weak("sim".into()),
         "weak-first",
-            0,
+        0,
     );
     assert!(
         matches!(again, Err(StateErr::AlreadyDone)),
@@ -51,7 +51,7 @@ fn kill_mid_tree_resume_completes_without_duplicate_dispatch() {
             &pass_exec(),
             &Lane::Weak("sim".into()),
             "weak-first",
-                0
+            0
         )
         .unwrap());
     let st3 = TreeState::load(&log, caps()).unwrap();
@@ -118,7 +118,7 @@ fn global_goal_caps_refuse_further_dispatch() {
             &pass_exec(),
             &Lane::Weak("sim".into()),
             "weak-first",
-                0
+            0
         )
         .unwrap());
     let over = w.dispatch_as(
@@ -126,7 +126,7 @@ fn global_goal_caps_refuse_further_dispatch() {
         &pass_exec(),
         &Lane::Weak("sim".into()),
         "weak-first",
-            0,
+        0,
     );
     assert!(
         matches!(over, Err(StateErr::CapAttempts)),
@@ -153,7 +153,7 @@ fn global_goal_caps_refuse_further_dispatch() {
             &pass_exec(),
             &Lane::Weak("sim".into()),
             "weak-first",
-                0
+            0
         )
         .unwrap());
     let costly = w2.dispatch_as(
@@ -161,7 +161,7 @@ fn global_goal_caps_refuse_further_dispatch() {
         &pass_exec(),
         &Lane::Weak("sim".into()),
         "weak-first",
-            0,
+        0,
     );
     assert!(
         matches!(costly, Err(StateErr::CapCost)),

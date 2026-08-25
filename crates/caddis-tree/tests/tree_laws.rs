@@ -32,7 +32,7 @@ fn intake_laws_strong_root_red_once() {
         &pass_exec(),
         &Lane::Weak("sim".into()),
         "weak-first",
-            0,
+        0,
     );
     assert!(
         matches!(over, Err(StateErr::OrphanCard)),
@@ -72,7 +72,7 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
                 &fail_exec(),
                 &Lane::Weak("sim".into()),
                 "weak-first",
-                    0
+                0
             )
             .unwrap());
         match w.on_fail("CARD-A") {
@@ -86,7 +86,7 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
             &fail_exec(),
             &Lane::Weak("sim".into()),
             "weak-first",
-                0
+            0
         )
         .unwrap());
     assert_eq!(
@@ -104,7 +104,7 @@ fn failure_map_retries_then_bubbles_then_strong_closes() {
             &fail_exec(),
             &Lane::Weak("sim".into()),
             "weak-first",
-                0,
+            0,
         )
         .unwrap();
     }
@@ -153,7 +153,7 @@ fn dispatch_stamps_strategy_into_events() {
             &pass_exec(),
             &Lane::Weak("sim".into()),
             "weak-first",
-                0
+            0
         )
         .unwrap());
     let st = TreeState::load(root.join("goal.jsonl"), caps()).unwrap();
@@ -188,7 +188,10 @@ fn dispatch_records_context_bytes() {
     assert!(
         st.events().iter().any(|e| matches!(
             &e.kind,
-            EventKind::LeafDispatch { context_bytes: 4321, .. }
+            EventKind::LeafDispatch {
+                context_bytes: 4321,
+                ..
+            }
         )),
         "the measured byte sum rides the dispatch event"
     );

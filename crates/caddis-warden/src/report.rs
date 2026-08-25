@@ -113,7 +113,10 @@ fn fold(agg: &mut Agg, row: &Row) {
         "steer" => agg.steer += 1,
         "deny" => {
             agg.deny += 1;
-            agg.deny_by_law.entry(law_id(&why)).or_default().push(row.seq);
+            agg.deny_by_law
+                .entry(law_id(&why))
+                .or_default()
+                .push(row.seq);
         }
         _ => {}
     }
@@ -160,11 +163,7 @@ fn digest(path: &str, a: &Agg) -> String {
         "report: {path}\nrows: {}  allow: {}  steer: {}  deny: {}",
         a.rows, a.allow, a.steer, a.deny
     );
-    let from: Vec<String> = a
-        .by_from
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let from: Vec<String> = a.by_from.iter().map(|(k, v)| format!("{k}={v}")).collect();
     if !from.is_empty() {
         s.push_str(&format!("\nfrom: {}", from.join("  ")));
     }
@@ -177,7 +176,11 @@ fn digest(path: &str, a: &Agg) -> String {
         s.push_str("\ndeny by law:");
         for (law, seqs) in &a.deny_by_law {
             let listed: Vec<String> = seqs.iter().map(|n| n.to_string()).collect();
-            s.push_str(&format!("\n  {law} x{} (seq {})", seqs.len(), listed.join(",")));
+            s.push_str(&format!(
+                "\n  {law} x{} (seq {})",
+                seqs.len(),
+                listed.join(",")
+            ));
         }
     }
     s
@@ -189,15 +192,19 @@ pub fn run(args: &[String]) -> i32 {
         Ok(f) => f,
         Err(why) => {
             eprintln!("report: {why}");
-            eprintln!("usage: caddis-warden report [--from NAME] [--since HOURS] \
-                       [--verdict allow|steer|deny] [--last N] [--json]");
+            eprintln!(
+                "usage: caddis-warden report [--from NAME] [--since HOURS] \
+                       [--verdict allow|steer|deny] [--last N] [--json]"
+            );
             return 2;
         }
     };
     let path = match std::env::var("CADDIS_WARDEN_LEDGER") {
         Ok(p) if !p.is_empty() => p,
         _ => {
-            eprintln!("report: CADDIS_WARDEN_LEDGER is not set; the shared ledger path is required");
+            eprintln!(
+                "report: CADDIS_WARDEN_LEDGER is not set; the shared ledger path is required"
+            );
             return 2;
         }
     };

@@ -103,17 +103,17 @@ def shard_ring(d, cx, cy, r_out, r_in, n, seed=7):
         ux, uy = math.cos(t), math.sin(t)
         vx, vy = -uy, ux
         mx, my = cx + mid_r * math.cos(a), cy + mid_r * math.sin(a)
-        hL, sk = L / 2, W * 0.35 * (rnd() - 0.5)
+        half_len, sk = L / 2, W * 0.35 * (rnd() - 0.5)
         pts = [
             (
-                mx + ux * -hL + vx * -W / 2 + uy * sk,
-                my + uy * -hL + vy * -W / 2 - ux * sk,
+                mx + ux * -half_len + vx * -W / 2 + uy * sk,
+                my + uy * -half_len + vy * -W / 2 - ux * sk,
             ),
-            (mx + ux * hL + vx * -W / 2, my + uy * hL + vy * -W / 2),
-            (mx + ux * hL + vx * W / 2, my + uy * hL + vy * W / 2),
+            (mx + ux * half_len + vx * -W / 2, my + uy * half_len + vy * -W / 2),
+            (mx + ux * half_len + vx * W / 2, my + uy * half_len + vy * W / 2),
             (
-                mx + ux * -hL + vx * W / 2 - uy * sk,
-                my + uy * -hL + vy * W / 2 + ux * sk,
+                mx + ux * -half_len + vx * W / 2 - uy * sk,
+                my + uy * -half_len + vy * W / 2 + ux * sk,
             ),
         ]
         shade = 0.72 + 0.28 * rnd()

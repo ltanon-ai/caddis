@@ -19,8 +19,10 @@
 //! effect-level idempotency is ever wanted.
 
 mod body;
-mod report;
+mod cli;
 mod replay;
+mod replay_report;
+mod report;
 mod rows;
 
 use body::{body_command, mask_at_rest, why_field};
@@ -32,7 +34,19 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("--replay") => std::process::exit(replay::run(&args)),
         Some("report") => std::process::exit(report::run(&args)),
-        _ => {}
+        // Anything else that looks like an argument is ANSWERED, never fed to
+        // the frame parser: falling through is what made `--version` a denial.
+        Some(other) => match cli::for_flag(other) {
+            cli::Reply::Out(text) => {
+                println!("{text}");
+                std::process::exit(0)
+            }
+            cli::Reply::Err(text, code) => {
+                eprintln!("{text}");
+                std::process::exit(code)
+            }
+        },
+        None => {}
     }
     let mut buf = Vec::new();
     if std::io::stdin().read_to_end(&mut buf).is_err() {
@@ -180,13 +194,11 @@ fn sanitize_type(tool: &str) -> String {
     }
 }
 
-
 fn unix_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
 }
-
 
 /// FNV-1a — stable envelope ids only, never security (nothing here rests on
 /// collision resistance; a crypto hash would cost the zero-dep property).
@@ -198,4 +210,3 @@ fn fnv1a(s: &str) -> u64 {
     }
     h
 }
-

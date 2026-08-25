@@ -51,9 +51,12 @@ caddis-warden --replay ~/.caddis/warden-ledger.jsonl [--from NAME] [--since 24h]
 ```
 
 Replay re-judges history against the current law: every NEW-DENY is a
-future false positive caught free; every FREED a fixed over-fire. Run it
-before swapping an updated warden binary; re-run `./onboard <name>`
-after the swap. A blocked call: explain the reason in one sentence; if
+future false positive caught free; every FREED a fixed over-fire, and
+NOW-STEERS / NO-LONGER-STEERS the soft-finding noise the change adds or
+removes. **Read the coverage line before believing the counts** — only
+command rows carry a replayable body, so a clean result covers the
+fraction it names and no more. Run it before swapping an updated warden
+binary; re-run `./onboard <name>` after the swap. A blocked call: explain the reason in one sentence; if
 it looks wrong, pull the ledger row — a false positive is a card.
 
 ## 3. The ladder — dispatching to a local model

@@ -18,21 +18,31 @@
 //!   the directory you run replay in, not from the agent's old cwd.
 //! - The report never changes anything; replay is read-only by construction.
 
+use crate::replay_report::{print_capped, print_coverage, print_law_fires, DRIFT_SHOWN};
 use crate::rows::{first_line_capped, law_id_bracketed, parse_row, split_body, Row};
-use caddis_warden::{checks, decide, ToolCall, Verdict};
-use std::collections::{BTreeMap, BTreeSet};
+use caddis_warden::{decide, ToolCall, Verdict};
+use std::collections::BTreeMap;
 use std::path::Path;
-
 
 /// One row's re-judgement outcome.
 enum Outcome {
     Unchanged,
     NewDeny,
     Freed,
-    /// allow<->steer drift: counted, not itemized
-    Note,
-    Skipped,
+    /// allow -> steer: the current law draws a soft finding this row did not.
+    NowSteers,
+    /// steer -> allow: a soft finding this row used to draw is gone.
+    NoLongerSteers,
+    /// Not re-judgeable, with the reason. Counting these by reason is what
+    /// keeps "new-denies: 0" from reading as "all of history is clear".
+    Skipped(&'static str),
 }
+
+/// Why a row cannot be re-judged. Stated in the report, never inferred by the
+/// reader from a bare count.
+const SKIP_NOT_A_COMMAND: &str = "not a command tool (write/edit keep no content by design)";
+const SKIP_UNREADABLE: &str = "body not parsable as verdict|command";
+const SKIP_WITHHELD: &str = "masked or elided (secrets and size doctrines outrank fidelity)";
 
 /// Re-judge a single row against the current law. Skips what the ledger
 /// deliberately never kept (masked, elided, non-command tools) rather
@@ -42,13 +52,13 @@ enum Outcome {
 /// `decide`, both facts, never a second judgement.
 fn classify(row: &Row) -> (Outcome, Vec<(&'static str, String)>) {
     if row.tool != "tool.bash" && row.tool != "tool.powershell" {
-        return (Outcome::Skipped, Vec::new());
+        return (Outcome::Skipped(SKIP_NOT_A_COMMAND), Vec::new());
     }
     let Some((old_tag, cmd)) = split_body(&row.body) else {
-        return (Outcome::Skipped, Vec::new());
+        return (Outcome::Skipped(SKIP_UNREADABLE), Vec::new());
     };
     if cmd.contains("***redacted") || cmd.contains("bytes truncated]") {
-        return (Outcome::Skipped, Vec::new());
+        return (Outcome::Skipped(SKIP_WITHHELD), Vec::new());
     }
     let call = ToolCall::new(&row.tool["tool.".len()..]).command(&cmd);
     let verdict = decide(&call);
@@ -64,8 +74,10 @@ fn classify(row: &Row) -> (Outcome, Vec<(&'static str, String)>) {
         Outcome::NewDeny
     } else if old_tag == "deny" {
         Outcome::Freed
+    } else if new_tag == "steer" {
+        Outcome::NowSteers
     } else {
-        Outcome::Note
+        Outcome::NoLongerSteers
     };
     (outcome, fires)
 }
@@ -142,8 +154,11 @@ pub fn run(args: &[String]) -> i32 {
     };
     let (mut rows, mut judged, mut unchanged) = (0u64, 0u64, 0u64);
     let (mut denies, mut freed, mut skipped) = (0u64, 0u64, 0u64);
+    let (mut now_steers, mut no_longer_steers) = (0u64, 0u64);
     let mut news: Vec<String> = Vec::new();
     let mut frees: Vec<String> = Vec::new();
+    let mut drift: Vec<String> = Vec::new();
+    let mut skip_reasons: BTreeMap<&'static str, u64> = BTreeMap::new();
     let mut deny_fires: BTreeMap<String, u64> = BTreeMap::new();
     let mut steer_fires: BTreeMap<String, u64> = BTreeMap::new();
     let filters = parse_filters(args);
@@ -166,10 +181,23 @@ pub fn run(args: &[String]) -> i32 {
             *slot.entry(id).or_default() += 1;
         }
         match outcome {
-            Outcome::Skipped => skipped += 1,
-            Outcome::Unchanged | Outcome::Note => {
+            Outcome::Skipped(reason) => {
+                skipped += 1;
+                *skip_reasons.entry(reason).or_default() += 1;
+            }
+            Outcome::Unchanged => {
                 judged += 1;
                 unchanged += 1;
+            }
+            Outcome::NowSteers => {
+                judged += 1;
+                now_steers += 1;
+                drift.push(format!("STEER+  seq={} {}", row.seq, head));
+            }
+            Outcome::NoLongerSteers => {
+                judged += 1;
+                no_longer_steers += 1;
+                drift.push(format!("STEER-  seq={} {}", row.seq, head));
             }
             Outcome::NewDeny => {
                 judged += 1;
@@ -186,41 +214,17 @@ pub fn run(args: &[String]) -> i32 {
     println!("replay: {path}");
     println!(
         "rows: {rows}  judged: {judged}  unchanged: {unchanged}  \
-         new-denies: {denies}  freed: {freed}  skipped: {skipped}"
+         new-denies: {denies}  freed: {freed}  \
+         now-steers: {now_steers}  no-longer-steers: {no_longer_steers}"
     );
+    print_coverage(rows, judged, skipped, &skip_reasons);
     for n in &news {
         println!("{n}");
     }
     for f in &frees {
         println!("{f}");
     }
+    print_capped(&drift, DRIFT_SHOWN);
     print_law_fires(&deny_fires, &steer_fires);
     0
-}
-
-/// The REPLAY-COUNTS-1 summary: per law id, deny and steer fires over the
-/// judged rows, then every REGISTERED law that never fired — coverage the
-/// drift ratchet can read, never a claim that unfired means unnecessary.
-fn print_law_fires(deny_fires: &BTreeMap<String, u64>, steer_fires: &BTreeMap<String, u64>) {
-    let mut fired: BTreeSet<&str> = BTreeSet::new();
-    for id in deny_fires.keys().chain(steer_fires.keys()) {
-        fired.insert(id);
-    }
-    if fired.is_empty() {
-        println!("law fires: none");
-    } else {
-        println!("law fires (current law over judged rows):");
-        for id in &fired {
-            println!(
-                "  {id} deny={} steer={}",
-                deny_fires.get(*id).copied().unwrap_or(0),
-                steer_fires.get(*id).copied().unwrap_or(0)
-            );
-        }
-    }
-    let never: Vec<&str> = checks::registered_ids()
-        .into_iter()
-        .filter(|id| !fired.contains(id))
-        .collect();
-    println!("never fired: {}", never.join(", "));
 }

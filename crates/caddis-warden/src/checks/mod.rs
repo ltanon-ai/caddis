@@ -31,6 +31,7 @@ pub mod netpipe;
 pub(crate) mod positions;
 pub(crate) mod registry;
 pub mod rmrf;
+pub(crate) mod rmrf_operand;
 pub(crate) mod runners;
 pub(crate) mod scan;
 pub mod shell;
@@ -116,7 +117,6 @@ const REGISTRY: &[(&str, CheckFn, Severity)] = &[
     ("fs.rmrf.wildcard", c_rmrf_star, Severity::Soft),
     ("net.pipe-to-shell", c_pipe_shell, Severity::Soft),
 ];
-
 
 fn c_reset(ctx: &Ctx) -> Finding {
     // The trigger belongs to the check. Without it the `git status` measurement

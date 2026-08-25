@@ -117,7 +117,7 @@ function ask(fields: Record<string, string>): Verdict | "unspawnable" | "unreada
   }
 }
 
-export default function (pi: any) {
+export default function caddisWardenAdapter(pi: any) {
   // Laws owed to a tool call that was allowed but has something to say. Keyed
   // by toolCallId and DELETED on delivery, so a long session cannot grow this
   // without bound.

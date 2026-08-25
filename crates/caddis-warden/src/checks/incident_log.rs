@@ -112,46 +112,45 @@ fn top_level_value(line: &str, key: &str) -> Option<String> {
     let needle = format!("\"{key}\"");
     let chars: Vec<char> = line.chars().collect();
     let mut depth = 0usize;
-    let mut in_string = false;
     let mut i = 0usize;
     while i < chars.len() {
-        let c = chars[i];
-        if in_string {
-            // A quoted run is skipped whole so a key name inside a VALUE cannot
-            // be mistaken for a key.
-            if c == '\\' {
-                i += 2;
-                continue;
-            }
-            if c == '"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        match c {
+        match chars[i] {
             '{' | '[' => depth += 1,
             '}' | ']' => depth = depth.saturating_sub(1),
             '"' => {
-                // A KEY is a quoted run followed by a colon. Without the
-                // colon test, a depth-1 string VALUE whose text equals the
-                // key (`"state": "resolved"`) matches the needle first and
-                // shadows the real key — LOW 7: a resolved incident kept
-                // denying. The colon is what tells a key from a value.
-                if depth == 1 && line[byte_at(&chars, i)..].starts_with(&needle) {
-                    if let Some(close) = run_close(&chars, i) {
-                        if followed_by_colon(&chars, close + 1) {
-                            return read_literal(&chars, close + 1);
-                        }
+                if depth == 1 {
+                    if let Some(value) = value_if_key(line, &chars, i, &needle) {
+                        return Some(value);
                     }
                 }
-                in_string = true;
+                // A quoted run is skipped WHOLE, so a key name sitting inside a
+                // VALUE can never be mistaken for a key. Jumping to the closing
+                // quote replaces the in_string flag this loop used to carry:
+                // the state machine was the whole of its complexity.
+                i = run_close(&chars, i)?;
             }
             _ => {}
         }
         i += 1;
     }
     None
+}
+
+/// The literal value when the quoted run opening at `open` IS the wanted key.
+///
+/// A KEY is a quoted run followed by a colon. Without the colon test, a depth-1
+/// string VALUE whose text equals the key (`"state": "resolved"`) matches the
+/// needle first and shadows the real key — LOW 7: a resolved incident kept
+/// denying. The colon is what tells a key from a value.
+fn value_if_key(line: &str, chars: &[char], open: usize, needle: &str) -> Option<String> {
+    if !line[byte_at(chars, open)..].starts_with(needle) {
+        return None;
+    }
+    let close = run_close(chars, open)?;
+    if !followed_by_colon(chars, close + 1) {
+        return None;
+    }
+    read_literal(chars, close + 1)
 }
 
 /// Index of the closing quote of the run opening at `open`, escape-aware, or

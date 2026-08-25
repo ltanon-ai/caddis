@@ -39,9 +39,19 @@ fn fixture(tag: &str) -> (std::path::PathBuf, u64) {
             300,
             "deny|git push --force origin main||caddis-warden [git.push.force-to-protected]: x"
         ),
-        row(4, "rlm", 400, "steer|git reset --hard||git.reset.discards-uncommitted"),
+        row(
+            4,
+            "rlm",
+            400,
+            "steer|git reset --hard||git.reset.discards-uncommitted"
+        ),
         row(5, "omp", recent, "allow|pwd||"),
-        row(6, "rlm", 600, "steer|git status||git.reset.discards-uncommitted"),
+        row(
+            6,
+            "rlm",
+            600,
+            "steer|git status||git.reset.discards-uncommitted"
+        ),
     );
     std::fs::write(&path, rows).unwrap();
     (path, recent)
@@ -70,8 +80,10 @@ fn report_counts_match_hand_computed() {
     let _ = std::fs::remove_file(&path);
     assert_eq!(code, 0, "report exits clean, got: {digest}");
     assert!(
-        digest.contains("rows: 6") && digest.contains("allow: 3")
-            && digest.contains("steer: 2") && digest.contains("deny: 1"),
+        digest.contains("rows: 6")
+            && digest.contains("allow: 3")
+            && digest.contains("steer: 2")
+            && digest.contains("deny: 1"),
         "hand-computed verdict counts, got: {digest}"
     );
     assert!(
@@ -129,8 +141,10 @@ fn report_json_is_machine_readable() {
     let _ = std::fs::remove_file(&path);
     assert_eq!(code, 0, "got: {json}");
     assert!(
-        json.contains("\"rows\":6") && json.contains("\"deny\":1")
-            && json.contains("\"first_ts\":100") && json.contains(&format!("\"last_ts\":{recent}")),
+        json.contains("\"rows\":6")
+            && json.contains("\"deny\":1")
+            && json.contains("\"first_ts\":100")
+            && json.contains(&format!("\"last_ts\":{recent}")),
         "flat json with the aggregates, got: {json}"
     );
     assert!(
