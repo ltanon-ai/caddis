@@ -8,6 +8,7 @@
 //! `assert(true == true)` with extra steps.
 
 use crate::attest::{Bundle, LIMITS};
+use crate::json_read::{arr_len, num, obj_len, text_field};
 use crate::wire::json_escape;
 
 /// The `path` field of a `tag|command|path|why` body, split from the RIGHT so
@@ -124,50 +125,6 @@ pub fn render_json(b: &Bundle) -> String {
         b.unreadable,
         arr(&LIMITS.iter().map(|s| s.to_string()).collect::<Vec<_>>())
     )
-}
-
-/// A number field out of a bundle, by name. Hand-rolled under the crate's
-/// zero-dependency law, same as everything else that touches JSON here.
-fn num(json: &str, key: &str) -> Option<u64> {
-    let at = json.find(&format!("\"{key}\":"))? + key.len() + 3;
-    json[at..]
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect::<String>()
-        .parse()
-        .ok()
-}
-
-fn text_field(json: &str, key: &str) -> Option<String> {
-    let at = json.find(&format!("\"{key}\":\""))? + key.len() + 4;
-    Some(json[at..].split('"').next()?.to_string())
-}
-
-/// How many entries a JSON array field holds. Enough to catch the tamper that
-/// matters most — emptying `files_outside_allowlist`.
-fn arr_len(json: &str, key: &str) -> Option<usize> {
-    let at = json.find(&format!("\"{key}\":["))? + key.len() + 4;
-    let body = json[at..].split(']').next()?;
-    if body.trim().is_empty() {
-        return Some(0);
-    }
-    Some(body.matches('"').count() / 2)
-}
-
-/// How many keys a JSON OBJECT field holds.
-///
-/// ⚠ SEPARATE FROM `arr_len` BECAUSE THE TWO SHAPES ARE NOT INTERCHANGEABLE.
-/// Reading `"files":{...}` with the array reader returns None, which the
-/// comparison renders as `(absent)` and reports CONTRADICTED — a true bundle
-/// failing its own verification. Found exactly that way: the verifier caught
-/// this bug in the verifier.
-fn obj_len(json: &str, key: &str) -> Option<usize> {
-    let at = json.find(&format!("\"{key}\":{{"))? + key.len() + 4;
-    let body = json[at..].split('}').next()?;
-    if body.trim().is_empty() {
-        return Some(0);
-    }
-    Some(body.matches(':').count())
 }
 
 struct Claim {

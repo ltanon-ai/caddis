@@ -87,40 +87,6 @@ fn the_json_bundle_carries_the_limits_too() {
 }
 
 #[test]
-fn the_number_reader_finds_fields_and_reports_an_absent_one() {
-    let j = render_json(&bundle());
-    assert_eq!(num(&j, "allow"), Some(5));
-    assert_eq!(num(&j, "deny"), Some(2));
-    assert_eq!(num(&j, "opened_at_row"), Some(3));
-    assert_eq!(num(&j, "not_a_field"), None);
-}
-
-#[test]
-fn the_array_reader_counts_entries_including_the_empty_case() {
-    let j = render_json(&bundle());
-    assert_eq!(arr_len(&j, "files_outside_allowlist"), Some(1));
-    assert_eq!(arr_len(&j, "allowlist"), Some(1));
-
-    let mut b = bundle();
-    b.outside.clear();
-    // ⛔ THE TAMPER THAT MATTERS MOST is emptying this list, so an empty array
-    // must read as 0 rather than as unreadable.
-    assert_eq!(
-        arr_len(&render_json(&b), "files_outside_allowlist"),
-        Some(0)
-    );
-}
-
-#[test]
-fn the_text_reader_finds_string_fields() {
-    let j = render_json(&bundle());
-    assert_eq!(text_field(&j, "card_id").as_deref(), Some("CARD-A"));
-    assert_eq!(text_field(&j, "card_hash").as_deref(), Some("abc123"));
-    assert_eq!(text_field(&j, "from").as_deref(), Some("peleda.s1"));
-    assert_eq!(text_field(&j, "nope"), None);
-}
-
-#[test]
 fn a_claim_is_ok_only_when_the_two_sides_are_identical() {
     let same = Claim {
         name: "x",

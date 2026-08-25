@@ -48,6 +48,8 @@ pub mod wire;
 // Locating a card's window in the ledger. Internal: callers reach it through
 // `attest`, and it speaks in `Row`, which stays pub(crate) by design.
 mod attest_window;
+// The bundle field readers `attest --verify` stands on. Internal by design.
+mod json_read;
 mod replay_report;
 mod rows;
 
