@@ -2,33 +2,130 @@
 
 ![caddis — a conscience for coding agents](assets/banner.png)
 
-## Caddis at a glance
+### Your agent says it's done. Can you check?
 
-One binary between your agent and its tools; every part below ships in
-this repository, works locally, and has no cloud anywhere.
+Not re-run it. **Check it.**
+
+Caddis is one small binary that sits between a coding agent and its tools. It
+judges every tool call, remembers every decision in an append-only ledger, and
+then — the part nothing else seems to do — **turns that memory into evidence you
+can hand to someone else.**
+
+```console
+$ caddis-warden attest --card CARD-0111
+attest: CARD-0111
+  window      : ledger rows 0..4 (physical position, never seq)
+  declared    : blast 2, allowlist src/allowed.rs
+  verdicts    : allow 2  steer 0  deny 1
+  OUTSIDE     : 1 file(s) written outside the declared allowlist:
+                src/sneaky.rs
+  RED-TEST    : a matching command was ATTEMPTED in the window (not proof it passed)
+
+$ caddis-warden attest --verify bundle.json
+  CONFIRMED    allow                 bundle=2 ledger=2
+  CONTRADICTED files_outside_count   bundle=0 ledger=1
+
+1 CLAIM(S) CONTRADICTED — this bundle does not match the ledger.
+```
+
+That second command is the whole point. An agent's claim about its own work
+stops being something you take on faith and becomes something **anyone** can
+re-check against the record — you, a reviewer, another agent, or a future
+session with no memory of any of it.
+
+**Install is one line, and it refuses to lie about itself:**
+
+```text
+git clone https://github.com/ltanon-ai/caddis.git && cd caddis && ./onboard <your-agent-name>
+```
+
+It builds, installs, then **proves itself** — attempts a real force-push,
+expects the denial, and reads back its own ledger row. An install that cannot
+show you a denial is not an install.
+
+---
+
+### Why this and not a permission prompt
+
+Most guardrails answer one question — *may this command run?* — and answer it
+twice: yes or no. Caddis answers three, and the middle one is why it exists.
+
+| | | |
+| --- | --- | --- |
+| **allow** | run it | nothing to say |
+| **steer** | run it — **and deliver the relevant lesson at the moment it applies** | doctrine arrives when it is useful, not at session start where it is read once and forgotten |
+| **deny** | don't | reserved for the unambiguous, because a guard that blocks legitimate work gets switched off, and a switched-off guard protects nothing |
+
+Real steers from a real session, unprompted, at the instant each mistake was
+about to be made:
+
+```text
+shell.exit-code-through-pipe   `$?` after a pipeline reports the LAST process, not the one being judged
+shell.gate-chained-into-commit a gate chained with && into git commit commits on red
+git.stage.blanket-in-shared-worktree  `git add -A` in a worktree another writer shares
+```
+
+### What I believe is genuinely new — and what isn't
+
+Stated carefully, because overclaiming is the one thing this project's own laws
+forbid.
+
+**Not new:** guarding an agent's tool calls. Permission systems, hooks and
+sandboxes all do it, several of them better at containment than caddis, which is
+a policy guard and *not* an OS sandbox.
+
+**What I have not seen elsewhere:**
+
+- **Replay.** Before a new rule ever guards a live agent, score it against your
+  own recorded history: *"this would have denied 3 of your last 14,036 calls —
+  here they are."* Adoption fear and regression fear, both answered from data
+  you already have.
+- **A law market.** Rules carry their own usage record and earn a verdict:
+  `EARNING`, `WALLPAPER` (fires constantly, routinely worked around), `DEAD`
+  (never fired). Its first run on a real ledger found a rule that had fired
+  twice in its entire life and been circumvented both times, and six that had
+  never fired at all. Rule corpora rot precisely because nobody can see this.
+- **Laws discovered from history, each shipping its own falsifier.** Mine the
+  ledger for *allowed-then-immediately-undone* and propose the missing rule —
+  with the cost of adopting it attached, so you see the false positives before
+  you say yes, not after.
+- **Attestation bundles.** Proof that travels with the work and re-checks
+  against the ledger, so *the builder never grades its own work* stops being
+  discipline and becomes a command.
+
+**The honest claim is the loop, not any one part:** judge → record → prove →
+retire the rules that stopped earning. Each piece exists somewhere; closing the
+circle locally, with no cloud and no service, is what I think is distinctive.
+
+### What it's built on
+
+Rust, and **the trusted core carries zero external dependencies** — no serde, no
+frameworks; the kernel is meant to be auditable by reading it. The ledger is
+plain append-only JSONL you can `grep`. The warden is **stateless by design**:
+spawned once per tool call, holding nothing between calls, so there is no daemon
+to supervise and a crash costs exactly one decision. Adapters are one thin file
+per harness — Python for Claude Code, TypeScript for others — carrying no policy
+at all. Everything runs on your machine; **there is no cloud anywhere in it, and
+nothing is ever sent off the box.**
+
+---
+
+### The parts
 
 | Node | What it is |
 | --- | --- |
 | **Warden** | judges each adapter-routed tool call: allow, steer, deny |
 | **Ledger** | append-only audit: what, when, why, which agent |
 | **Cards** | falsifiable work units: Done-When + RED-TEST |
+| **Receipt** | what one caller actually did, reconstructed from the ledger |
+| **Attest** | a proof bundle, and `--verify` that re-checks it |
+| **Laws** | which rules are EARNING, WALLPAPER, or DEAD |
 | **Ladder** | measured L1–L3 levels for local model executors |
 | **Skill** | the manual the agent itself loads and obeys |
 | **Adapters** | one thin nerve per harness, no policy inside |
 | **Onboard** | one command; proves itself with a live denial |
 | **Replay** | preview law changes against your own history |
 | **Report** | reads the ledger back: counts, callers, deny-by-law |
-
-**A conscience — and a work discipline — for coding agents.**
-
-Caddis is a small local system for agent work you can trust. A law
-engine judges every tool call the harness routes through the installed
-adapter; an append-only ledger remembers every decision; cards make
-completion falsifiable and its proof mechanical; the ladder measures
-what a local model can do unsupervised; the goal
-tree carries a plan through kills and resumes. It is not only about
-what your agent may run — it is how the work itself is governed,
-recorded, and proven.
 
 The caddisfly larva builds its own protective case from materials it finds
 around it. An agent that grows a conscience from what's already on the
@@ -41,10 +138,10 @@ missing binary fails open and loud, an unreadable verdict fails closed. The
 exact trust assumptions and out-of-scope attacks live in
 [THREAT-MODEL.md](THREAT-MODEL.md).
 
-## The one command to give any agent
+## Onboarding, in full
 
-If your agent can run a shell command, it can onboard itself. Tell it exactly
-this:
+If your agent can run a shell command, it can onboard itself — hand it the line
+from the top of this file verbatim:
 
 ```text
 git clone https://github.com/ltanon-ai/caddis.git && cd caddis && ./onboard <your-agent-name>
@@ -153,6 +250,66 @@ aggregates the ledger *as recorded* — no re-judgement — into counts by
 verdict and caller, first/last timestamps, and deny reasons grouped by the
 law id; `--from`, `--verdict`, `--last` narrow it and `--json` feeds
 machines.
+
+## From memory to evidence — the loop
+
+A ledger nothing reads is a diary. These five commands are the readers that turn
+it into evidence, and each one states the limits of what it can prove.
+
+```text
+        ┌──────────────┐   every tool call
+        │   WARDEN     │   allow · steer · deny
+        └──────┬───────┘
+               │ one attributed row, always
+        ┌──────▼───────┐
+        │   LEDGER     │   append-only JSONL, local, greppable
+        └──────┬───────┘
+   ┌───────────┼───────────┬──────────────┐
+   ▼           ▼           ▼              ▼
+ receipt     laws     propose-laws     attest
+ what one   which     the rule you    proof anyone
+ agent did  rules     are missing,    can re-check
+            earn      already scored  (--verify)
+            their
+            place
+```
+
+**`caddis-warden receipt --from <agent> --since <hours>`** — reconstructs what
+one caller did in one window: verdict counts, per-tool counts, distinct files
+written, denials grouped by the law that drew them *with the rows cited*, and
+any card left open. Paste it into a handoff and the prose becomes checkable
+against a record instead of against someone's memory.
+
+**`caddis-warden card open <card.md>` … `card close`** — a card becomes a fact
+in the ledger, not a promise in a file. With one open, a write outside its
+declared `allowlist` is **denied** when the target is certain (a file tool's
+path, a literal redirect) and **steered** when it was only inferred from shell
+text. With no card open, nothing changes — the gate is invisible until you opt
+in.
+
+**`caddis-warden laws`** — every registered rule with its usage record and one
+of three verdicts: `EARNING`, `WALLPAPER`, `DEAD`. The circumvention figure is a
+*heuristic* and says so everywhere it appears, including inside the JSON, so a
+machine consumer can never be handed a number the human report hedges.
+
+**`caddis-warden propose-laws`** — mines *allowed-then-immediately-undone* pairs
+and proposes the missing rule. **Every candidate carries what adopting it would
+have cost**, measured over the whole ledger. On its first real run that promptly
+condemned its own output — four candidates that would each have denied dozens to
+hundreds of legitimate commands — which is exactly the job. It installs nothing;
+a conscience that writes its own rules unread is a different and much larger
+decision.
+
+**`caddis-warden attest --card <ID>` / `--verify <bundle>`** — the proof bundle
+from the top of this file. Every bundle carries its own limits in a field of its
+own, so a reader who only ever sees the JSON still sees what it cannot show.
+
+**What attestation deliberately does not claim.** The warden fires *before* a
+tool runs, and no ledger row carries an exit code. A bundle therefore cannot say
+a test failed before your change and passed after; it says a matching command
+was **attempted** in the window. An honest bundle that admits the gap is worth
+more than a confident one nobody can check — and closing that gap is the next
+piece of work, not a claim made early.
 
 ## Memory — how caddis remembers
 
