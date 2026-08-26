@@ -40,18 +40,36 @@ fn a_timed_out_lock_does_not_release_the_incumbents_file() {
     let keep = lockfile.clone();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let halt = stop.clone();
+    // ONE failed refresh is expected and harmless. ALL of them failing — an
+    // inaccessible temp dir, a full disk — means the incumbent silently aged
+    // past STALE and this run measured the flake again instead of the
+    // property. Counting successes is what tells those two apart, because
+    // both of them surface as the SAME assertion failure below.
+    let refreshed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let ticks = refreshed.clone();
     let toucher = std::thread::spawn(move || {
         while !halt.load(std::sync::atomic::Ordering::Relaxed) {
             // A refresh that loses a race with `acquire`'s own open is fine;
             // the next tick 400ms later re-freshens it well inside STALE.
-            let _ = std::fs::write(&keep, b"incumbent"); // swallow: best-effort-telemetry
+            if std::fs::write(&keep, b"incumbent").is_ok() {
+                ticks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             std::thread::sleep(std::time::Duration::from_millis(400));
         }
     });
 
     let timed_out = Lock::acquire(&ledger).expect("acquire fails open, never errors");
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    toucher.join().ok();
+    // A panicked refresher voids this test's precondition, so it is a failure
+    // with a name rather than a discarded Result.
+    toucher.join().expect("the lock refresher thread panicked");
+    // Checked BEFORE the property assertions: if the refresher never ran, the
+    // cause of any failure below is this, not the lock semantics.
+    assert!(
+        refreshed.load(std::sync::atomic::Ordering::Relaxed) > 0,
+        "the refresher never completed a single write, so the incumbent was \
+         not kept fresh — this run measured the STALE race, not the timeout path"
+    );
     assert!(
         !timed_out.owned,
         "acquire must report that it did NOT take the lock"
@@ -67,6 +85,11 @@ fn a_timed_out_lock_does_not_release_the_incumbents_file() {
         "dropping a lock we never held must not release the incumbent's"
     );
 
+    // Cleanup stays best-effort ON PURPOSE, unlike the two swallows above:
+    // on Windows a temp dir can refuse removal while a handle is still
+    // closing, and failing the test on that would ADD the flakiness this
+    // whole test exists to remove. A review flagged all three swallows
+    // together; only these last ones are correct.
     std::fs::remove_dir_all(&dir).ok();
 }
 
