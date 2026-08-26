@@ -80,7 +80,13 @@ if [ -n "$HARNESS" ] && [ -f "$HERE/adapters/caddis-warden.ts" ]; then
     esac
     if [ -n "$dest" ]; then
         mkdir -p "$(dirname "$dest")"
-        sed "s/const CALLER = \"[a-z-]*\";/const CALLER = \"$HARNESS\";/" "$src" > "$dest" \
-            && echo "onboard: adapter stamped '$HARNESS' -> $dest"
+        # Two line shapes exist: env-stamp-aware (current) and the plain
+        # constant (older copies). Exactly one can match; the stamp sets the
+        # DEFAULT label — a launcher may still override it via CADDIS_WARDEN_FROM.
+        sed -e "s/const CALLER = process\.env\.CADDIS_WARDEN_FROM || \"[a-z-]*\";/const CALLER = process.env.CADDIS_WARDEN_FROM || \"$HARNESS\";/" \
+            -e "s/const CALLER = \"[a-z-]*\";/const CALLER = \"$HARNESS\";/" "$src" > "$dest" \
+            && grep -q "const CALLER = [^\"]*\"$HARNESS\";" "$dest" \
+            && echo "onboard: adapter stamped '$HARNESS' -> $dest" \
+            || echo "onboard: WARNING — stamp pattern not found in $src; copied unstamped"
     fi
 fi

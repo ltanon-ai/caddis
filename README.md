@@ -495,8 +495,10 @@ and applies the verdict. Three shapes ship, one per harness family:
 - **`adapters/caddis-warden.ts`** — for extension-based harnesses. A steer is
   delivered on the tool *result* (the action was legitimate; the law arrives
   at the moment it applies), with the owed-laws map keyed by tool-call id and
-  deleted on delivery. The caller stamp is a `CALLER` constant the onboard
-  script seds per agent.
+  deleted on delivery. The caller stamp is a `CALLER` default the onboard
+  script seds per agent; a launcher that knows its lane overrides it per spawn
+  via `CADDIS_WARDEN_FROM` (attribution only — spoofable, see
+  `adapters/README.md`).
 - **`adapters/claude-code/caddis-warden-gate.py`** — a PreToolUse hook. The
   `from:` stamp comes from an optional `~/.caddis/lanes.json` cwd-prefix →
   label map (longest prefix wins, either path separator, case folded only

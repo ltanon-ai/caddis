@@ -47,11 +47,15 @@ not Python semantics.
 
 ## Stamping the caller — per adapter
 
-- **`caddis-warden.ts`**: the `CALLER` constant at the top of the adapter is
-  stamped per agent so the shared ledger's `from:` field attributes every
-  verdict to the caller that made the call. The onboard script stamps it for
-  you: `./onboard my-agent-name`. An unstamped copy logs under the adapter's
-  built-in default — safe to copy around.
+- **`caddis-warden.ts`**: the ledger's `from:` field attributes every verdict
+  to the caller that made the call. Two ways to stamp it: the `CALLER` default
+  baked into the copy (the onboard script sets it: `./onboard my-agent-name`),
+  and a `CADDIS_WARDEN_FROM` env var set by a launcher that knows its lane —
+  the env var wins when present. A launcher-stamped copy still falls back to
+  its built-in default, so the file is safe to copy around unmodified.
+  ⚠ **The env var is SPOOFABLE**: any process can set it. It is
+  routing/observability — attribution, not access control. Never let a
+  security decision trust a `from:` label.
 - **`claude-code/caddis-warden-gate.py`**: the `from:` stamp comes from an
   optional `~/.caddis/lanes.json` cwd-prefix → label map (longest prefix wins,
   either path separator); unmapped sessions are stamped `claude-code`.
