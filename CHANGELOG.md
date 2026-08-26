@@ -54,8 +54,16 @@ A review then pointed out that the refresher could stop working *silently* — o
 failed write is harmless, but if every write failed the incumbent would age past
 stale and the run would measure the flake again, reported as the same assertion
 failure. A fix for a silent failure that can itself fail silently has not moved
-the problem far. Successful refreshes are now counted and asserted, so the test
-names its own cause.
+the problem far.
+
+The first attempt at that guard counted successful refreshes and asserted the
+count was non-zero, which a second review showed was still the wrong shape: the
+wait is 5s and the stale threshold 10s, so a single write at the start satisfies
+a count while a starved refresher over a stretched wait still ages the file out
+— exactly the case the guard existed for. The test now asserts the **recency**
+of the last successful write against the stale threshold, as two separate
+assertions so that "never wrote at all" and "wrote, then went stale" report as
+the different faults they are.
 
 ### The book tooling, which the repaired scan finally reported on
 
