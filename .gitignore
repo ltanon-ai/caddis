@@ -4,3 +4,7 @@ __pycache__/
 .ruff_cache/
 .DS_Store
 .sonar-scan/
+# pytest-cov's data file, written to the repo root by the coverage command in
+# sonar-project.properties. `.sonar-scan/` already covered its OUTPUT; this
+# covers the intermediate, which was sitting untracked in a public checkout.
+.coverage
