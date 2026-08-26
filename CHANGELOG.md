@@ -6,10 +6,12 @@ in the private workshop; what ships here is the product view.
 
 ## 0.3.1 — every gate that should have guarded 0.3.0 had quietly not run
 
-**The caddis engine is untouched — no crate under `crates/` changed.** What this
-release fixes is the machinery that was supposed to catch problems in 0.3.0 and
-reported nothing instead, plus the two tests and the documentation tooling that
-machinery finally surfaced.
+**No runtime behaviour changed.** Under `crates/` every edit is to a test: two
+test files, plus the two lines in `ledger_lock.rs` that declare where its
+compiled-out test module now lives. Every runtime line of that file is
+byte-identical to 0.3.0. What this release fixes is the machinery that was
+supposed to catch problems in 0.3.0 and reported nothing instead, plus the tests
+and the documentation tooling that machinery finally surfaced.
 
 0.3.0 was tagged and released with **none of its gates having actually run**. CI
 had never seen the code, because nothing had been pushed. The static-analysis
