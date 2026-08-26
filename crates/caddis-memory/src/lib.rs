@@ -32,7 +32,8 @@ pub mod parse;
 pub mod recall;
 pub mod refresh;
 pub mod registry;
-
+pub mod remember;
+pub mod sha256;
 pub use canary::{Golden, Verdict};
 pub use exec::{Job, Outcome, Runner};
 pub use parse::{GetDoc, Hit};
