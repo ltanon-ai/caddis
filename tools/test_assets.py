@@ -11,8 +11,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import assets.diagrams
+import assets.diagrams_evidence
 import assets.diagrams_records
-import assets.diagrams_work
 
 
 def _draws(tmp_path, monkeypatch, module, calls):
@@ -54,14 +54,13 @@ def test_record_diagrams_render(tmp_path, monkeypatch):
 
 
 
-def test_work_diagrams_render(tmp_path, monkeypatch):
+def test_evidence_diagrams_render(tmp_path, monkeypatch):
     _draws(
         tmp_path,
         monkeypatch,
-        assets.diagrams_work,
+        assets.diagrams_evidence,
         (
-            ("draw_card_anatomy", "diagram-card-anatomy.png"),
-            ("draw_ladder", "diagram-ladder.png"),
-            ("draw_tree", "diagram-tree.png"),
+            ("draw_loop", "diagram-loop.png"),
+            ("draw_plan_cards", "diagram-plans.png"),
         ),
     )

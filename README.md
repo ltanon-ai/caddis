@@ -256,23 +256,7 @@ machines.
 A ledger nothing reads is a diary. These five commands are the readers that turn
 it into evidence, and each one states the limits of what it can prove.
 
-```text
-        ┌──────────────┐   every tool call
-        │   WARDEN     │   allow · steer · deny
-        └──────┬───────┘
-               │ one attributed row, always
-        ┌──────▼───────┐
-        │   LEDGER     │   append-only JSONL, local, greppable
-        └──────┬───────┘
-   ┌───────────┼───────────┬──────────────┐
-   ▼           ▼           ▼              ▼
- receipt     laws     propose-laws     attest
- what one   which     the rule you    proof anyone
- agent did  rules     are missing,    can re-check
-            earn      already scored  (--verify)
-            their
-            place
-```
+![from memory to evidence: the warden, the ledger, and the five readers](assets/diagram-loop.png)
 
 **`caddis-warden receipt --from <agent> --since <hours>`** — reconstructs what
 one caller did in one window: verdict counts, per-tool counts, distinct files
@@ -375,14 +359,7 @@ and deliberately refuses the strict contract: demanding execution anchors
 from a document whose job is decomposition would be checking the wrong thing.
 A plan never passes `--strict`; a work card never needs `--plan`.
 
-```sh
-# v1: frontmatter + Done-When + RED-TEST
-cargo run -p caddis-card --example validate -- card.md
-# + the EXECUTION contract
-cargo run -p caddis-card --example validate -- card.md --strict
-# CHILDREN + REVIEW instead
-cargo run -p caddis-card --example validate -- plan.md --plan
-```
+![plan cards: one schema, two oracles — the spine, the contract, the decomposition](assets/diagram-plans.png)
 
 The full method, a worked example, and where the schema lives:
 [CARDS.md](CARDS.md).
