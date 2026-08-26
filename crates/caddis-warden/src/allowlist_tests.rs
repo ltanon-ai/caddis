@@ -101,9 +101,17 @@ fn a_path_inside_the_working_directory_is_compared_relatively() {
     assert_eq!(relative_to("src/a.rs", cwd), normalize("src/a.rs"));
     // Outside the working directory it keeps its own shape rather than being
     // forced into a relative one it does not have.
+    //
+    // ⛔ THE EXPECTATION MUST GO THROUGH `normalize` WITH THE SAME CASE AS THE
+    // INPUT. Spelling it `d:` hard-coded a WINDOWS artifact: `normalize`
+    // lowercases only under `cfg!(windows)`, so the assertion could only ever
+    // hold on Windows and failed on ubuntu and macos the first time this code
+    // reached CI. Comparing `normalize(X)` against `relative_to(X, ..)` tests
+    // the real property — an outside path keeps its own shape — on every
+    // platform, because both sides fold or do not fold together.
     assert_eq!(
         relative_to("D:/other/x.rs", cwd),
-        normalize("d:/other/x.rs")
+        normalize("D:/other/x.rs")
     );
 }
 

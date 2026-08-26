@@ -4,6 +4,26 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+## 0.3.1 — the release's own CI caught a test that could only pass on Windows
+
+`allowlist_tests.rs` asserted that a path outside the working directory keeps
+its own shape, and spelled the expectation `normalize("d:/other/x.rs")` —
+lowercase. `normalize` folds case only under `cfg!(windows)`, so on ubuntu and
+macos the function returned `D:/other/x.rs` and the assertion could never hold.
+
+**It went unnoticed because none of 0.3.0 had reached CI until the release push.**
+The work was developed on Windows across many commits that were never pushed, so
+the three-OS matrix saw all of it at once, and the first thing it did was fail
+two legs of three. 177 passed, 1 failed, on both.
+
+The expectation now runs the SAME input case through `normalize`, so both sides
+fold or do not fold together and the test states its real property — an outside
+path keeps its own shape — on every platform.
+
+Nothing else changed. v0.3.0's tag and release stay exactly as published; this
+is the fix on top, because a tag that has been public is a fact and moving it
+would be rewriting one.
+
 ## 0.3.0 — a conscience that PROVES, not one that comments
 
 0.2.x made caddis a conscience that *comments*. This makes it a system that
