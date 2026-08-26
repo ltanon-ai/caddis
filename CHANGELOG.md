@@ -4,12 +4,18 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
-## 0.3.1 — the release's own CI caught a test that could only pass on Windows
+## 0.3.1 — two tests that could only pass in the conditions they were written in
 
-`allowlist_tests.rs` asserted that a path outside the working directory keeps
-its own shape, and spelled the expectation `normalize("d:/other/x.rs")` —
-lowercase. `normalize` folds case only under `cfg!(windows)`, so on ubuntu and
-macos the function returned `D:/other/x.rs` and the assertion could never hold.
+**No shipped code changed in this release.** Both fixes are to tests, and one of
+them is why the v0.3.0 build failed on Linux and macOS.
+
+### The expectation that could only ever hold on Windows
+
+`a_path_inside_the_working_directory_is_compared_relatively` also asserted that a
+path *outside* the working directory keeps its own shape, and spelled the
+expectation `normalize("d:/other/x.rs")` — lowercase. `normalize` folds case only
+under `cfg!(windows)`, so on ubuntu and macos the function returned
+`D:/other/x.rs` and the assertion could never hold.
 
 **It went unnoticed because none of 0.3.0 had reached CI until the release push.**
 The work was developed on Windows across many commits that were never pushed, so
@@ -20,9 +26,22 @@ The expectation now runs the SAME input case through `normalize`, so both sides
 fold or do not fold together and the test states its real property — an outside
 path keeps its own shape — on every platform.
 
-Nothing else changed. v0.3.0's tag and release stay exactly as published; this
-is the fix on top, because a tag that has been public is a fact and moving it
-would be rewriting one.
+### The lock test that raced its own precondition
+
+`a_timed_out_lock_does_not_release_the_incumbents_file` needs `acquire` to take
+the TIMEOUT path, but `acquire` checks staleness FIRST: the wait is 5s and the
+stale threshold 10s, so under load a scheduling stall could age the incumbent
+past stale mid-wait. Staleness then won, `acquire` broke the lock and reported it
+owned, and the test failed for a reason that had nothing to do with the property
+it pins. The incumbent's mtime is now kept fresh for the whole wait.
+
+The ORDER of the checks in `acquire` was deliberately NOT changed — putting the
+timeout first would alter lock SEMANTICS to satisfy a test. `ledger_lock.rs`
+reached its size cap in the process, so its tests moved to `ledger_lock_tests.rs`
+via `#[path]`; nothing was dropped in the move.
+
+v0.3.0's tag and release stay exactly as published; this is the fix on top,
+because a tag that has been public is a fact and moving it would be rewriting one.
 
 ## 0.3.0 — a conscience that PROVES, not one that comments
 
