@@ -34,6 +34,8 @@ pub mod refresh;
 pub mod registry;
 pub mod remember;
 pub mod sha256;
+pub mod winprobe;
+pub mod writer;
 pub use canary::{Golden, Verdict};
 pub use exec::{Job, Outcome, Runner};
 pub use parse::{GetDoc, Hit};
@@ -41,3 +43,4 @@ pub use refresh::{
     CollectionStatus, LockState, RefreshConfig, RefreshError, RefreshVerdict, StatusSnapshot,
     StepTrace,
 };
+pub use writer::{LockDecision, RememberConfig, RememberError, Remembered};
