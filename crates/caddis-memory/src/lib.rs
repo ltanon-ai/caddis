@@ -1,4 +1,4 @@
-//! caddis-memory — the MEMORY ORGAN, P1: a read-only Recall API over the qmd CLI.
+//! caddis-memory — the MEMORY ORGAN: P1 read-only Recall API + P2 refresh watchdog.
 //!
 //! Origin: OMP sergeant BUILD-QUEUE `caddis-memory-organ` (2026-08-26). Spec =
 //! state/briefs/caddis-memory-system-council/CONVENING.md — council 2/3 +
@@ -21,16 +21,22 @@
 //!   side-effect-free; the warden gates writes, not recall.
 //! - **Telemetry ships with v1 (Q1):** every call returns its [`Report`].
 //!
-//! P2 (refresh watchdog) extends this crate and owns the collection registry;
-//! the registry is deliberately absent from P1.
+//! P2 (this version): the refresh watchdog ([`refresh`]) and the organ-owned
+//! collection registry ([`registry`]) — both live-proven against the real
+//! machine index (`tests/live_probe.rs`, `--ignored`).
 
 pub mod canary;
 pub mod exec;
 pub mod json;
 pub mod parse;
 pub mod recall;
+pub mod refresh;
+pub mod registry;
 
 pub use canary::{Golden, Verdict};
 pub use exec::{Job, Outcome, Runner};
 pub use parse::{GetDoc, Hit};
-pub use recall::{MemoryConfig, Recall, RecallError, Report, DEEP_LANE, FAST_LANE};
+pub use refresh::{
+    CollectionStatus, LockState, RefreshConfig, RefreshError, RefreshVerdict, StatusSnapshot,
+    StepTrace,
+};

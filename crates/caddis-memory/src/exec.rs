@@ -182,6 +182,7 @@ pub mod testing {
     //! FakeRunner — canned Outcomes keyed by a matcher on the qmd subcommand.
     //! Lives under cfg(test) so it never ships in the public surface.
     use super::{Job, Outcome, Runner};
+    use std::collections::VecDeque;
     use std::time::Duration;
 
     #[derive(Default)]
@@ -189,12 +190,22 @@ pub mod testing {
         pub calls: Vec<Vec<String>>,
         canned: Vec<(String, Outcome)>,
         pub default: Option<Outcome>,
+        seq: VecDeque<Outcome>,
     }
 
     impl FakeRunner {
         /// Match by first qmd arg ("search" / "query" / "get").
         pub fn on(&mut self, subcommand: &str, out: Outcome) -> &mut Self {
             self.canned.push((subcommand.to_string(), out));
+            self
+        }
+
+        /// Queue one Outcome for the NEXT run call regardless of
+        /// subcommand — refresh scripts its steps in order
+        /// (status → update → embed → status), which first-arg matching
+        /// cannot express. Consumed before canned/default matching.
+        pub fn then(&mut self, out: Outcome) -> &mut Self {
+            self.seq.push_back(out);
             self
         }
 
@@ -214,6 +225,9 @@ pub mod testing {
     impl Runner for FakeRunner {
         fn run(&mut self, job: &Job) -> Outcome {
             self.calls.push(job.args.clone());
+            if let Some(out) = self.seq.pop_front() {
+                return out;
+            }
             if let Some(first) = job.args.first() {
                 for (sub, out) in &self.canned {
                     if sub == first {

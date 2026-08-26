@@ -57,6 +57,13 @@ impl Value {
         }
     }
 
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
     pub fn as_obj(&self) -> Option<&[(String, Value)]> {
         match self {
             Value::Obj(o) => Some(o),
