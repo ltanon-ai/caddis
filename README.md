@@ -545,8 +545,8 @@ The repository eats its own cooking:
 
 - **Rust**: `cargo test --workspace` — 492 tests at this release; every law
   lands red-first with its fixture file, the corpus is the evidence.
-- **Python**: the adapter, ladder, renderer and install suites — 53 tests —
-  run in the CI matrix on Linux, Windows and macOS.
+- **Python**: the adapter, ladder, renderer, install and book-generator suites
+  — 68 tests — run in the CI matrix on Linux, Windows and macOS.
 - **Coverage**: `cargo llvm-cov` and `pytest --cov` feed the SonarQube wiring
   in `sonar-project.properties` (via `tools/sonar-coverage.py`, which makes
   the reports scanner-relative) — overall coverage is displayed on the

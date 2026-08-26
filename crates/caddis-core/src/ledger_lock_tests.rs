@@ -40,35 +40,56 @@ fn a_timed_out_lock_does_not_release_the_incumbents_file() {
     let keep = lockfile.clone();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let halt = stop.clone();
-    // ONE failed refresh is expected and harmless. ALL of them failing — an
-    // inaccessible temp dir, a full disk — means the incumbent silently aged
-    // past STALE and this run measured the flake again instead of the
-    // property. Counting successes is what tells those two apart, because
-    // both of them surface as the SAME assertion failure below.
-    let refreshed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let ticks = refreshed.clone();
+    // ⛔ RECENCY, NOT A COUNT. An earlier version asserted `refreshed > 0`,
+    // which a single write at t=0 satisfies — and the original flake was
+    // precisely a WAIT (5s) stretched past STALE (10s) under load, where one
+    // early write plus a starved refresher still ages the file out. A count
+    // cannot distinguish "kept fresh throughout" from "written once, then
+    // starved"; the age of the LAST successful write can.
+    let last_ms = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX));
+    let stamp = last_ms.clone();
+    let started = std::time::Instant::now();
     let toucher = std::thread::spawn(move || {
         while !halt.load(std::sync::atomic::Ordering::Relaxed) {
             // A refresh that loses a race with `acquire`'s own open is fine;
             // the next tick 400ms later re-freshens it well inside STALE.
             if std::fs::write(&keep, b"incumbent").is_ok() {
-                ticks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let at = started.elapsed().as_millis() as u64;
+                stamp.store(at, std::sync::atomic::Ordering::Relaxed);
             }
             std::thread::sleep(std::time::Duration::from_millis(400));
         }
     });
 
     let timed_out = Lock::acquire(&ledger).expect("acquire fails open, never errors");
+    let returned_ms = started.elapsed().as_millis() as u64;
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     // A panicked refresher voids this test's precondition, so it is a failure
     // with a name rather than a discarded Result.
     toucher.join().expect("the lock refresher thread panicked");
-    // Checked BEFORE the property assertions: if the refresher never ran, the
-    // cause of any failure below is this, not the lock semantics.
+    // Checked BEFORE the property assertions: if the incumbent was not still
+    // fresh when `acquire` gave up, the cause of any failure below is this,
+    // not the lock semantics. A healthy refresher leaves this under ~400ms.
+    // TWO assertions, not one compound: they are different faults and the
+    // sentinel must never reach a message as a number. Reported as one, the
+    // "never wrote" case printed `18446744073709551615ms`, which reads as a
+    // bug in the test rather than as its diagnosis.
+    let last = last_ms.load(std::sync::atomic::Ordering::Relaxed);
     assert!(
-        refreshed.load(std::sync::atomic::Ordering::Relaxed) > 0,
-        "the refresher never completed a single write, so the incumbent was \
-         not kept fresh — this run measured the STALE race, not the timeout path"
+        last != u64::MAX,
+        "the refresher never completed a single write during a {}ms wait, so \
+         the incumbent was not kept fresh — this run measured the STALE race, \
+         not the timeout path",
+        returned_ms
+    );
+    assert!(
+        returned_ms.saturating_sub(last) < Lock::STALE.as_millis() as u64,
+        "the incumbent went stale before acquire returned (last refresh {}ms \
+         into a {}ms wait, STALE is {}ms) — this run measured the STALE race, \
+         not the timeout path",
+        last,
+        returned_ms,
+        Lock::STALE.as_millis()
     );
     assert!(
         !timed_out.owned,

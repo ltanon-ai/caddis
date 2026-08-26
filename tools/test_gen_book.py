@@ -4,8 +4,14 @@ WHY THIS FILE EXISTS. The v0.3.0 release shipped nine SonarQube violations in
 gen_book.py and the BOOK.html template it emits, and nobody saw them: the scan
 on that head died parsing a stale coverage report, so the gate reported nothing
 rather than reporting a failure. The fixes were verified by regenerating the
-book and diffing 927 KB of output by hand — a proof that evaporates with the
-session that performed it.
+book and diffing the output by hand — a proof that evaporates with the session
+that performed it.
+
+That diff was measured over the 99-chapter, 927 KB development corpus in the
+PRIVATE WORKSHOP, not over the public repository, whose book renders a single
+chapter. A figure without the corpus it was taken over is the same defect this
+release's changelog was corrected for three times; it does not get to reappear
+in the test file written to stop that class.
 
 So the six TEMPLATE findings are pinned here as assertions rather than as a
 memory. Each `test_template_*` fails if its defect is reintroduced, which is
@@ -58,9 +64,29 @@ def test_table_rows_paragraphs_and_blank_lines():
 
 
 def test_rendered_lines_are_html_escaped():
-    """A doc containing markup must not be able to inject it into the book."""
-    assert "<script>" not in gb._render_line("<script>alert(1)</script>")
-    assert "&lt;script&gt;" in gb._render_line("<script>alert(1)</script>")
+    """A doc containing markup must not be able to inject it into the book.
+
+    EVERY branch, not just the paragraph one. `_render_line` emits user text
+    through four separate `esc()` calls — heading, list item, table row and
+    paragraph — and the first version of this test fed only
+    `<script>alert(1)</script>`, which matches none of the `# `, `[-*] ` or
+    `|` prefixes and therefore exercised the `<p>` path alone. Dropping
+    `esc()` from a heading, a list item or a table row left it green, while
+    the test's name claimed all rendered lines. That is precisely the
+    regression the `chapter()` split could have introduced.
+    """
+    payload = "<script>alert(1)</script>"
+    for line in (
+        payload,  # paragraph
+        f"# {payload}",  # h2
+        f"## {payload}",  # h3
+        f"### {payload}",  # h4
+        f"- {payload}",  # list item
+        f"| {payload} |",  # table row
+    ):
+        out = gb._render_line(line)
+        assert "<script>" not in out, f"unescaped markup survived: {line!r} -> {out}"
+        assert "&lt;script&gt;" in out, f"payload not escaped in: {line!r} -> {out}"
 
 
 def test_a_mermaid_fence_passes_through_for_client_side_render():
