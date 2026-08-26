@@ -370,6 +370,7 @@ pub fn probe<R: Runner>(runner: &mut R, cfg: &RefreshConfig) -> Result<StatusSna
         args: vec!["status".into()],
         workdir: cfg.memory.workdir.clone(),
         timeout: cfg.probe_timeout,
+        stdin_data: None,
     };
     let out = runner.run(&job);
     if let Some(err) = fail_closed("status", cfg.probe_timeout, &out) {
@@ -443,6 +444,7 @@ fn refresh_locked<R: Runner>(
             args,
             workdir: cfg.memory.workdir.clone(),
             timeout: budget,
+            stdin_data: None,
         };
         let out = runner.run(&job);
         steps.push(StepTrace::of(phase, &out));

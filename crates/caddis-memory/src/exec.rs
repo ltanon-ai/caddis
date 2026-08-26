@@ -15,7 +15,7 @@
 //! pipe. Killing the child closes its pipe handles; the readers see EOF and
 //! finish, so joining after the wait is always safe.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -49,6 +49,12 @@ pub struct Job {
     /// which is how sandbox tests avoid the live 131 MB index.
     pub workdir: Option<PathBuf>,
     pub timeout: Duration,
+    /// Stdin payload, written in full before the deadline is judged. `None`
+    /// keeps stdin null (the qmd surface). The warden frame path is the
+    /// first user: its request is a length-prefixed byte frame, not argv —
+    /// argv would round-trip every byte through shell-quoting law this
+    /// crate refuses to own.
+    pub stdin_data: Option<Vec<u8>>,
 }
 
 /// What one run provably did. Duration is wall time; `timed_out` true means
@@ -97,9 +103,12 @@ impl Runner for RealRunner {
         for key in STRIPPED_ENV_KEYS {
             cmd.env_remove(key);
         }
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        if job.stdin_data.is_some() {
+            cmd.stdin(Stdio::piped());
+        } else {
+            cmd.stdin(Stdio::null());
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,
@@ -118,8 +127,21 @@ impl Runner for RealRunner {
 
         let out_handle = child.stdout.take();
         let err_handle = child.stderr.take();
+        let stdin_sink = child.stdin.take();
         let t_out = thread::spawn(move || read_capped(out_handle));
         let t_err = thread::spawn(move || read_capped(err_handle));
+        // Stdin writer: its own thread, exactly like the readers, so a child
+        // that exits without draining stdin (warden fail-closed paths) can
+        // never deadlock the pump — a broken pipe here is the child's verdict,
+        // not ours to judge.
+        let t_in = job.stdin_data.clone().map(|data| {
+            thread::spawn(move || {
+                if let Some(mut w) = stdin_sink {
+                    let _ = w.write_all(&data);
+                    // Drop closes the pipe; the child sees EOF and replies.
+                }
+            })
+        });
 
         let deadline = started + job.timeout;
         let mut timed_out = false;
@@ -139,6 +161,11 @@ impl Runner for RealRunner {
             }
         };
 
+        if let Some(t_in) = t_in {
+            let _ = t_in.join();
+        }
+        // Dropping a still-undrained stdin handle (writer thread raced the
+        // child's exit) is fine: the pipe is already closed on our side.
         let (stdout, stdout_truncated) = t_out.join().unwrap_or_default();
         let (stderr, stderr_truncated) = t_err.join().unwrap_or_default();
         Outcome {
@@ -188,6 +215,11 @@ pub mod testing {
     #[derive(Default)]
     pub struct FakeRunner {
         pub calls: Vec<Vec<String>>,
+        /// Full jobs in call order (launcher + args + stdin). Remember
+        /// tests must tell a warden spawn (launcher=[bin], args=[],
+        /// stdin=frame) from a qmd spawn (args=["update"]) — args alone
+        /// cannot express that.
+        pub jobs: Vec<Job>,
         canned: Vec<(String, Outcome)>,
         pub default: Option<Outcome>,
         seq: VecDeque<Outcome>,
@@ -225,6 +257,7 @@ pub mod testing {
     impl Runner for FakeRunner {
         fn run(&mut self, job: &Job) -> Outcome {
             self.calls.push(job.args.clone());
+            self.jobs.push(job.clone());
             if let Some(out) = self.seq.pop_front() {
                 return out;
             }
@@ -258,6 +291,7 @@ mod tests {
             args: args.iter().map(|s| s.to_string()).collect(),
             workdir: None,
             timeout: Duration::from_millis(ms),
+            stdin_data: None,
         }
     }
 
@@ -327,6 +361,7 @@ mod tests {
             launcher: vec!["node".into()],
             args: vec!["-e".into(), "process.stdout.write(process.cwd())".into()],
             workdir: Some(dir.clone()),
+            stdin_data: None,
             timeout: Duration::from_secs(15),
         });
         assert_eq!(out.code, Some(0));

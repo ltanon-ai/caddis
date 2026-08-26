@@ -187,6 +187,7 @@ impl<R: Runner> Recall<R> {
             args,
             workdir: self.config.workdir.clone(),
             timeout: budget,
+            stdin_data: None,
         };
         let out = self.runner.run(&job);
         let report = Report {

@@ -29,6 +29,11 @@ pub struct CollectionEntry {
     pub name: String,
     pub public: bool,
     pub owner: String,
+    /// The organ-owned sandbox root (I5+, quorum 2026-08-26): when present,
+    /// `remember()` may write ONLY under this directory (canonicalized
+    /// prefix-match, no symlink components). Absent on qmd-seeded entries —
+    /// they are indexed foreign ground, never write targets.
+    pub root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,7 +100,15 @@ impl Registry {
             if owner.trim().is_empty() {
                 return Err(schema(&format!("entry {name}: owner must not be empty")));
             }
-            entries.push(CollectionEntry { name: name.clone(), public, owner: owner.to_string() });
+            // I5+ (quorum 2026-08-26): the sandbox root is organ-owned
+            // metadata — absent means "indexed foreign ground, never a
+            // remember() target".
+            let root = match ev.get("root") {
+                None => None,
+                Some(Value::Str(r)) if !r.trim().is_empty() => Some(PathBuf::from(r)),
+                Some(_) => return Err(schema(&format!("entry {name}: root must be a string"))),
+            };
+            entries.push(CollectionEntry { name: name.clone(), public, owner: owner.to_string(), root });
         }
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(Registry { path: path.to_path_buf(), entries })
@@ -110,10 +123,22 @@ impl Registry {
             .map(|e| {
                 (
                     e.name.clone(),
-                    Value::Obj(vec![
-                        ("public".to_string(), Value::Bool(e.public)),
-                        ("owner".to_string(), Value::Str(e.owner.clone())),
-                    ]),
+                    Value::Obj({
+                        let mut fields = vec![
+                            ("public".to_string(), Value::Bool(e.public)),
+                            ("owner".to_string(), Value::Str(e.owner.clone())),
+                        ];
+                        if let Some(r) = &e.root {
+                            // Canonical string form — forward slashes, no
+                            // trailing separator — so prefix checks and diffs
+                            // are stable across saves.
+                            fields.push((
+                                "root".to_string(),
+                                Value::Str(r.to_string_lossy().replace('\\', "/")),
+                            ));
+                        }
+                        fields
+                    }),
                 )
             })
             .collect();
@@ -152,6 +177,7 @@ impl Registry {
                 name: name.to_string(),
                 public: DEFAULT_PUBLIC,
                 owner: UNCLAIMED_OWNER.to_string(),
+                root: None,
             })
     }
 
@@ -187,6 +213,7 @@ impl Registry {
                     name: c.name.clone(),
                     public: DEFAULT_PUBLIC,
                     owner: QMD_OWNER.to_string(),
+                    root: None,
                 });
                 added += 1;
             }
@@ -211,6 +238,43 @@ impl Registry {
             .map(|e| e.name.clone())
             .collect();
         RegistryDiff { unregistered, vanished }
+    }
+
+    /// I5+ (quorum 2026-08-26, three independent seats): registered roots
+    /// must be pairwise NON-OVERLAPPING. A nested root would make the
+    /// prefix-match sandbox ambiguous — two collections claiming the same
+    /// file is one home too many. Comparison is on normalized string form
+    /// (lowercase on Windows, forward slashes, trailing separator stripped)
+    /// so a save/load round-trip never drifts into phantom nesting.
+    pub fn validate_roots(&self) -> Result<(), RegistryError> {
+        let norm = |p: &Path| -> String {
+            let mut s = p.to_string_lossy().replace('\\', "/");
+            while s.len() > 1 && s.ends_with('/') {
+                s.pop();
+            }
+            if cfg!(windows) {
+                s.to_lowercase()
+            } else {
+                s
+            }
+        };
+        let roots: Vec<(&CollectionEntry, String)> = self
+            .entries
+            .iter()
+            .filter_map(|e| e.root.as_ref().map(|r| (e, norm(r))))
+            .collect();
+        for (i, (a, pa)) in roots.iter().enumerate() {
+            for (b, pb) in roots.iter().skip(i + 1) {
+                let nested = pa.starts_with(&format!("{pb}/")) || pb.starts_with(&format!("{pa}/"));
+                if nested || pa == pb {
+                    return Err(RegistryError::Schema {
+                        why: format!("collection roots overlap: {} ({pa}) vs {} ({pb})", a.name, b.name),
+                        head: String::new(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Default home: `~/.config/caddis/collections.json` (beside qmd's own
@@ -248,8 +312,8 @@ mod tests {
     fn round_trip_preserves_entries_and_leaves_no_tmp() {
         let path = tmp_path("roundtrip");
         let mut reg = Registry::load(&path).unwrap();
-        reg.upsert(CollectionEntry { name: "memory".into(), public: false, owner: "qmd".into() });
-        reg.upsert(CollectionEntry { name: "showr".into(), public: true, owner: "operator".into() });
+        reg.upsert(CollectionEntry { name: "memory".into(), public: false, owner: "qmd".into(), root: None });
+        reg.upsert(CollectionEntry { name: "showr".into(), public: true, owner: "operator".into(), root: None });
         reg.save().unwrap();
 
         let tmp = {
@@ -306,8 +370,8 @@ mod tests {
     #[test]
     fn upsert_replaces_by_name() {
         let mut reg = Registry { path: tmp_path("upsert"), entries: Vec::new() };
-        reg.upsert(CollectionEntry { name: "a".into(), public: false, owner: "qmd".into() });
-        reg.upsert(CollectionEntry { name: "a".into(), public: true, owner: "op".into() });
+        reg.upsert(CollectionEntry { name: "a".into(), public: false, owner: "qmd".into(), root: None });
+        reg.upsert(CollectionEntry { name: "a".into(), public: true, owner: "op".into(), root: None });
         assert_eq!(reg.entries().len(), 1);
         assert!(reg.is_public("a"));
         assert_eq!(reg.get("a").owner, "op");
@@ -322,7 +386,7 @@ mod tests {
         assert_eq!(reg.get("memory").owner, "qmd");
         assert!(!reg.get("memory").public);
         // an organ-claimed entry is never overwritten by seeding
-        reg.upsert(CollectionEntry { name: "sergeant-state".into(), public: false, owner: "caddis".into() });
+        reg.upsert(CollectionEntry { name: "sergeant-state".into(), public: false, owner: "caddis".into(), root: None });
         let live2 = [cs("memory"), cs("sergeant-state")];
         assert_eq!(reg.seed_from_status(&live2), 0);
         assert_eq!(reg.get("sergeant-state").owner, "caddis");
@@ -331,8 +395,8 @@ mod tests {
     #[test]
     fn diff_sees_both_directions() {
         let mut reg = Registry { path: tmp_path("diff"), entries: Vec::new() };
-        reg.upsert(CollectionEntry { name: "ghost".into(), public: false, owner: "qmd".into() });
-        reg.upsert(CollectionEntry { name: "memory".into(), public: false, owner: "qmd".into() });
+        reg.upsert(CollectionEntry { name: "ghost".into(), public: false, owner: "qmd".into(), root: None });
+        reg.upsert(CollectionEntry { name: "memory".into(), public: false, owner: "qmd".into(), root: None });
         let d = reg.diff(&[cs("memory"), cs("new-kid")]);
         assert_eq!(d.unregistered, vec!["new-kid"]);
         assert_eq!(d.vanished, vec!["ghost"]);
@@ -341,7 +405,7 @@ mod tests {
     #[test]
     fn remove_reports_whether_it_removed() {
         let mut reg = Registry { path: tmp_path("rm"), entries: Vec::new() };
-        reg.upsert(CollectionEntry { name: "a".into(), public: false, owner: "qmd".into() });
+        reg.upsert(CollectionEntry { name: "a".into(), public: false, owner: "qmd".into(), root: None });
         assert!(reg.remove("a"));
         assert!(!reg.remove("a"));
     }
