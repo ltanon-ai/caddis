@@ -4,12 +4,15 @@ One entry point for the pre-push coverage pipeline (operator ruling
 2026-08-24, option 1). Prerequisites: `pip install pytest pytest-cov
 defusedxml pillow`, `cargo llvm-cov` (with llvm-tools-preview):
 
-    python -m pytest -q skills/caddis/test_ladder.py \
-        adapters/claude-code/test_warden_gate.py tools/test_sonar_coverage.py \
-        tools/test_assets.py \
+    python -m pytest -q <the file list from build.yml's "Python tests" step> \
         --cov=skills/caddis --cov=adapters/claude-code --cov=tools \
         --cov-report=xml:.sonar-scan/coverage-python.xml
     cargo llvm-cov --lcov --output-path .sonar-scan/coverage-rust.lcov
+
+⛔ The FILE LIST is deliberately not repeated here. `.github/workflows/build.yml`
+is its single authority; this docstring and sonar-project.properties both used
+to restate it, and all three drifted — CI once ran a test coverage did not, and
+coverage once ran a test CI did not.
 Both reports are produced on the host:
 1. cobertura XML: rewrite the host-absolute <source> elements to
    project-relative paths so the sensor can resolve the files at
@@ -18,7 +21,9 @@ Both reports are produced on the host:
    format sonar.coverageReportPaths accepts — with project-relative
    paths.
 """
+
 import os
+
 from defusedxml import ElementTree as SafeET
 
 PY_XML = ".sonar-scan/coverage-python.xml"
@@ -85,10 +90,10 @@ def to_relative(path: str) -> str:
     p = path.replace("\\", "/")
     here = os.getcwd().replace("\\", "/").rstrip("/")
     if here and p.lower().startswith(here.lower() + "/"):
-        return p[len(here) + 1:]
+        return p[len(here) + 1 :]
     i = p.lower().find("/usr/src/")
     if i >= 0:
-        return p[i + len("/usr/src/"):]
+        return p[i + len("/usr/src/") :]
     return p
 
 
@@ -121,8 +126,8 @@ def lcov_to_generic() -> None:
     # (defusedxml) does not re-export the builder API, and importing the
     # stdlib module trips bandit B405 even when only builders are used.
     out = ['<coverage version="1">']
-    for block in open(LCOV_IN, encoding="utf-8", errors="replace").read().split(
-        "end_of_record"
+    for block in (
+        open(LCOV_IN, encoding="utf-8", errors="replace").read().split("end_of_record")
     ):
         out.extend(_record_lines(block))
     out.append("</coverage>")
@@ -130,6 +135,7 @@ def lcov_to_generic() -> None:
         f.write("\n".join(out) + "\n")
     files = sum(1 for ln in out if ln.lstrip().startswith("<file "))
     print(f"wrote {GENERIC_OUT}: {files} file(s)")
+
 
 def main() -> int:
     fix_cobertura_sources()

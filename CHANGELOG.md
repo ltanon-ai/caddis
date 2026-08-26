@@ -71,7 +71,10 @@ shipped files, so they are listed here rather than filed as internal:
 - `git()` was annotated as taking a string while every caller passed a list
 - `chapter()` was refactored below the complexity limit, with its rendering split
   into two helpers. Proven behaviour-preserving by regenerating the book and
-  diffing: zero differences across 99 chapters
+  diffing the output byte for byte: zero differences, measured against the
+  99-chapter, 927 KB development corpus in the private workshop. The book
+  rendered *here* is a single chapter, so that corpus — not this repo — is what
+  the proof was run against
 - four CSS `font` shorthands named a face with no generic family, so a reader
   without Georgia got the browser default; one rule declared `color` twice; the
   bootstrap used `window` rather than `globalThis`
