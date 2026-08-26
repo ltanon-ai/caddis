@@ -23,7 +23,7 @@ mod body;
 use body::{body_command, mask_at_rest, why_field};
 use caddis_warden::identity::{caller_id, fnv1a, ledger_path, unix_seconds};
 use caddis_warden::{
-    attest, card, cli, decide, laws, propose, receipt, replay, report, wire, Verdict,
+    attest, card, cli, decide, laws, propose, receipt, replay, report, verify, wire, Verdict,
 };
 use std::io::{Read, Write};
 use std::process::ExitCode;
@@ -77,6 +77,7 @@ fn dispatch(args: &[String]) -> Option<ExitCode> {
     match args.get(1).map(String::as_str) {
         Some("--replay") => Some(exit_code(replay::run(args))),
         Some("report") => Some(exit_code(report::run(args))),
+        Some("verify") => Some(exit_code(verify::run(args))),
         Some("card") => Some(exit_code(card::run(args))),
         Some("receipt") => Some(exit_code(receipt::run(args))),
         Some("laws") => Some(exit_code(laws::run(args))),
