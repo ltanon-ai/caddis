@@ -1,0 +1,12 @@
+[package]
+name = "caddis-memory"
+version = "0.1.0"
+edition = "2021"
+description = "MEMORY ORGAN P1 (sergeant unit caddis-memory-organ, 2026-08-26): read-only Recall API over the qmd CLI — query/search/get with env-sanitized subprocesses, fast/deep timeout lanes, fail-closed errors, latency telemetry, golden-query canary, and the organ-owned collection registry. Zero runtime deps, std only."
+# Origin: OMP sergeant BUILD-QUEUE caddis-memory-organ, spec = state/briefs/
+# caddis-memory-system-council/CONVENING.md (council 2/3 + fact-check, medium weight).
+# Rulings carried here: Q1 CLI wrap v1 + env sanitization + latency telemetry;
+# Q2 read-only v1 (write path = caddis-remember, quorum-gated); Q7 ungated reads.
+# P2 (refresh watchdog) extends this crate; P3 never ships with recall.
+
+[dependencies]

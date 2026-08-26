@@ -6,6 +6,7 @@ members = [
     "crates/caddis-tree",
     "crates/caddis-warden",
     "crates/caddis-organs",
+    "crates/caddis-memory",
 ]
 
 # caddis — a conscience for coding agents.
