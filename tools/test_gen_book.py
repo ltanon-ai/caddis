@@ -79,9 +79,15 @@ def test_a_mermaid_fence_passes_through_for_client_side_render():
 
 
 def test_a_plain_fence_becomes_escaped_code():
+    """Presence of the escaped form is not absence of the raw one.
+
+    A renderer that emitted both would satisfy `"&lt;" in out`, so the
+    ABSENCE of the raw `<` inside the code block is the real property.
+    """
     out = gb._render_fence("python", ["x = 1 < 2"])
     assert '<pre class="code"><code>' in out
     assert "1 &lt; 2" in out
+    assert "1 < 2" not in out
 
 
 def test_git_is_annotated_as_taking_a_list():
@@ -170,23 +176,56 @@ def test_template_no_css_rule_declares_the_same_property_twice():
     assert not offenders, f"duplicate CSS declarations: {offenders}"
 
 
-def test_template_every_cdn_script_carries_subresource_integrity():
+def _external_script_tags():
+    """Every <script src=…> pointing off-origin.
+
+    Selected by SCHEME, not by whether the host happens to contain "cdn." — an
+    unpkg.com or a raw.githack.com URL is exactly as remote, and a filter that
+    skipped it would silently exempt the next one somebody adds.
+    """
+    tags = re.findall(r"<script[^>]*\bsrc=[^>]*?>", gb.HTML_TEMPLATE)
+    return [t for t in tags if re.search(r'\bsrc="(?:https?:)?//', t)]
+
+
+def test_template_every_external_script_carries_subresource_integrity():
     """Web:S5725, and rules/web/security.md: SRI for CDN-loaded scripts."""
-    for tag in re.findall(r"<script[^>]*\bsrc=[^>]*>", gb.HTML_TEMPLATE):
-        assert "integrity=" in tag, f"CDN script without integrity: {tag[:90]}"
-        assert "crossorigin=" in tag, f"integrity without crossorigin: {tag[:90]}"
+    tags = _external_script_tags()
+    assert tags, "no external script found — the selector, not the page, is wrong"
+    for tag in tags:
+        assert re.search(r'\bintegrity="sha(?:256|384|512)-\S+"', tag), (
+            f"external script without a real integrity hash: {tag[:110]}"
+        )
+        # The VALUE matters: SRI is only enforced on a cross-origin fetch made
+        # in anonymous (or credentialed) mode. A bare `crossorigin` attribute
+        # is not the same guarantee, so assert what the spec requires.
+        assert re.search(r'\bcrossorigin="(?:anonymous|use-credentials)"', tag), (
+            f"integrity without a valid crossorigin value: {tag[:110]}"
+        )
 
 
-def test_template_cdn_version_is_pinned_exactly():
+def test_template_external_script_version_is_pinned_exactly():
     """A floating major CANNOT carry an integrity hash — the bytes may change.
 
-    Pinning is what makes the hash above meaningful rather than a time bomb,
-    so the two assertions belong together.
+    Pinning is what makes the hash meaningful rather than a time bomb, so this
+    and the integrity test belong together.
+
+    FAILS CLOSED on an unrecognised pinning scheme. The earlier version skipped
+    any src without "cdn." in it and required one exact `@X.Y.Z/` shape, so a
+    host it did not recognise was exempted silently. Here an unknown scheme is
+    a FAILURE that names itself, because "I could not tell whether this is
+    pinned" is not "this is pinned".
     """
-    for src in re.findall(r'<script[^>]*\bsrc="([^"]+)"', gb.HTML_TEMPLATE):
-        if "cdn." not in src:
-            continue
-        assert re.search(r"@\d+\.\d+\.\d+/", src), f"unpinned CDN version: {src}"
+    known_pins = (
+        r"@\d+\.\d+\.\d+/",  # npm-style: /npm/pkg@1.2.3/file.js
+        r"[?&]v(?:er|ersion)?=\d+\.\d+\.\d+\b",  # query-string pinning
+        r"/\d+\.\d+\.\d+/",  # path-segment pinning: /ajax/libs/x/1.2.3/x.js
+    )
+    for tag in _external_script_tags():
+        src = re.search(r'\bsrc="([^"]+)"', tag).group(1)
+        assert any(re.search(p, src) for p in known_pins), (
+            f"external script is not pinned to an exact version, or uses a "
+            f"pinning scheme this test does not recognise: {src}"
+        )
 
 
 def test_template_uses_globalthis_rather_than_window():
