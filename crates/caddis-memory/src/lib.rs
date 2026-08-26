@@ -25,6 +25,7 @@
 //! collection registry ([`registry`]) — both live-proven against the real
 //! machine index (`tests/live_probe.rs`, `--ignored`).
 
+pub mod bootstrap;
 pub mod canary;
 pub mod exec;
 pub mod json;
