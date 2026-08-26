@@ -49,7 +49,8 @@ jobs:
           python -m pip install --quiet pytest defusedxml pillow
           python -m pytest -q adapters/claude-code/test_warden_gate.py \
             skills/caddis/test_ladder.py tools/test_sonar_coverage.py \
-            tools/test_assets.py tools/test_install_skill.py
+            tools/test_assets.py tools/test_install_skill.py \
+            tools/test_gen_book.py
       - name: Test
         run: cargo test --workspace
       - name: Self-proof (deny + allow + ledger row)

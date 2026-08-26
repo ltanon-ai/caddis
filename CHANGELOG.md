@@ -4,10 +4,18 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
-## 0.3.1 — two tests that could only pass in the conditions they were written in
+## 0.3.1 — every gate that should have guarded 0.3.0 had quietly not run
 
-**No shipped code changed in this release.** Both fixes are to tests, and one of
-them is why the v0.3.0 build failed on Linux and macOS.
+**The caddis engine is untouched — no crate under `crates/` changed.** What this
+release fixes is the machinery that was supposed to catch problems in 0.3.0 and
+reported nothing instead, plus the two tests and the documentation tooling that
+machinery finally surfaced.
+
+0.3.0 was tagged and released with **none of its gates having actually run**. CI
+had never seen the code, because nothing had been pushed. The static-analysis
+scan on that head died parsing a stale coverage report, so it produced no verdict
+at all rather than a failing one. A control that does not run is indistinguishable
+from a control that passed — and that is what shipped.
 
 ### The expectation that could only ever hold on Windows
 
@@ -39,6 +47,38 @@ The ORDER of the checks in `acquire` was deliberately NOT changed — putting th
 timeout first would alter lock SEMANTICS to satisfy a test. `ledger_lock.rs`
 reached its size cap in the process, so its tests moved to `ledger_lock_tests.rs`
 via `#[path]`; nothing was dropped in the move.
+
+A review then pointed out that the refresher could stop working *silently* — one
+failed write is harmless, but if every write failed the incumbent would age past
+stale and the run would measure the flake again, reported as the same assertion
+failure. A fix for a silent failure that can itself fail silently has not moved
+the problem far. Successful refreshes are now counted and asserted, so the test
+names its own cause.
+
+### The book tooling, which the repaired scan finally reported on
+
+With the scan running again it reported nine violations and one security hotspot
+in `tools/gen_book.py` and the `docs/BOOK.html` it generates — all of which had
+entered with the 0.3.0 release commit itself and had never been seen. These are
+shipped files, so they are listed here rather than filed as internal:
+
+- the mermaid diagram library was loaded from a CDN with **no subresource
+  integrity**, and at a floating major version. Now pinned to `10.9.8` with a
+  `sha384` integrity hash and `crossorigin` — a floating version cannot carry an
+  integrity hash at all, because its bytes are free to change underneath it
+- `git()` was annotated as taking a string while every caller passed a list
+- `chapter()` was refactored below the complexity limit, with its rendering split
+  into two helpers. Proven behaviour-preserving by regenerating the book and
+  diffing: zero differences across 99 chapters
+- four CSS `font` shorthands named a face with no generic family, so a reader
+  without Georgia got the browser default; one rule declared `color` twice; the
+  bootstrap used `window` rather than `globalThis`
+
+`tools/gen_book.py` had **no test and zero coverage**. It now has fifteen, and
+they assert properties rather than restate the fixes: every CDN script carries
+integrity, every CDN version is pinned, every font shorthand names a generic
+family, no rule declares a property twice. Each was proven to fail against the
+pre-fix template before being trusted. They run in CI on all three platforms.
 
 v0.3.0's tag and release stay exactly as published; this is the fix on top,
 because a tag that has been public is a fact and moving it would be rewriting one.

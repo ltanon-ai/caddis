@@ -84,13 +84,58 @@ def test_a_plain_fence_becomes_escaped_code():
     assert "1 &lt; 2" in out
 
 
-def test_git_takes_a_list_of_arguments_not_a_string():
-    """The annotation said `str` while every caller passed a list.
+def test_git_is_annotated_as_taking_a_list():
+    """The Sonar defect WAS the annotation, and only the annotation pins it.
 
-    On a str, `["git", "-C", WS] + args` raises rather than building a
-    character-wise argv — so this asserts the contract the callers rely on.
+    Python does not enforce annotations, so no runtime call can tell
+    `args: str` from `args: list[str]` — reverting the fix leaves any
+    behavioural test green.
     """
-    assert gb.git(["rev-parse", "--is-inside-work-tree"]) in ("true", "false", "?")
+    assert gb.git.__annotations__["args"] == list[str]
+
+
+def test_git_passes_its_arguments_through_as_separate_argv_entries():
+    """A list must EXTEND argv, never be spread character-wise.
+
+    The first version of this test called real git and accepted `"?"` — which
+    is git()'s own failure sentinel for ANY non-zero exit. So a broken argv
+    left it green, and so did reverting the annotation: it asserted nothing.
+    It also shelled out to whatever git was on PATH, making it the one
+    environment-dependent test in a file written to kill exactly that.
+    """
+    seen = {}
+
+    class _Done:
+        returncode = 0
+        stdout = "true\n"
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return _Done()
+
+    real_run = gb.subprocess.run
+    gb.subprocess.run = _fake_run
+    try:
+        assert gb.git(["rev-parse", "--is-inside-work-tree"]) == "true"
+    finally:
+        gb.subprocess.run = real_run
+
+    assert seen["argv"] == ["git", "-C", gb.WS, "rev-parse", "--is-inside-work-tree"]
+
+
+def test_git_reports_its_failure_sentinel_on_a_non_zero_exit():
+    """`?` means the call FAILED. Pinned so no test may read it as success."""
+
+    class _Failed:
+        returncode = 128
+        stdout = ""
+
+    real_run = gb.subprocess.run
+    gb.subprocess.run = lambda argv, **kwargs: _Failed()
+    try:
+        assert gb.git(["rev-parse", "nope"]) == "?"
+    finally:
+        gb.subprocess.run = real_run
 
 
 # --- the emitted template ------------------------------------------------
