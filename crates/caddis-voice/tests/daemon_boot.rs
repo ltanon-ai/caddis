@@ -154,6 +154,37 @@ fn daemon_boots_serves_and_guards() {
     assert!(body.contains("\"ok\":true"), "{body}");
     assert!(body.contains("\"admission\":\"queued\""), "{body}");
 
+    // QQ4 soak instrument is live through the real bin: the /say drop
+    // (no piper lane wired) lands asynchronously in /health's soak
+    // section — per-lane counter + ledger window — the R-C/R-D contract.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut health = String::new();
+    while Instant::now() < deadline {
+        let (s, b) = http(d.port, "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").unwrap();
+        assert_eq!(s, 200);
+        health = b;
+        if health.contains("\"dropped\":1") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(health.contains("\"soak\""), "soak section present: {health}");
+    assert!(health.contains("\"dropped\":1"), "lane drop counted: {health}");
+    assert!(
+        health.contains("\"windows\""),
+        "availability windows present: {health}"
+    );
+    assert!(
+        health.contains("\"detect\""),
+        "detection telemetry present: {health}"
+    );
+    // The R-D ledger is a real file in the organ home, one row per
+    // terminal outcome.
+    let ledger = std::fs::read_to_string(home.join("soak-ledger.jsonl")).unwrap_or_default();
+    assert!(
+        ledger.contains("\"lane\":\"piper\""),
+        "ledger row for the piper drop: {ledger}"
+    );
     // bad JSON is a 400, not a crash.
     let (st, _) = http(
         d.port,

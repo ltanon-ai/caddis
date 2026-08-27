@@ -194,9 +194,22 @@ pub fn route(
                     body,
                     headers,
                 } = rej;
+                // Guard rejections are not lane health (auth/shape
+                // gates, not the engine lane) — uncounted, by law.
                 return (status, body, headers);
             }
+            let t0 = std::time::Instant::now();
             let r = routes.horn.handle_body(headers, body);
+            // QQ4 soak: only the ENGINE lane's terminal outcomes count
+            // (200 = transcript served, 502 = lane defect). Shape/auth
+            // rejections (400/403/...) and 429 busy (policy, and the
+            // lane is serving someone) are not lane health — same law
+            // as the guard rejects above.
+            if r.status == 200 || r.status == 502 {
+                if let Some(s) = &routes.health.soak {
+                    s.record_transcribe(r.status == 200, t0.elapsed().as_millis() as u64);
+                }
+            }
             (r.status, r.body, r.headers)
         }
         ("POST", "/say") => route_say(routes, headers, body),
@@ -516,6 +529,7 @@ mod tests {
                 refill_per_min: 100,
                 cooldown_ms: 1_000,
             },
+            None,
         ))
     }
 
@@ -603,6 +617,77 @@ mod tests {
         assert_eq!(s, 405);
         let (s, _, _) = route(&routes, "POST", "/transcribe?token=x", &[], b"");
         assert_eq!(s, 401); // no token header: token guard fires before length
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn health_carries_soak_and_transcribe_records_horn_lane() {
+        let (mut routes, dir) = routes_with(9, 8785, "soak");
+        let soak = crate::soak::shared(Some(dir.join("soak-ledger.jsonl")));
+        routes.health = Arc::new(
+            HealthState::boot("caddis-voice", crate::VERSION, vec![8785]).with_soak(soak.clone()),
+        );
+        // /health carries the section the moment the instrument exists.
+        let (s, b, _) = route(&routes, "GET", "/health", &[], b"");
+        assert_eq!(s, 200);
+        assert!(b.contains("\"soak\""), "{b}");
+        assert!(b.contains("\"windows\""), "{b}");
+        // A guarded reject (401) is NOT lane health — no row, no counter.
+        let (s, _, _) = route(
+            &routes,
+            "POST",
+            "/transcribe",
+            &[("Host".into(), "127.0.0.1:8785".into())],
+            b"",
+        );
+        assert_eq!(s, 401);
+        assert!(soak.snapshot().lanes.is_empty(), "guard reject uncounted");
+        // A shape reject (valid token, garbage multipart → 400) is NOT
+        // lane health either — it never dials the engine.
+        let (s, _, _) = route(
+            &routes,
+            "POST",
+            "/transcribe",
+            &[
+                ("Host".into(), "127.0.0.1:8785".into()),
+                ("X-STT-Token".into(), "tok".into()),
+                ("Content-Length".into(), "10".into()),
+            ],
+            b"0123456789",
+        );
+        assert_eq!(s, 400);
+        assert!(soak.snapshot().lanes.is_empty(), "shape reject uncounted");
+        // A body that reaches the ENGINE dial (dead engine at port 9 →
+        // 502) IS lane health: one attempt, one drop, one ledger row.
+        let (mp_body, ctype) = crate::multipart::build(&tiny_wav(0.5), &[]).unwrap();
+        let (s, _, _) = route(
+            &routes,
+            "POST",
+            "/transcribe",
+            &[
+                ("Host".into(), "127.0.0.1:8785".into()),
+                ("X-STT-Token".into(), "tok".into()),
+                ("Content-Type".into(), ctype),
+                ("Content-Length".into(), mp_body.len().to_string()),
+            ],
+            &mp_body,
+        );
+        assert_eq!(s, 502, "dead engine answers honest 502");
+        let snap = soak.snapshot();
+        let horn = snap
+            .lanes
+            .iter()
+            .find(|(l, _)| l == crate::soak::HORN_LANE)
+            .expect("horn lane recorded");
+        assert_eq!((horn.1.attempts, horn.1.dropped), (1, 1));
+        let win = soak.windows();
+        let all = win.windows.iter().find(|w| w.label == "all").unwrap();
+        let horn_w = all
+            .lanes
+            .iter()
+            .find(|(l, _)| l == crate::soak::HORN_LANE)
+            .unwrap();
+        assert_eq!(horn_w.1.total, 1, "ledger row computed into window");
         std::fs::remove_dir_all(&dir).ok();
     }
 

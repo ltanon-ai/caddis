@@ -209,6 +209,9 @@ pub struct Worker {
     earcons: EarconPlayer,
     detector: Detector,
     config: OrganConfig,
+    /// QQ4 soak instrument (R-C/R-D). None in tests that assert counting
+    /// elsewhere; the daemon always attaches one.
+    soak: Option<Arc<crate::soak::SoakShared>>,
 }
 
 impl Worker {
@@ -227,7 +230,15 @@ impl Worker {
             earcons: EarconPlayer::default(),
             detector: Detector::new(DetectOptions::default()),
             config,
+            soak: None,
         }
+    }
+
+    /// Attach the soak instrument (the daemon wires the same Arc into
+    /// `/health` — one home, many writers).
+    pub fn with_soak(mut self, soak: Arc<crate::soak::SoakShared>) -> Self {
+        self.soak = Some(soak);
+        self
     }
 
     /// Pop the next due item off the front stage (refreshing the busy
@@ -254,6 +265,9 @@ impl Worker {
             .cloned()
             .unwrap_or_default();
         let utt = self.detector.detect(&item.text, entry.declared);
+        if let Some(s) = &self.soak {
+            s.record_detect(&utt);
+        }
         let lang = majority_lang(&utt);
         match voiceset::resolve(&entry.set, lang, path, &self.config.registry) {
             RouteDecision::Speak(voice) => {
@@ -296,7 +310,8 @@ impl Worker {
         now_ms: u128,
         d: &mut Delta,
     ) {
-        match self.dispatcher.speak(
+        let t0 = Instant::now();
+        let outcome = self.dispatcher.speak(
             item,
             spec,
             1.0,
@@ -305,7 +320,17 @@ impl Worker {
             &mut self.clock,
             &mut self.ledger,
             &mut *self.sink,
-        ) {
+        );
+        let ms = t0.elapsed().as_millis() as u64;
+        if let Some(s) = &self.soak {
+            match &outcome {
+                SayOutcome::Spoke { cache_hit } => {
+                    s.record_say(&spec.generator, true, *cache_hit, ms)
+                }
+                SayOutcome::Dropped { .. } => s.record_say(&spec.generator, false, false, ms),
+            }
+        }
+        match outcome {
             SayOutcome::Spoke { cache_hit } => {
                 d.spoken += 1;
                 if cache_hit {
@@ -334,6 +359,9 @@ impl Worker {
     /// loss is ledgered LOSSY (the operator did not hear what he should
     /// have), the count is visible.
     fn honest_degrade(&mut self, item: &SayItem, now_s: f64, d: &mut Delta) {
+        if let Some(s) = &self.soak {
+            s.record_degrade();
+        }
         self.ledger.record(item, "render_error", now_s);
         d.degraded += 1;
         d.dropped += 1;
@@ -443,11 +471,15 @@ impl SayService {
         sink: Box<dyn PlaySink + Send>,
         ledger_path: Option<PathBuf>,
         breaker: BreakerConfig,
+        soak: Option<Arc<crate::soak::SoakShared>>,
     ) -> SayService {
         let front = Arc::new(Mutex::new(FrontStage::new()));
         let (tx, rx): (Sender<Msg>, Receiver<Msg>) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let mut worker = Worker::new(config, lanes, sink, ledger_path, breaker);
+        if let Some(s) = soak {
+            worker = worker.with_soak(s);
+        }
         let front_w = front.clone();
         let stop_w = stop.clone();
         let handle = std::thread::Builder::new()
@@ -777,6 +809,7 @@ mod tests {
             Box::new(sink),
             None,
             big_breaker(),
+            None,
         );
         let (adm, depth) = svc.say(
             "sergeant",
@@ -797,5 +830,53 @@ mod tests {
         assert!(svc.earcon("attention").is_ok());
         assert!(svc.earcon("no.such.event").is_err());
         svc.stop();
+    }
+
+    #[test]
+    fn soak_records_lane_outcomes_and_detection() {
+        let (sink, _inner) = new_sink();
+        let soak = crate::soak::shared(None);
+        let mut w = Worker::new(
+            OrganConfig::default(),
+            lanes_both(),
+            Box::new(sink),
+            None,
+            big_breaker(),
+        )
+        .with_soak(soak.clone());
+        let front = Mutex::new(FrontStage::new());
+        {
+            let mut f = front.lock().unwrap();
+            submit_stage(&mut f, "sergeant", "Labas, operatoriau.", true, 1, SpeechPath::GeneralSpeech, 10.0);
+            submit_stage(&mut f, "unknown-label", "Patvirtinta.", true, 1, SpeechPath::GatedConfirm, 11.0);
+        }
+        drain(&mut w, &front, 12.0, 12_000);
+        let snap = soak.snapshot();
+        // Line 1 (sergeant label, LT diacritics, general path): spoke on
+        // the LT lane (embedded registry routes sergeant LT to leonas).
+        let leonas = snap
+            .lanes
+            .iter()
+            .find(|(l, _)| l == "leonas")
+            .expect("leonas lane");
+        assert_eq!((leonas.1.attempts, leonas.1.spoke), (1, 1));
+        // Line 2 (UNKNOWN label → empty set → R-B confirm path): honest
+        // degrade — route health, recorded under `_route`, never on a
+        // render lane.
+        let route = snap
+            .lanes
+            .iter()
+            .find(|(l, _)| l == crate::soak::ROUTE_LANE)
+            .expect("route lane");
+        assert_eq!(
+            (route.1.attempts, route.1.dropped, route.1.degraded),
+            (1, 1, 1)
+        );
+        // Detection telemetry: both lines detected, both cache misses;
+        // "Labas, operatoriau." is UNMARKED LT → the L2 trigram decides.
+        assert!(snap.detect.l2_trigram >= 1);
+        assert_eq!(snap.detect.cache_miss, 2);
+        let spoke_total: u64 = snap.lanes.iter().map(|(_, c)| c.spoke).sum();
+        assert_eq!(spoke_total, 1, "one spoke, one degraded");
     }
 }

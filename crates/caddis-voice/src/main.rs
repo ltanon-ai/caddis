@@ -109,11 +109,15 @@ fn run_daemon(argv: &[String]) -> i32 {
         Err(e) => eprintln!("daemon: DeadManSwitch NOT armed ({e}) — children may outlive a crash"),
     }
 
-    let health = Arc::new(HealthState::boot(
-        "caddis-voice",
-        VERSION,
-        vec![config.listen_port],
-    ));
+    // QQ4 soak instrument (R-C counters + R-D ledger windows): one Arc,
+    // three writers — say worker, transcribe route, /health reader.
+    let soak = Arc::new(caddis_voice::SoakShared::new(Some(
+        home.join("soak-ledger.jsonl"),
+    )));
+    let health = Arc::new(
+        HealthState::boot("caddis-voice", VERSION, vec![config.listen_port])
+            .with_soak(soak.clone()),
+    );
 
     // The horn: adopt-don't-duplicate supervision of the whisper engine.
     // With the live engine on its port this ADOPTS (probes only); it only
@@ -197,6 +201,7 @@ fn run_daemon(argv: &[String]) -> i32 {
         Box::new(sink),
         Some(home.join("drop-ledger.jsonl")),
         BreakerConfig::default(),
+        Some(soak),
     ));
 
     let routes = Arc::new(OrganRoutes {

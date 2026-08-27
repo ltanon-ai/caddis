@@ -95,6 +95,13 @@
 //! routing decisions firing them, and the `SayService` thread shell the
 //! httpd talks to; [`httpd`] grows the `/say` and `/earcon` routes.
 //! Cutover + soak are P4-P5.
+//!
+//! **P4 slice — QQ4 SOAK TELEMETRY** (this slice): [`soak`] the R-C
+//! counters + the R-D measured-first instrument — per-lane say/`
+//! transcribe` counters and F-A1 detection telemetry live in `/health`,
+//! every terminal outcome appends to `soak-ledger.jsonl`, and trailing
+//! availability windows (1h/24h/48h/all) compute off that ledger so the
+//! 48h soak gate and the 2-week LT baseline survive restarts.
 
 pub mod adapter;
 pub mod config;
@@ -120,6 +127,7 @@ pub mod say;
 pub mod sayd;
 pub mod sha1;
 pub mod sha256;
+pub mod soak;
 pub mod transcribe;
 pub mod trigram;
 pub mod voiceset;
@@ -153,6 +161,7 @@ pub use httpd::{route as route_organ, OrganRoutes};
 pub use job::{ChildScope, DeadManSwitch, JobErr};
 pub use lang::Lang;
 pub use mutex::{bind_exclusive, PortMutexErr};
+pub use soak::{DetectTelemetry, LaneCounters, SoakShared, SoakSnapshot, SoakWindows, WindowStat};
 pub use piper::{PiperAdapter, PiperPaths, PIPER_KILL_DEADLINE_MS};
 pub use play::{
     is_default as is_default_device, read_wav, fit_channels, resample, AudioOut, Pcm,

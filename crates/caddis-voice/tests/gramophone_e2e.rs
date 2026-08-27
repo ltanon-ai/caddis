@@ -111,6 +111,7 @@ fn say_over_real_socket_end_to_end() {
         }),
         None,
         big_breaker(),
+        None,
     ));
 
     // Health + horn routes untouched; bind a throwaway listener.
@@ -256,6 +257,7 @@ fn full_chain_real_child_drop_is_loud_and_chimeless() {
         Box::new(audio),
         None,
         big_breaker(),
+        None,
     );
     let (adm, _) = svc.say("sergeant", "Real child chain.", true, 0, caddis_voice::SpeechPath::GeneralSpeech);
     assert!(matches!(adm, caddis_voice::Admission::Queued));

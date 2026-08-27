@@ -41,10 +41,15 @@ pub struct HealthState {
     pub ports: Vec<u16>,
     /// Children spawned by the organ so far (0 at boot, by definition).
     pub spawned_children: Arc<AtomicU64>,
+    /// QQ4 soak telemetry (R-C counters + R-D windows) — one home, many
+    /// writers (say worker, transcribe route), exactly the
+    /// `spawned_children` pattern. Absent = organ booted without the
+    /// instrument (tests); the `/health` field then stays absent too.
+    pub soak: Option<Arc<crate::soak::SoakShared>>,
 }
 
 impl HealthState {
-    /// Boot state: VRAM probed now, counters zeroed.
+
     pub fn boot(organ: &'static str, version: &'static str, ports: Vec<u16>) -> Self {
         HealthState {
             organ,
@@ -53,12 +58,20 @@ impl HealthState {
             vram: crate::vram::probe(),
             ports,
             spawned_children: Arc::new(AtomicU64::new(0)),
+            soak: None,
         }
+    }
+
+    /// Attach the soak instrument (daemon wiring; the counters live in
+    /// `soak.rs`, `/health` only reports).
+    pub fn with_soak(mut self, soak: Arc<crate::soak::SoakShared>) -> Self {
+        self.soak = Some(soak);
+        self
     }
 
     /// The JSON body of GET /health. Field order is the readable contract.
     pub fn body(&self) -> String {
-        let v = Value::Obj(vec![
+        let mut pairs = vec![
             ("organ".into(), Value::Str(self.organ.into())),
             ("version".into(), Value::Str(self.version.into())),
             (
@@ -74,8 +87,11 @@ impl HealthState {
                 Value::Num(self.spawned_children.load(Ordering::Relaxed) as f64),
             ),
             ("vram".into(), self.vram.to_value()),
-        ]);
-        json::to_string(&v)
+        ];
+        if let Some(s) = &self.soak {
+            pairs.push(("soak".into(), s.health_value()));
+        }
+        json::to_string(&Value::Obj(pairs))
     }
 }
 
