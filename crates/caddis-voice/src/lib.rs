@@ -19,28 +19,61 @@
 //!   declared-endpoint allowlist for network lanes.
 //! - [`config`] — D6 day-one shape: file-based config, defaults per
 //!   language, per-label sets, generator enable flags, the carried 2.5s
-//!   LT network deadline (R-D). Writes stay warden-gated (slice (b)).
+//!   LT network deadline (R-D).
 //!
-//! Slice (b) adds: port-mutex listeners, `/health` with the VRAM capacity
-//! report (before ANY spawn — QQ2), the Job Objects harness (children die
-//! with the parent), and config file loading. Engines (piper/edge-tts) are
-//! P2; the gramophone queue/earcons are P3; cutover + soak are P4-P5.
+//! **P1 slice (b)** (same tick, second increment — the OS-facing half):
+//! - [`mutex`] — the PORT HARD MUTEX: exact-port exclusive bind, port 0
+//!   categorically refused (the ephemeral fallback that once hid a
+//!   dual-daemon defect can never recur), kernel-held, Drop-released.
+//! - [`health`] — GET /health over the mutex-held listener: organ identity,
+//!   uptime, ports held, `spawned_children` counter, and the VRAM capacity
+//!   report (QQ2: the report exists BEFORE any spawn can — a fresh organ
+//!   serves it with `spawned_children: 0`).
+//! - [`vram`] + [`platform`] — DXGI adapter enumeration via the raw
+//!   `CreateDXGIFactory1` export (std-only FFI law, winprobe precedent);
+//!   failopen-REPORT: unknown is stated, never invented.
+//! - [`job`] — the Job Objects harness: [`job::DeadManSwitch`] arms
+//!   kill-on-close for the organ process (children die with it, handle
+//!   intentionally leaked — the leak IS the switch); [`job::ChildScope`]
+//!   closes on Drop (the kill-now supervision primitive, kernel-proven in
+//!   tests).
+//! - [`configio`] — config file loading (missing = embedded boot, corrupt =
+//!   LOUD) and the WARDEN-GATED write path: the estate's stdin-frame seam
+//!   (`tool/command/path/content`, byte-exact lengths), fail-closed verdict
+//!   parse, `allow`+`seq>0` required, atomic tmp+rename landing.
+//!
+//! Engines (piper/edge-tts) are P2; the gramophone queue/earcons are P3;
+//! cutover + soak are P4-P5.
 //!
 //! Zero runtime dependencies, sync, std only (organ material law).
 
 pub mod config;
+pub mod configio;
 pub mod detect;
+pub mod health;
+pub mod job;
 pub mod json;
 pub mod lang;
+pub mod mutex;
+pub mod platform;
 pub mod registry;
 pub mod trigram;
 pub mod voiceset;
+pub mod vram;
 
 pub use config::{OrganConfig, DEFAULT_CONFIG_JSON};
+pub use configio::{
+    load_config, save_config_document, ConfigSource, RealWarden, SaveOutcome, Warden, WardenVerdict,
+    COMMAND as WARDEN_COMMAND, TOOL as WARDEN_TOOL,
+};
 pub use detect::{CacheStats, Decision, DetectOptions, Detector, Layer, Segment, Utterance};
+pub use health::{route as route_health, HealthState, Response as HealthResponse};
+pub use job::{ChildScope, DeadManSwitch, JobErr};
 pub use lang::Lang;
+pub use mutex::{bind_exclusive, PortMutexErr};
 pub use registry::{GeneratorSpec, Lane, Registry, RegistryErr, VoiceSpec, INTERNAL_GENERATORS};
 pub use voiceset::{RouteDecision, SpeechPath, VoiceSet};
+pub use vram::{probe as probe_vram, AdapterMem, VramReport};
 
 pub const VERSION: &str = "0.1.0";
 

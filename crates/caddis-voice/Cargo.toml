@@ -2,11 +2,11 @@
 name = "caddis-voice"
 version = "0.1.0"
 edition = "2021"
-description = "VOICE ORGAN P1 slice (a) — organ core (sergeant tick 2026-08-27, T-35 verdict rung-6): L0/L1/L2 language detection (30ms cap, telemetry, text-hash cache), per-label voice sets {lt,en} with R-B split-by-path policy, registry as config data with internal-only admission (piper/leonas/ona, F-A4 caps, GA1 declared endpoints). Zero runtime deps, sync, std only."
+description = "VOICE ORGAN P1 (slices a+b): organ core — L0/L1/L2 language detection (30ms cap, telemetry, hash cache), per-label voice sets {lt,en} with R-B split-by-path policy, registry as config data (internal-only admission, F-A4 caps, GA1 endpoints) — plus the OS-facing half: port hard mutex (exact bind, port 0 refused), /health with the QQ2 VRAM capacity report, Job Objects dead-man switch (children die with the organ), and warden-gated config file writes (stdin-frame seam, fail-closed, seq-anchored). Zero runtime deps, sync, std only."
 
 # Origin: OMP sergeant BUILD-QUEUE caddis-voice-organ, T-35 amendment ladder
-# (state/briefs/t35-voice-amendment-quorum/VERDICT.md). Slice (b) adds:
-# port-mutex listeners, /health VRAM report, Job Objects harness, file loading.
+# (state/briefs/t35-voice-amendment-quorum/VERDICT.md + the operator-approved
+# plan record: QQ1 auto-kill, QQ2 VRAM-before-spawn, QQ3 Job Objects).
 
 [dependencies]
 
