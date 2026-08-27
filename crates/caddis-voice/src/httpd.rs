@@ -31,11 +31,23 @@ const MAX_CONNECTIONS: u32 = 16;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 const BODY_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The routing surface: health (GET) + horn (POST /transcribe).
+/// The routing surface: health (GET) + horn (POST /transcribe) + the
+/// gramophone (POST /say, POST /earcon) — the say half is OPTIONAL so a
+/// health/horn-only organ (tests, degraded boot) serves without a voice
+/// stack wired.
 pub struct OrganRoutes {
     pub health: Arc<HealthState>,
     pub horn: Arc<HornService>,
+    pub say: Option<Arc<crate::sayd::SayService>>,
 }
+
+/// Body ceiling for the say-family routes (guards cap audio at the
+/// 64 MiB policy; a say line is kilobytes — anything past this cap is
+/// not a say request).
+const SAY_BODY_CAP: usize = 32 * 1024;
+
+/// Label length bound (drop-ledger naming stays a NAME, not a paragraph).
+const SAY_LABEL_MAX: usize = 64;
 
 /// Parsed request head: (method, path-with-query, ordered headers).
 pub type ParsedHead = (String, String, Vec<(String, String)>);
@@ -187,6 +199,13 @@ pub fn route(
             let r = routes.horn.handle_body(headers, body);
             (r.status, r.body, r.headers)
         }
+        ("POST", "/say") => route_say(routes, headers, body),
+        ("POST", "/earcon") => route_earcon(routes, headers, body),
+        ("GET", "/say") | ("GET", "/earcon") => (
+            405,
+            "{\"error\":\"say routes are POST-only\"}".into(),
+            Vec::new(),
+        ),
         ("GET", "/transcribe") => (
             405,
             "{\"error\":\"transcribe is POST-only\"}".into(),
@@ -195,7 +214,135 @@ pub fn route(
         ("POST", "/health") => (405, "{\"error\":\"health is GET-only\"}".into(), Vec::new()),
         _ => (
             404,
-            "{\"error\":\"only /health and /transcribe exist\"}".into(),
+            "{\"error\":\"only /health, /transcribe, /say and /earcon exist\"}".into(),
+            Vec::new(),
+        ),
+    }
+}
+
+/// POST /say — admit one line onto the gramophone queue.
+///
+/// Body: `{"text", "label"?, "priority"?, "narration"?, "path"?}` where
+/// path is `general` (default) or `confirm` (R-B gated-confirm path).
+/// v1 auth posture: local-box surface, no token (the daemon's own say
+/// lane had none); the queue's cap + coalesce bound abuse, and P4's
+/// soak review owns hardening.
+fn route_say(
+    routes: &OrganRoutes,
+    _headers: &[(String, String)],
+    body: &[u8],
+) -> (u16, String, Vec<(String, String)>) {
+    use crate::adapter::MAX_TEXT_CHARS;
+    use crate::json;
+    use crate::sayd::SayService;
+    use crate::voiceset::SpeechPath;
+
+    if body.len() > SAY_BODY_CAP {
+        return (413, "{\"error\":\"say body over cap\"}".into(), Vec::new());
+    }
+    let Some(svc) = routes.say.clone() else {
+        return (
+            503,
+            "{\"error\":\"say service not running on this organ\"}".into(),
+            Vec::new(),
+        );
+    };
+    let v = match json::parse(&String::from_utf8_lossy(body)) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                400,
+                format!("{{\"error\":\"bad JSON: pos {}\"}}", e.at),
+                Vec::new(),
+            )
+        }
+    };
+    let bad = |msg: String| (400, format!("{{\"error\":\"{msg}\"}}"), Vec::new());
+    let text = match v.get("text").and_then(json::Value::as_str) {
+        Some(t) => t.trim().to_string(),
+        None => return bad("text (string) required".into()),
+    };
+    if text.is_empty() {
+        return bad("text is empty".into());
+    }
+    if text.chars().count() > MAX_TEXT_CHARS {
+        return bad(format!("text over {MAX_TEXT_CHARS} chars"));
+    }
+    let label = match v.get("label").and_then(json::Value::as_str) {
+        Some(l) => l.trim().to_string(),
+        None => "sergeant".to_string(),
+    };
+    if label.is_empty() || label.chars().count() > SAY_LABEL_MAX {
+        return bad(format!("label must be 1..={SAY_LABEL_MAX} chars"));
+    }
+    let priority = match v.get("priority") {
+        None => 1u8,
+        Some(p) => match p.as_f64() {
+            Some(n) if n.fract() == 0.0 && (0.0..=2.0).contains(&n) => n as u8,
+            _ => return bad("priority must be 0, 1 or 2".into()),
+        },
+    };
+    let narration = v
+        .get("narration")
+        .and_then(json::Value::as_bool)
+        .unwrap_or(true);
+    let path = match v.get("path").and_then(json::Value::as_str) {
+        None => SpeechPath::GeneralSpeech,
+        Some("general") => SpeechPath::GeneralSpeech,
+        Some("confirm") => SpeechPath::GatedConfirm,
+        Some(other) => return bad(format!("unknown path {other:?} (general|confirm)")),
+    };
+    let (adm, depth) = SayService::say(&svc, &label, &text, narration, priority, path);
+    let verdict = match adm {
+        crate::gramophone::Admission::Queued => "queued",
+        crate::gramophone::Admission::Coalesced => "coalesced",
+        crate::gramophone::Admission::Evicted(_) => "evicted",
+    };
+    (
+        200,
+        format!("{{\"ok\":true,\"admission\":\"{verdict}\",\"depth\":{depth}}}"),
+        Vec::new(),
+    )
+}
+
+/// POST /earcon — fire a life-event chime (attention/done/...). The
+/// worker plays it between speeches; unknown events are refused against
+/// the embedded set.
+fn route_earcon(
+    routes: &OrganRoutes,
+    _headers: &[(String, String)],
+    body: &[u8],
+) -> (u16, String, Vec<(String, String)>) {
+    use crate::json;
+    if body.len() > SAY_BODY_CAP {
+        return (413, "{\"error\":\"earcon body over cap\"}".into(), Vec::new());
+    }
+    let Some(svc) = routes.say.clone() else {
+        return (
+            503,
+            "{\"error\":\"say service not running on this organ\"}".into(),
+            Vec::new(),
+        );
+    };
+    let v = match json::parse(&String::from_utf8_lossy(body)) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                400,
+                format!("{{\"error\":\"bad JSON: pos {}\"}}", e.at),
+                Vec::new(),
+            )
+        }
+    };
+    let event = match v.get("event").and_then(json::Value::as_str) {
+        Some(e) => e.trim().to_string(),
+        None => return (400, "{\"error\":\"event (string) required\"}".into(), Vec::new()),
+    };
+    match crate::sayd::SayService::earcon(&svc, &event) {
+        Ok(()) => (200, "{\"ok\":true}".into(), Vec::new()),
+        Err(e) => (
+            400,
+            format!("{{\"error\":\"{}\"}}", e.replace('"', "'")),
             Vec::new(),
         ),
     }
@@ -263,7 +410,11 @@ fn handle_conn(sock: &mut TcpStream, routes: &OrganRoutes, _stop: &AtomicBool) {
         }
     };
     // Only read a body for the route that wants one (guards already ran).
-    let wants_body = method == "POST" && path.split('?').next() == Some("/transcribe");
+    let wants_body = method == "POST"
+        && matches!(
+            path.split('?').next(),
+            Some("/transcribe") | Some("/say") | Some("/earcon")
+        );
     let body = if wants_body {
         let len: usize = crate::guards::header(&headers, "Content-Length")
             .and_then(|v| v.parse().ok())
@@ -315,9 +466,123 @@ mod tests {
                     vec![8785],
                 )),
                 horn: Arc::new(horn),
+                say: None,
             },
             dir,
         )
+    }
+
+    /// A minimal live SayService (stub lane + counting sink) for the
+    /// /say + /earcon route tests.
+    fn say_service() -> Arc<crate::sayd::SayService> {
+        use crate::adapter::{AdapterErr, RenderedAudio, BreakerConfig};
+        use crate::say::{PlaySink, RenderLane};
+        use crate::sayd::SayService;
+        struct Lane;
+        impl RenderLane for Lane {
+            fn generator(&self) -> &str {
+                "piper"
+            }
+            fn render(
+                &self,
+                _v: &crate::registry::VoiceSpec,
+                _t: &str,
+                _ls: f64,
+            ) -> Result<RenderedAudio, AdapterErr> {
+                Ok(RenderedAudio {
+                    bytes: vec![1, 2, 3, 4],
+                    format: crate::adapter::AudioFormat::Wav,
+                    generator: "piper".into(),
+                    voice: "en_US-ryan".into(),
+                    elapsed_ms: 1,
+                    cap_ms: 1500,
+                    over_cap: false,
+                })
+            }
+        }
+        struct Sink;
+        impl PlaySink for Sink {
+            fn play(&mut self, _wav: &[u8]) -> bool {
+                true
+            }
+        }
+        Arc::new(SayService::start(
+            crate::config::OrganConfig::default(),
+            vec![Box::new(Lane)],
+            Box::new(Sink),
+            None,
+            BreakerConfig {
+                capacity: 100,
+                refill_per_min: 100,
+                cooldown_ms: 1_000,
+            },
+        ))
+    }
+
+    #[test]
+    fn say_route_validates_queues_and_reports() {
+        let (mut routes, dir) = routes_with(9, 8785, "say");
+        routes.say = Some(say_service());
+        // Happy path: queued + depth echo.
+        let (s, b, _) = route(
+            &routes,
+            "POST",
+            "/say",
+            &[],
+            br#"{"text":"Labas, operatoriau.","label":"sergeant"}"#,
+        );
+        assert_eq!(s, 200, "{b}");
+        assert!(b.contains("\"admission\":\"queued\""), "{b}");
+        assert!(b.contains("\"depth\":1"), "{b}");
+        // Same line inside the window: coalesced — and honest about it.
+        let (s, b, _) = route(
+            &routes,
+            "POST",
+            "/say",
+            &[],
+            br#"{"text":"Labas, operatoriau.","label":"sergeant"}"#,
+        );
+        assert_eq!(s, 200);
+        assert!(b.contains("\"admission\":\"coalesced\""), "{b}");
+        // Validation ladder: missing text / empty / bad priority / bad path.
+        let (s, _, _) = route(&routes, "POST", "/say", &[], br#"{"label":"x"}"#);
+        assert_eq!(s, 400);
+        let (s, _, _) = route(&routes, "POST", "/say", &[], br#"{"text":"   "}"#);
+        assert_eq!(s, 400);
+        let (s, _, _) = route(&routes, "POST", "/say", &[], br#"{"text":"a","priority":3}"#);
+        assert_eq!(s, 400);
+        let (s, _, _) = route(&routes, "POST", "/say", &[], br#"{"text":"a","path":"loud"}"#);
+        assert_eq!(s, 400);
+        let (s, _, _) = route(&routes, "POST", "/say", &[], b"not json");
+        assert_eq!(s, 400);
+        // Over-cap body.
+        let big = format!("{{\"text\":\"{}\"}}", "a".repeat(40 * 1024));
+        let (s, _, _) = route(&routes, "POST", "/say", &[], big.as_bytes());
+        assert_eq!(s, 413);
+        // 405 + 404 stay honest.
+        let (s, _, _) = route(&routes, "GET", "/say", &[], b"");
+        assert_eq!(s, 405);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn say_route_without_service_is_503_and_earcon_validates() {
+        let (routes, dir) = routes_with(9, 8785, "say503");
+        let (s, _, _) = route(&routes, "POST", "/say", &[], br#"{"text":"hi"}"#);
+        assert_eq!(s, 503);
+        let (s, _, _) = route(&routes, "POST", "/earcon", &[], br#"{"event":"done"}"#);
+        assert_eq!(s, 503);
+
+        let (mut routes, dir2) = routes_with(9, 8785, "earcon");
+        routes.say = Some(say_service());
+        let (s, b, _) = route(&routes, "POST", "/earcon", &[], br#"{"event":"attention"}"#);
+        assert_eq!(s, 200, "{b}");
+        let (s, _, _) = route(&routes, "POST", "/earcon", &[], br#"{"event":"nope"}"#);
+        assert_eq!(s, 400);
+        let (s, _, _) = route(&routes, "POST", "/earcon", &[], br#"{}"#);
+        assert_eq!(s, 400);
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&dir2).ok();
     }
 
     fn tiny_wav(secs: f64) -> Vec<u8> {

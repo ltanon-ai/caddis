@@ -1,6 +1,6 @@
-//! say.rs — the DISPATCH slice (P3 slice b): adapter render through the
-//! GA3 breaker, WAV cache, and the killable play child, all wired under
-//! the idle-clock bracket.
+//! say.rs — the DISPATCH slice (P3 slice b + c): adapter render through
+//! the GA3 breaker, WAV cache, and the killable play child, all wired
+//! under the idle-clock bracket.
 //!
 //! Ports the daemon's proven `_speak` bracket (peluda_voice
 //! `scheduler_emit.py`): the worker plays audio SYNCHRONOUSLY — one
@@ -13,13 +13,14 @@
 //! Order of operations (the daemon's order, kept):
 //! 1. CACHE FIRST — a hit costs no lane token and no render (tts.py
 //!    checked the wav path before anything else).
-//! 2. On a miss the GA3 breaker gates the LANE (adapter.rs — both lanes
-//!    share one breaker truth). A trip is an ANOMALY the caller MUST
-//!    surface (T-35 verdict GA3): [`SayOutcome::Dropped`] carries the
-//!    flag and the ledger row is written. The daemon degraded to a
-//!    chime here; the organ's chime path lands with the earcon wiring
-//!    (next slice) — until then the loss is recorded LOUD, never
-//!    silent.
+//! 2. On a miss the GA3 breaker gates the GENERATOR's bucket (adapter.rs
+//!    — one breaker truth, keyed per generator). A trip is an ANOMALY
+//!    the caller MUST surface (T-35 verdict GA3):
+//!    [`SayOutcome::Dropped`] carries the flag and the ledger row is
+//!    written. The daemon degraded to a chime here; the organ's chime
+//!    TABLE (fail on lane loss, `substitute`/`degrade` on the R-B
+//!    paths) lives one layer up in `sayd` — the service that owns the
+//!    earcon player and the routing decisions fires it.
 //! 3. Render → validate (GA2, inside the adapters) → play through the
 //!    killable child.
 //!
@@ -81,20 +82,22 @@ pub enum SayOutcome {
     Dropped { reason: String, anomaly: bool },
 }
 
-/// The dispatch half of the gramophone: breaker + cache + one lane +
-/// the play sink. Not thread-safe by itself — the worker owns it, like
-/// the daemon's worker thread owned the scheduler lock.
-pub struct Dispatcher<'a> {
-    lane: &'a dyn RenderLane,
+/// The dispatch half of the gramophone: lanes + breaker + cache + the
+/// play sink, all owned. The worker (sayd) owns this whole struct, like
+/// the daemon's worker thread owned the scheduler lock; lanes are OWNED
+/// boxes (v1 wires piper; leonas/ona lanes land with P4 — an admitted
+/// voice whose generator has no lane drops LOUD with `no lane wired`).
+pub struct Dispatcher {
+    lanes: Vec<Box<dyn RenderLane + Send>>,
     breaker: Breaker,
     cache: WavCache,
     phrase_pack_version: String,
 }
 
-impl<'a> Dispatcher<'a> {
-    pub fn new(lane: &'a dyn RenderLane, phrase_pack_version: &str) -> Self {
+impl Dispatcher {
+    pub fn new(lanes: Vec<Box<dyn RenderLane + Send>>, phrase_pack_version: &str) -> Self {
         Dispatcher {
-            lane,
+            lanes,
             breaker: Breaker::default(),
             cache: WavCache::new(64 * 1024 * 1024),
             phrase_pack_version: phrase_pack_version.to_string(),
@@ -112,13 +115,25 @@ impl<'a> Dispatcher<'a> {
         self.cache.stats()
     }
 
+    /// The lane that renders for a voice's generator (None = generator
+    /// admitted in the registry but no lane wired in this build).
+    fn lane_for(&self, generator: &str) -> Option<&(dyn RenderLane + Send)> {
+        self.lanes
+            .iter()
+            .find(|l| l.generator() == generator)
+            .map(|l| l.as_ref())
+    }
+
     fn key(&self, item: &SayItem, voice: &VoiceSpec, length_scale: f64) -> String {
+        // The engine field is the VOICE's generator — with owned lanes the
+        // dispatcher no longer has a single generator identity, and the
+        // cache must not collapse two generators' renders of one text.
         // rate/pitch are empty on the piper lane (it shapes speech only
         // through length_scale; the key keeps the daemon's full shape).
         wav_cache_key(
             &item.text,
             &voice.id,
-            self.lane.generator(),
+            &voice.generator,
             "",
             "",
             length_scale,
@@ -129,8 +144,11 @@ impl<'a> Dispatcher<'a> {
     /// Speak one popped queue item: idle-clock bracket around cache →
     /// breaker → render → play, ledger rows on every loss.
     ///
-    /// `now_s` is the idle-clock's seconds domain; `now_ms` the
-    /// breaker's monotonic ms domain (two clocks, one truth per user).
+    /// `now_s` is the idle-clock's seconds domain; `now_ms` the breaker's
+    /// monotonic ms domain (two clocks, one truth per user). The bracket
+    /// CLOSES at `now_s + real elapsed` — the daemon measured real speech
+    /// time; a bracket that closed at its own opening time would credit
+    /// zero busy seconds and falsely age every cue queued mid-utterance.
     #[allow(clippy::too_many_arguments)]
     pub fn speak(
         &mut self,
@@ -145,8 +163,9 @@ impl<'a> Dispatcher<'a> {
     ) -> SayOutcome {
         let key = self.key(item, voice, length_scale);
         clock.start_speaking(now_s);
+        let t0 = std::time::Instant::now();
         let outcome = self.dispatch(item, voice, length_scale, &key, now_ms, ledger, sink);
-        clock.stop_speaking(now_s);
+        clock.stop_speaking(now_s + t0.elapsed().as_secs_f64());
         outcome
     }
 
@@ -165,8 +184,8 @@ impl<'a> Dispatcher<'a> {
         if let Some(hit) = self.cache.get(key) {
             return self.play(item, &hit.bytes, true, now_s_of(now_ms), ledger, sink);
         }
-        // 2. GA3 gates the lane.
-        if let Err(tripped) = self.breaker.try_acquire(self.lane.generator(), now_ms) {
+        // 2. GA3 gates the lane — per GENERATOR (the voice's own bucket).
+        if let Err(tripped) = self.breaker.try_acquire(&voice.generator, now_ms) {
             ledger.record(item, "render_error", now_s_of(now_ms));
             return SayOutcome::Dropped {
                 reason: format!(
@@ -177,7 +196,14 @@ impl<'a> Dispatcher<'a> {
             };
         }
         // 3. Render, cache, play.
-        match self.lane.render(voice, &item.text, length_scale) {
+        let Some(lane) = self.lane_for(&voice.generator) else {
+            ledger.record(item, "render_error", now_s_of(now_ms));
+            return SayOutcome::Dropped {
+                reason: format!("render: no {} lane wired in this build", voice.generator),
+                anomaly: false,
+            };
+        };
+        match lane.render(voice, &item.text, length_scale) {
             Err(e) => {
                 ledger.record(item, "render_error", now_s_of(now_ms));
                 SayOutcome::Dropped {
@@ -240,21 +266,39 @@ mod tests {
 
     struct FakeLane {
         fail: bool,
-        renders: std::cell::Cell<u32>,
+        renders: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        name: &'static str,
+    }
+    impl FakeLane {
+        fn piper(fail: bool) -> (Self, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+            Self::named(fail, "piper")
+        }
+        fn named(fail: bool, name: &'static str) -> (Self, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+            let renders = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+            (
+                FakeLane {
+                    fail,
+                    renders: renders.clone(),
+                    name,
+                },
+                renders,
+            )
+        }
     }
     impl RenderLane for FakeLane {
         fn generator(&self) -> &str {
-            "piper"
+            self.name
         }
         fn render(&self, _v: &VoiceSpec, _t: &str, _ls: f64) -> Result<RenderedAudio, AdapterErr> {
-            self.renders.set(self.renders.get() + 1);
+            use std::sync::atomic::Ordering;
+            self.renders.fetch_add(1, Ordering::Relaxed);
             if self.fail {
                 return Err(AdapterErr("stub lane down".into()));
             }
             Ok(RenderedAudio {
                 bytes: vec![1, 2, 3, 4],
                 format: crate::adapter::AudioFormat::Wav,
-                generator: "piper".into(),
+                generator: self.name.into(),
                 voice: "en_US-ryan".into(),
                 elapsed_ms: 42,
                 cap_ms: 1500,
@@ -284,33 +328,22 @@ mod tests {
 
     #[test]
     fn speak_happy_path_then_cache_hit() {
-        let (lane, mut sink, mut clock, mut ledger) = fixture();
-        let mut d = Dispatcher::new(&lane, "v1");
+        let (lane, renders) = FakeLane::piper(false);
+        let mut sink = FakeSink { fail: false, plays: std::cell::Cell::new(0) };
+        let mut clock = IdleClock::new();
+        let mut ledger = DropLedger::new(None);
+        let mut d = Dispatcher::new(vec![Box::new(lane)], "v1");
         let v = voice();
         let out = d.speak(&item("hello"), &v, 1.0, 10.0, 10_000, &mut clock, &mut ledger, &mut sink);
         assert_eq!(out, SayOutcome::Spoke { cache_hit: false });
-        assert_eq!(lane.renders.get(), 1);
+        assert_eq!(renders.load(std::sync::atomic::Ordering::Relaxed), 1);
 
         // Second identical line: cache hit, no second render.
         let out2 = d.speak(&item("hello"), &v, 1.0, 20.0, 20_000, &mut clock, &mut ledger, &mut sink);
         assert_eq!(out2, SayOutcome::Spoke { cache_hit: true });
-        assert_eq!(lane.renders.get(), 1, "cache hit must not render again");
+        assert_eq!(renders.load(std::sync::atomic::Ordering::Relaxed), 1, "cache hit must not render again");
         let st = d.cache_stats();
         assert_eq!((st.hits, st.misses, st.stores), (1, 1, 1));
-    }
-    fn fixture() -> (FakeLane, FakeSink, IdleClock, DropLedger) {
-        (
-            FakeLane {
-                fail: false,
-                renders: std::cell::Cell::new(0),
-            },
-            FakeSink {
-                fail: false,
-                plays: std::cell::Cell::new(0),
-            },
-            IdleClock::new(),
-            DropLedger::new(None),
-        )
     }
 
     fn item(text: &str) -> SayItem {
@@ -326,27 +359,73 @@ mod tests {
         }
     }
 
-
+    #[test]
+    fn multi_lane_dispatch_routes_by_generator_and_missing_lane_is_loud() {
+        let (piper_lane, piper_renders) = FakeLane::piper(false);
+        let (leonas_lane, leonas_renders) = FakeLane::named(false, "leonas");
+        let mut sink = FakeSink { fail: false, plays: std::cell::Cell::new(0) };
+        let mut clock = IdleClock::new();
+        let mut ledger = DropLedger::new(None);
+        let mut d = Dispatcher::new(
+            vec![Box::new(piper_lane), Box::new(leonas_lane)],
+            "v1",
+        );
+        // EN voice → the piper lane renders it.
+        let en = voice();
+        assert!(matches!(
+            d.speak(&item("hello"), &en, 1.0, 1.0, 1_000, &mut clock, &mut ledger, &mut sink),
+            SayOutcome::Spoke { .. }
+        ));
+        assert_eq!((piper_renders.load(std::sync::atomic::Ordering::Relaxed), leonas_renders.load(std::sync::atomic::Ordering::Relaxed)), (1, 0));
+        // LT voice → the leonas lane renders it (same breaker, own bucket).
+        let lt = VoiceSpec {
+            id: "lt-LT-LeonasNeural".into(),
+            generator: "leonas".into(),
+            lang: Lang::Lt,
+        };
+        assert!(matches!(
+            d.speak(&item("labas"), &lt, 1.0, 2.0, 2_000, &mut clock, &mut ledger, &mut sink),
+            SayOutcome::Spoke { .. }
+        ));
+        assert_eq!((piper_renders.load(std::sync::atomic::Ordering::Relaxed), leonas_renders.load(std::sync::atomic::Ordering::Relaxed)), (1, 1));
+        // Admitted generator with NO wired lane: loud drop, never silence.
+        let ghost = VoiceSpec {
+            id: "lt-LT-OnaNeural".into(),
+            generator: "ona".into(),
+            lang: Lang::Lt,
+        };
+        let out = d.speak(&item("nekalbu"), &ghost, 1.0, 3.0, 3_000, &mut clock, &mut ledger, &mut sink);
+        match out {
+            SayOutcome::Dropped { reason, anomaly } => {
+                assert!(!anomaly);
+                assert!(reason.contains("no ona lane wired"), "reason: {reason}");
+            }
+            other => panic!("expected drop, got {other:?}"),
+        }
+        assert_eq!(ledger.health().by_reason.get("render_error"), Some(&1));
+    }
     #[test]
     fn idle_clock_bracket_covers_render_and_play() {
-        let (lane, mut sink, mut clock, mut ledger) = fixture();
-        let mut d = Dispatcher::new(&lane, "v1");
+        let (lane, _renders) = FakeLane::piper(false);
+        let mut sink = FakeSink { fail: false, plays: std::cell::Cell::new(0) };
+        let mut clock = IdleClock::new();
+        let mut ledger = DropLedger::new(None);
+        let mut d = Dispatcher::new(vec![Box::new(lane)], "v1");
         let out = d.speak(&item("line"), &voice(), 1.0, 100.0, 100_000, &mut clock, &mut ledger, &mut sink);
         assert!(matches!(out, SayOutcome::Spoke { .. }));
-        // Bracket closed: not speaking, and the whole utterance counted
-        // as busy time (start 100.0 → stop 100.0 keeps zero width here —
-        // the invariant under test is the bracket STATE, the width test
+        // Bracket closed (the real-elapsed width is ~0 in a test — the
+        // invariant under test is the bracket STATE; the width arithmetic
         // is gramophone's own).
         assert!(!clock.speaking());
     }
 
     #[test]
     fn render_error_is_lossy_and_loud() {
-        let lane = FakeLane { fail: true, renders: std::cell::Cell::new(0) };
+        let (lane, _renders) = FakeLane::piper(true);
         let mut sink = FakeSink { fail: false, plays: std::cell::Cell::new(0) };
         let mut clock = IdleClock::new();
         let mut ledger = DropLedger::new(None);
-        let mut d = Dispatcher::new(&lane, "v1");
+        let mut d = Dispatcher::new(vec![Box::new(lane)], "v1");
         let out = d.speak(&item("lost words"), &voice(), 1.0, 5.0, 5_000, &mut clock, &mut ledger, &mut sink);
         assert_eq!(
             out,
@@ -359,11 +438,11 @@ mod tests {
 
     #[test]
     fn play_failure_is_process_error() {
-        let lane = FakeLane { fail: false, renders: std::cell::Cell::new(0) };
+        let (lane, _renders) = FakeLane::piper(false);
         let mut sink = FakeSink { fail: true, plays: std::cell::Cell::new(0) };
         let mut clock = IdleClock::new();
         let mut ledger = DropLedger::new(None);
-        let mut d = Dispatcher::new(&lane, "v1");
+        let mut d = Dispatcher::new(vec![Box::new(lane)], "v1");
         let out = d.speak(&item("unheard"), &voice(), 1.0, 5.0, 5_000, &mut clock, &mut ledger, &mut sink);
         assert_eq!(
             out,
@@ -376,11 +455,11 @@ mod tests {
     fn ga3_trip_is_anomaly_drop_and_cache_hit_costs_no_token() {
         // Capacity 1: the FIRST render drains the bucket; the second
         // (different text, cache miss) trips.
-        let lane = FakeLane { fail: false, renders: std::cell::Cell::new(0) };
+        let (lane, _renders) = FakeLane::piper(false);
         let mut sink = FakeSink { fail: false, plays: std::cell::Cell::new(0) };
         let mut clock = IdleClock::new();
         let mut ledger = DropLedger::new(None);
-        let mut d = Dispatcher::new(&lane, "v1").with_breaker(BreakerConfig {
+        let mut d = Dispatcher::new(vec![Box::new(lane)], "v1").with_breaker(BreakerConfig {
             capacity: 1,
             refill_per_min: 0,
             cooldown_ms: 60_000,

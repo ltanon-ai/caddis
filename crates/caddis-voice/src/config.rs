@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 pub const DEFAULT_LT_NETWORK_DEADLINE_MS: u32 = 2500;
 
 /// One label's routing entry.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LabelConfig {
     /// Label-declared default language (L0). `None` = undeclared.
     pub declared: Option<Lang>,

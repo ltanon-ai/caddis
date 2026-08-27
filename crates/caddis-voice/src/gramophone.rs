@@ -436,6 +436,14 @@ impl SayQueue {
         }
     }
 
+    /// The seq of the most recently PUSHED item (undefined before the
+    /// first push). The service layer keys per-item routing side-data
+    /// (R-B speech path) by this — `submit` owns the counter, so the
+    /// caller cannot race it.
+    pub fn last_seq(&self) -> u64 {
+        self.seq.saturating_sub(1)
+    }
+
     fn evict_oldest_noncritical(&mut self) -> Option<SayItem> {
         let idx = self
             .items

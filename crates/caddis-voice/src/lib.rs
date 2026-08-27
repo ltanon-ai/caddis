@@ -84,8 +84,17 @@
 //! (scheduler_emit.py `_speak`): cache-first, GA3 breaker gating the
 //! lane (a trip is an ANOMALY drop, ledger-recorded), render → GA2 →
 //! play — all inside the idle-clock SPEAKING bracket so queued speech
-//! never ages. Earcon playback wiring (QQ5) and the /say route are the
-//! next slices; cutover + soak are P4-P5.
+//! never ages.
+//!
+//! **P3 slice (c)** — the service half: [`earcons`] grows WAV synthesis
+//! (additive, phase-accumulated chirp, attack/decay envelope, stereo
+//! shape, peak-normalized to `peak_dbfs`) so the six motifs become real
+//! audio; [`sayd`] assembles the gramophone end-to-end — queue →
+//! dispatch → play child — with the QQ5 earcon wiring (attention/done/
+//! fail life events + the R-B `substituted`/`degrade` chimes), the R-B
+//! routing decisions firing them, and the `SayService` thread shell the
+//! httpd talks to; [`httpd`] grows the `/say` and `/earcon` routes.
+//! Cutover + soak are P4-P5.
 
 pub mod adapter;
 pub mod config;
@@ -108,6 +117,7 @@ pub mod play;
 pub mod platform;
 pub mod registry;
 pub mod say;
+pub mod sayd;
 pub mod sha1;
 pub mod sha256;
 pub mod transcribe;
@@ -151,6 +161,8 @@ pub use play::{
 };
 pub use registry::{GeneratorSpec, Lane, Registry, RegistryErr, VoiceSpec, INTERNAL_GENERATORS};
 pub use say::{Dispatcher, PlaySink, RenderLane, SayOutcome};
+pub use sayd::{EarconPlayer, SayCounts, SayService, Worker as SayWorker};
+pub use earcons::{synth_wav as synth_earcon_wav, EARCON_SAMPLE_RATE};
 pub use transcribe::{HornService, WavMeta, ENGINE_NAME, MIN_AUDIO_S};
 pub use voiceset::{RouteDecision, SpeechPath, VoiceSet};
 pub use vram::{probe as probe_vram, AdapterMem, VramReport};

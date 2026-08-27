@@ -406,6 +406,108 @@ impl EarconSet {
     }
 }
 
+// ---------------------------------------------------------------------------
+// P3 synthesis — the generator notes, made code
+// ---------------------------------------------------------------------------
+
+/// The set's declared sample rate (`sample_rate_hz`, 48 kHz — the daemon's
+/// earcon family rate; the play child's resampler adapts to any device).
+pub const EARCON_SAMPLE_RATE: u32 = 48_000;
+
+/// Synthesize one motif into a PCM16 stereo WAV, exactly per the set's
+/// `generator_notes`:
+///
+/// `sum(amp_i * sin(2π f0 mult_i t + phase))` with a LINEAR chirp on `f0`
+/// over `chirp.duration_ms`, an attack linear ramp, an `e^(-t/decay_tau_s)`
+/// decay, normalized to `peak_dbfs`.
+///
+/// Phase is accumulated (`phi += 2π f0/sr`) rather than computed as
+/// `2π f(t) t` — a chirp's phase is the INTEGRAL of instantaneous
+/// frequency; the closed form's `f·t` term audibly detunes the sweep.
+/// `fundamental_hz` is the nominal pitch for the distinctness law; the
+/// sweep itself runs `chirp_from_hz → chirp_to_hz` and holds at the end
+/// value for the remainder of the motif (the daemon's generator behavior).
+///
+/// Stereo: `mono-dup` duplicates; `width w` pans the same signal
+/// `1 − w/2` / `1 + w/2` — an IMAGE, not a decorrelated pair; the
+/// warning set's "wide" substitution cue is width, not phase games.
+/// Normalization happens AFTER stereo shaping so the LOUDER channel hits
+/// `peak_dbfs` exactly.
+pub fn synth_wav(motif: &Motif, sample_rate: u32) -> Vec<u8> {
+    let sr = f64::from(sample_rate);
+    let n = (motif.total_duration_s * sr).round() as usize;
+    let chirp_s = f64::from(motif.chirp_duration_ms) / 1000.0;
+    let attack_s = f64::from(motif.attack_ms) / 1000.0;
+    let (lg, rg) = match motif.stereo {
+        Stereo::MonoDup => (1.0, 1.0),
+        Stereo::Width(w) => (1.0 - 0.5 * w, 1.0 + 0.5 * w),
+    };
+
+    let mut left: Vec<f64> = Vec::with_capacity(n);
+    let mut right: Vec<f64> = Vec::with_capacity(n);
+    let mut phi = 0.0_f64; // accumulated fundamental phase, radians
+    let mut peak = 0.0_f64;
+    for i in 0..n {
+        let t = i as f64 / sr;
+        let f0 = if chirp_s > 0.0 && t < chirp_s {
+            motif.chirp_from_hz + (motif.chirp_to_hz - motif.chirp_from_hz) * (t / chirp_s)
+        } else {
+            motif.chirp_to_hz
+        };
+        phi += 2.0 * std::f64::consts::PI * f0 / sr;
+        // Attack ramps 0→1; decay runs from t=0 (the daemon multiplied both).
+        let env = (if t < attack_s { t / attack_s } else { 1.0 })
+            * (-t / motif.decay_tau_s).exp();
+        let mut s = 0.0;
+        for (mult, amp) in &motif.harmonics {
+            s += amp * (mult * phi).sin();
+        }
+        let (l, r) = (s * env * lg, s * env * rg);
+        peak = peak.max(l.abs()).max(r.abs());
+        left.push(l);
+        right.push(r);
+    }
+
+    // Peak-normalize so the loudest SAMPLE sits exactly at peak_dbfs.
+    let scale = if peak > 0.0 {
+        10.0_f64.powf(motif.peak_dbfs / 20.0) / peak
+    } else {
+        0.0
+    };
+    let to_i16 = |x: f64| -> i16 {
+        (x * scale * 32767.0).round().clamp(-32767.0, 32767.0) as i16
+    };
+
+    let mut pcm: Vec<u8> = Vec::with_capacity(n * 4);
+    for (l, r) in left.iter().zip(right.iter()) {
+        pcm.extend_from_slice(&to_i16(*l).to_le_bytes());
+        pcm.extend_from_slice(&to_i16(*r).to_le_bytes());
+    }
+    write_wav_pcm16(&pcm, 2, sample_rate)
+}
+
+/// Canonical 44-byte RIFF/WAVE header + PCM16 payload (the byte layout
+/// `transcribe::wav_meta` and `play::read_wav` both walk).
+fn write_wav_pcm16(data: &[u8], channels: u16, sample_rate: u32) -> Vec<u8> {
+    let byte_rate = sample_rate * u32::from(channels) * 2;
+    let block_align = channels * 2;
+    let mut wav = Vec::with_capacity(44 + data.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&((36 + data.len()) as u32).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&byte_rate.to_le_bytes());
+    wav.extend_from_slice(&block_align.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(data);
+    wav
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,5 +593,120 @@ mod tests {
             1,
         );
         assert!(parse_set(&bad_dur).is_err());
+    }
+
+    // ---------------- synthesis (P3 slice c) ----------------
+
+    use crate::transcribe::wav_meta;
+
+    /// Decode a synth WAV into interleaved i16 frames.
+    fn frames(wav: &[u8]) -> Vec<i16> {
+        wav[44..]
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect()
+    }
+
+    fn mono(wav: &[u8]) -> Vec<f64> {
+        frames(wav)
+            .chunks_exact(2)
+            .map(|p| (f64::from(p[0]) + f64::from(p[1])) / 2.0)
+            .collect()
+    }
+
+    #[test]
+    fn synth_matches_declared_shape() {
+        let set = EarconSet::default();
+        let m = set.motifs.get("attention").unwrap();
+        let wav = synth_wav(m, EARCON_SAMPLE_RATE);
+        let meta = wav_meta(&wav).expect("synth output must be a valid WAV");
+        assert_eq!(meta.sample_rate, EARCON_SAMPLE_RATE);
+        assert_eq!(meta.channels, 2);
+        assert!(
+            (meta.duration_s - m.total_duration_s).abs() < 0.005,
+            "duration {} vs {}",
+            meta.duration_s,
+            m.total_duration_s
+        );
+    }
+
+    #[test]
+    fn synth_normalizes_peak_to_dbfs_and_ramps_in() {
+        let set = EarconSet::default();
+        for id in ["attention", "substituted", "degrade"] {
+            let m = set.motifs.get(id).unwrap();
+            let wav = synth_wav(m, EARCON_SAMPLE_RATE);
+            let fr = frames(&wav);
+            let peak = fr.iter().map(|s| s.unsigned_abs()).max().unwrap() as f64;
+            let target = 32767.0 * 10.0_f64.powf(m.peak_dbfs / 20.0);
+            assert!(
+                (peak - target).abs() / target < 0.01,
+                "{id}: peak {peak} vs target {target}"
+            );
+            // Attack ramp: the first frame is inside 1% of silence.
+            let first = fr.iter().take(4).map(|s| s.unsigned_abs()).max().unwrap() as f64;
+            assert!(
+                (first < target * 0.01),
+                "{id}: attack must start at (near) zero"
+            );
+        }
+    }
+
+    #[test]
+    fn synth_stereo_law_is_exactly_the_shape() {
+        let set = EarconSet::default();
+        // mono-dup: identical channels everywhere.
+        let dup = synth_wav(set.motifs.get("start").unwrap(), EARCON_SAMPLE_RATE);
+        for pair in frames(&dup).chunks_exact(2) {
+            assert_eq!(pair[0], pair[1]);
+        }
+        // width 0.5: channels differ; the RIGHT channel is the louder one.
+        let wide = synth_wav(set.substituted_warning(), EARCON_SAMPLE_RATE);
+        let fr = frames(&wide);
+        let li = fr
+            .chunks_exact(2)
+            .enumerate()
+            .max_by_key(|(_, p)| p[0].unsigned_abs() + p[1].unsigned_abs())
+            .map(|(i, _)| i)
+            .unwrap();
+        assert_ne!(fr[li * 2], fr[li * 2 + 1], "width motif must be stereo");
+        assert!(
+            fr[li * 2 + 1].unsigned_abs() > fr[li * 2].unsigned_abs(),
+            "width 0.5 pans RIGHT-loud"
+        );
+    }
+
+    #[test]
+    fn synth_warning_motifs_are_audibly_distinct() {
+        // The parse-time law checks PARAMETERS; the synth-level law checks
+        // the actual WAVEFORMS: normalized cross-correlation of the mono
+        // mixes of every warning pair must stay low — the operator cannot
+        // mistake one for another when they differ this much in shape.
+        let set = EarconSet::default();
+        let wavs: Vec<(&str, Vec<f64>)> = WARNING_CLASS
+            .iter()
+            .map(|id| {
+                (
+                    *id,
+                    mono(&synth_wav(set.motifs.get(*id).unwrap(), EARCON_SAMPLE_RATE)),
+                )
+            })
+            .collect();
+        for i in 0..wavs.len() {
+            for j in i + 1..wavs.len() {
+                let (ai, av) = &wavs[i];
+                let (bi, bv) = &wavs[j];
+                let n = av.len().min(bv.len());
+                let (sa, sb) = (&av[..n], &bv[..n]);
+                let dot: f64 = sa.iter().zip(sb).map(|(x, y)| x * y).sum();
+                let na: f64 = sa.iter().map(|x| x * x).sum::<f64>().sqrt();
+                let nb: f64 = sb.iter().map(|x| x * x).sum::<f64>().sqrt();
+                let ncc = dot / (na * nb);
+                assert!(
+                    ncc.abs() < 0.5,
+                    "{ai}/{bi} waveforms too similar: ncc={ncc:.3}"
+                );
+            }
+        }
     }
 }
