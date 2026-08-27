@@ -58,13 +58,24 @@
 //! kill-on-close job, [`edgetts`] the direct edge-tts protocol (DRM
 //! token, GA1-gated dial URL, SSML assembly, frame parsing, R-D
 //! deadline) over the [`edgetts::WsStream`] seam — the schannel TLS/WSS
-//! fail-closed. [`earcons`] the earcon set as data: four motifs ported
-//! verbatim from the daemon + the R-B verdict's distinct `substituted`
-//! warning and `degrade` chime, with a mechanical distinctness law.
-//! The queue/WAV cache/play child/drop-ledger are P3; cutover + soak
-//! are P4-P5.
+//! fail-closed (LIVE-PROVEN over :443, slice d). [`earcons`] the earcon
+//! set as data: four motifs ported verbatim from the daemon + the R-B
+//! verdict's distinct `substituted` warning and `degrade` chime, with a
+//! mechanical distinctness law.
 //!
-//! Zero runtime dependencies, sync, std only (organ material law).
+//! **P3 — the GRAMOPHONE core** (this slice): [`gramophone`] the say
+//! queue (2 s same-key coalesce with critical exemption, hard cap 24 with
+//! oldest-non-critical eviction, per-class due delays, CUE-ONLY staleness
+//! measured on the idle clock), the [`gramophone::IdleClock`] (speech
+//! time credited back; the 180 s utterance wedge backstop), the
+//! [`gramophone::DropLedger`] (a drop must be LOUD: per-reason counts,
+//! lossy vs by-design, undelivered text persisted to JSONL), and the
+//! [`gramophone::WavCache`] (the daemon's proven composite key over a
+//! byte-budget LRU). All four are ports of the daemon's proven
+//! operator-reliability organs (scheduler.py / idle_clock.py /
+//! drop_ledger.py / tts.py) — pure arithmetic on a caller-supplied clock.
+//! The killable play child, adapter dispatch and /say land next; cutover
+//! + soak are P4-P5.
 
 pub mod adapter;
 pub mod config;
@@ -72,6 +83,7 @@ pub mod configio;
 pub mod detect;
 pub mod earcons;
 pub mod edgetts;
+pub mod gramophone;
 pub mod guards;
 pub mod health;
 pub mod horn;
@@ -105,6 +117,10 @@ pub use configio::{
 pub use detect::{CacheStats, Decision, DetectOptions, Detector, Layer, Segment, Utterance};
 pub use earcons::{parse_set as parse_earcon_set, EarconSet, Motif, EARCON_SET_JSON};
 pub use edgetts::{dial_url, sec_ms_gec, synthesize as edge_synthesize, Prosody, SessionOpts};
+pub use gramophone::{
+    wav_cache_key, Admission, CachedAudio, DropHealth, DropLedger, IdleClock, SayItem, SayQueue,
+    WavCache, LOSSY_REASONS,
+};
 pub use guards::{GuardVerdict, TokenGuard, MAX_UPLOAD_BYTES};
 pub use health::{route as route_health, HealthState, Response as HealthResponse};
 pub use horn::{
