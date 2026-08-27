@@ -2,7 +2,7 @@
 name = "caddis-voice"
 version = "0.1.0"
 edition = "2021"
-description = "VOICE ORGAN P1 (slices a+b): organ core — L0/L1/L2 language detection (30ms cap, telemetry, hash cache), per-label voice sets {lt,en} with R-B split-by-path policy, registry as config data (internal-only admission, F-A4 caps, GA1 endpoints) — plus the OS-facing half: port hard mutex (exact bind, port 0 refused), /health with the QQ2 VRAM capacity report, Job Objects dead-man switch (children die with the organ), and warden-gated config file writes (stdin-frame seam, fail-closed, seq-anchored). Zero runtime deps, sync, std only."
+description = "VOICE ORGAN P1 (core+OS) + P2 HORN: language detection ladder, voice sets, registry, port hard mutex, /health VRAM, Job Objects, warden-gated config IO — and the LISTENING HORN: adopt-don't-duplicate supervision of whisper-server.exe (port-bound liveness, pid+image identity, strangers refused, adopted engines never killed), token+Host+size guards, multipart dialect, GA2-validated engine client, daemon-contract /transcribe (single-flight 429, WAV sanity, allowlisted path source), capped thread-per-connection httpd. Zero runtime deps, sync, std only."
 
 # Origin: OMP sergeant BUILD-QUEUE caddis-voice-organ, T-35 amendment ladder
 # (state/briefs/t35-voice-amendment-quorum/VERDICT.md + the operator-approved

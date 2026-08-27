@@ -42,24 +42,38 @@
 //!   (`tool/command/path/content`, byte-exact lengths), fail-closed verdict
 //!   parse, `allow`+`seq>0` required, atomic tmp+rename landing.
 //!
-//! Engines (piper/edge-tts) are P2; the gramophone queue/earcons are P3;
-//! cutover + soak are P4-P5.
+//! **P2 — the LISTENING HORN** (this slice): [`horn`] adopt-don't-duplicate
+//! supervision of whisper-server.exe (port-bound liveness, pid+image
+//! identity, strangers refused loudly, adopted engines never killed),
+//! [`guards`] token+Host+size gates, [`multipart`] the tiny dialect both
+//! HTTP directions speak, [`whisperc`] the engine lane client with GA2
+//! response validation, [`transcribe`] the daemon-contract endpoint
+//! (single-flight 429, WAV sanity, allowlisted `path`), and [`httpd`] the
+//! capped thread-per-connection surface (/health + /transcribe). The
+//! gramophone adapters (verdict P2 second half) follow; the queue/earcons
+//! are P3; cutover + soak are P4-P5.
 //!
 //! Zero runtime dependencies, sync, std only (organ material law).
 
 pub mod config;
 pub mod configio;
 pub mod detect;
+pub mod guards;
 pub mod health;
+pub mod horn;
+pub mod httpd;
 pub mod job;
 pub mod json;
 pub mod lang;
 pub mod mutex;
+pub mod multipart;
 pub mod platform;
 pub mod registry;
+pub mod transcribe;
 pub mod trigram;
 pub mod voiceset;
 pub mod vram;
+pub mod whisperc;
 
 pub use config::{OrganConfig, DEFAULT_CONFIG_JSON};
 pub use configio::{
@@ -74,6 +88,11 @@ pub use mutex::{bind_exclusive, PortMutexErr};
 pub use registry::{GeneratorSpec, Lane, Registry, RegistryErr, VoiceSpec, INTERNAL_GENERATORS};
 pub use voiceset::{RouteDecision, SpeechPath, VoiceSet};
 pub use vram::{probe as probe_vram, AdapterMem, VramReport};
+pub use guards::{GuardVerdict, TokenGuard, MAX_UPLOAD_BYTES};
+pub use horn::{adopt_decision, backoff_for, EngineWorld, HornSettings, HornState, OsEngineWorld, Supervisor, TickReport};
+pub use httpd::{route as route_organ, OrganRoutes};
+pub use transcribe::{HornService, WavMeta, ENGINE_NAME, MIN_AUDIO_S};
+pub use whisperc::{transcribe as engine_transcribe, Transcript, WhisperErr};
 
 pub const VERSION: &str = "0.1.0";
 
