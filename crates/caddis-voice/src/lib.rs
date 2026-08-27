@@ -49,15 +49,29 @@
 //! HTTP directions speak, [`whisperc`] the engine lane client with GA2
 //! response validation, [`transcribe`] the daemon-contract endpoint
 //! (single-flight 429, WAV sanity, allowlisted `path`), and [`httpd`] the
-//! capped thread-per-connection surface (/health + /transcribe). The
-//! gramophone adapters (verdict P2 second half) follow; the queue/earcons
-//! are P3; cutover + soak are P4-P5.
+//! capped thread-per-connection surface (/health + /transcribe).
+//!
+//! **P2 — the ADAPTER half** (next slice): [`adapter`] the guard layer
+//! every render passes (GA1 dial-time endpoint authorization, GA2 audio
+//! validation, GA3 circuit breaker, markup/secret text sanitization),
+//! [`piper`] the offline EN adapter driving the daemon-proven CLI under a
+//! kill-on-close job, [`edgetts`] the direct edge-tts protocol (DRM
+//! token, GA1-gated dial URL, SSML assembly, frame parsing, R-D
+//! deadline) over the [`edgetts::WsStream`] seam — the schannel TLS/WSS
+//! fail-closed. [`earcons`] the earcon set as data: four motifs ported
+//! verbatim from the daemon + the R-B verdict's distinct `substituted`
+//! warning and `degrade` chime, with a mechanical distinctness law.
+//! The queue/WAV cache/play child/drop-ledger are P3; cutover + soak
+//! are P4-P5.
 //!
 //! Zero runtime dependencies, sync, std only (organ material law).
 
+pub mod adapter;
 pub mod config;
 pub mod configio;
 pub mod detect;
+pub mod earcons;
+pub mod edgetts;
 pub mod guards;
 pub mod health;
 pub mod horn;
@@ -67,8 +81,10 @@ pub mod json;
 pub mod lang;
 pub mod mutex;
 pub mod multipart;
+pub mod piper;
 pub mod platform;
 pub mod registry;
+pub mod sha256;
 pub mod transcribe;
 pub mod trigram;
 pub mod voiceset;
@@ -93,6 +109,13 @@ pub use horn::{adopt_decision, backoff_for, EngineWorld, HornSettings, HornState
 pub use httpd::{route as route_organ, OrganRoutes};
 pub use transcribe::{HornService, WavMeta, ENGINE_NAME, MIN_AUDIO_S};
 pub use whisperc::{transcribe as engine_transcribe, Transcript, WhisperErr};
+pub use adapter::{
+    authorize_dial, sanitize_text, validate_mp3, validate_wav, AdapterErr, AudioFormat, Breaker,
+    BreakerConfig, RenderedAudio,
+};
+pub use earcons::{parse_set as parse_earcon_set, EarconSet, Motif, EARCON_SET_JSON};
+pub use edgetts::{dial_url, sec_ms_gec, synthesize as edge_synthesize, Prosody, SessionOpts};
+pub use piper::{PiperAdapter, PiperPaths, PIPER_KILL_DEADLINE_MS};
 
 pub const VERSION: &str = "0.1.0";
 
