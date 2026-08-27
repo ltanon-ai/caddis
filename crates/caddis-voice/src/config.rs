@@ -16,12 +16,36 @@ use std::collections::BTreeMap;
 /// R-D: the quorum-carried single-attempt network deadline for LT speech.
 pub const DEFAULT_LT_NETWORK_DEADLINE_MS: u32 = 2500;
 
+/// P4 parallel-run listen port: the organ's OWN surface, deliberately NOT
+/// the old daemon ports (stt 8765 / tts 8766 — those belong to the live
+/// Python daemons until the P5 cutover retires them; 8767 is a standing
+/// ssh forward). The port mutex stays the real guard; this is the default.
+pub const DEFAULT_LISTEN_PORT: u16 = 8768;
+
+/// The X-STT-Token file, shared with the live STT daemon ON PURPOSE:
+/// parallel-run clients (opener routes, mic.html) keep the token they
+/// already carry; rotation stays a file write. The PATH is public config;
+/// the VALUE never leaves the token guard.
+pub const DEFAULT_TOKEN_FILE: &str = "C:/Users/ashpac/stt-daemon/stt-token.txt";
+
 /// One label's routing entry.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LabelConfig {
     /// Label-declared default language (L0). `None` = undeclared.
     pub declared: Option<Lang>,
     pub set: VoiceSet,
+}
+
+/// The offline piper lane's boot facts (P4): the exe plus per-voice ONNX
+/// model files, keyed by registry voice id. `exe` empty = the lane is
+/// simply not wired (speech drops loudly per the dispatcher's no-lane
+/// law — an honest degraded boot, not a crash).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PiperConfig {
+    pub exe: String,
+    /// Registry voice id -> ONNX model path; the `.json` voice config
+    /// rides piper's own `<model>.json` convention.
+    pub voices: BTreeMap<String, String>,
 }
 
 /// The whole organ config, parsed + validated.
@@ -37,6 +61,14 @@ pub struct OrganConfig {
     /// sentinel ("default" — the operator's standing ruling: always
     /// strictly the default sound card).
     pub device_name: String,
+    /// The organ's own HTTP surface (P4). Port 0 is refused here with a
+    /// clear message — it is the ephemeral fallback the port mutex law
+    /// exists to kill.
+    pub listen_port: u16,
+    /// X-STT-Token file the horn guard reads fresh per request.
+    pub token_file: String,
+    /// Offline piper lane boot facts (exe + per-voice models).
+    pub piper: PiperConfig,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +101,9 @@ pub const DEFAULT_CONFIG_JSON: &str = r#"{
     "defaults": {"lt": "lt-LT-LeonasNeural", "en": "en_US-ryan"},
     "generators_enabled": {"piper": true, "leonas": true, "ona": true},
     "device_name": "default",
+    "listen_port": 8768,
+    "token_file": "C:/Users/ashpac/stt-daemon/stt-token.txt",
+    "piper": {"exe": "", "voices": {}},
     "lt_network_deadline_ms": 2500,
     "labels": {
         "sergeant": {"declared": null, "set": {"lt": "lt-LT-LeonasNeural", "en": "en_US-ryan"}},
@@ -172,6 +207,66 @@ fn from_value(v: &Value) -> Result<OrganConfig, ConfigErr> {
         .map(str::to_string)
         .unwrap_or_else(|| "default".to_string());
 
+    // listen_port: the organ's own surface (P4). Missing = the parallel-run
+    // default; 0 is the ephemeral fallback the port mutex refuses — catch
+    // it here where the message can name the field.
+    let listen_port = v
+        .get("listen_port")
+        .and_then(Value::as_f64)
+        .map(|n| n as u16)
+        .unwrap_or(DEFAULT_LISTEN_PORT);
+    if listen_port == 0 {
+        return Err(ConfigErr("listen_port 0 refused (port mutex law)".into()));
+    }
+
+    // token_file: shared with the live STT daemon so parallel-run clients
+    // keep their token (see DEFAULT_TOKEN_FILE).
+    let token_file = v
+        .get("token_file")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| DEFAULT_TOKEN_FILE.to_string());
+
+    // piper: offline lane boot facts. An empty exe just leaves the lane
+    // unwired, but a model entry for a voice that is not an admitted
+    // PIPER voice is a typo that must fail closed — it would otherwise
+    // resolve nothing at render time and look like a lane defect.
+    let mut piper = PiperConfig::default();
+    if let Some(pv) = v.get("piper") {
+        piper.exe = pv
+            .get("exe")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if let Some(map) = pv.get("voices").and_then(Value::as_obj) {
+            for (id, model) in map {
+                let model = model
+                    .as_str()
+                    .ok_or_else(|| ConfigErr(format!("piper: voices.{id} not a string")))?
+                    .trim()
+                    .to_string();
+                if model.is_empty() {
+                    return Err(ConfigErr(format!("piper: voices.{id} empty model path")));
+                }
+                match registry.voice(id) {
+                    Some(vs) if vs.generator == "piper" => {}
+                    Some(vs) => {
+                        return Err(ConfigErr(format!(
+                            "piper: voice '{id}' belongs to generator '{}', not piper",
+                            vs.generator
+                        )))
+                    }
+                    None => {
+                        return Err(ConfigErr(format!(
+                            "piper: voices.{id} is not in the admitted registry"
+                        )))
+                    }
+                }
+                piper.voices.insert(id.clone(), model);
+            }
+        }
+    }
+
     Ok(OrganConfig {
         registry,
         defaults,
@@ -179,6 +274,9 @@ fn from_value(v: &Value) -> Result<OrganConfig, ConfigErr> {
         generators_enabled: enabled,
         lt_network_deadline_ms,
         device_name,
+        listen_port,
+        token_file,
+        piper,
     })
 }
 
@@ -277,5 +375,70 @@ mod tests {
         let doc = DEFAULT_CONFIG_JSON.replace(",\n    \"lt_network_deadline_ms\": 2500,", ",");
         let c = parse_config(&doc).unwrap();
         assert_eq!(c.lt_network_deadline_ms, DEFAULT_LT_NETWORK_DEADLINE_MS);
+    }
+
+    #[test]
+    fn p4_boot_fields_default_and_parse() {
+        let c = OrganConfig::default();
+        assert_eq!(c.listen_port, DEFAULT_LISTEN_PORT);
+        assert_eq!(c.token_file, DEFAULT_TOKEN_FILE);
+        assert!(c.piper.exe.is_empty());
+        assert!(c.piper.voices.is_empty());
+
+        // A machine config carrying the real lane facts parses + validates.
+        let doc = DEFAULT_CONFIG_JSON.replace(
+            r#""piper": {"exe": "", "voices": {}}"#,
+            r#""piper": {"exe": "C:/pi/piper.exe", "voices": {"en_US-ryan": "C:/v/ryan.onnx", "en_US-amy": "C:/v/amy.onnx"}}"#,
+        );
+        let c = parse_config(&doc).unwrap();
+        assert_eq!(c.piper.exe, "C:/pi/piper.exe");
+        assert_eq!(c.piper.voices.len(), 2);
+        assert_eq!(c.piper.voices["en_US-ryan"], "C:/v/ryan.onnx");
+    }
+
+    #[test]
+    fn p4_boot_fields_back_compat_without_keys() {
+        // A slice-(b)-era config file (no P4 keys) still boots with defaults.
+        let doc = DEFAULT_CONFIG_JSON
+            .replace(",\n    \"listen_port\": 8768,", ",")
+            .replace(",\n    \"token_file\": \"C:/Users/ashpac/stt-daemon/stt-token.txt\"", "")
+            .replace(",\n    \"piper\": {\"exe\": \"\", \"voices\": {}}", "");
+        let c = parse_config(&doc).unwrap();
+        assert_eq!(c.listen_port, DEFAULT_LISTEN_PORT);
+        assert_eq!(c.token_file, DEFAULT_TOKEN_FILE);
+        assert!(c.piper.exe.is_empty());
+    }
+
+    #[test]
+    fn listen_port_zero_refused() {
+        let doc = DEFAULT_CONFIG_JSON.replace("\"listen_port\": 8768", "\"listen_port\": 0");
+        let e = parse_config(&doc).unwrap_err();
+        assert!(e.0.contains("listen_port 0 refused"), "{e}");
+    }
+
+    #[test]
+    fn piper_voice_binding_fails_closed() {
+        // A model bound to a voice that is not an admitted PIPER voice:
+        // typo territory — refuse at parse, not at render time.
+        let doc = DEFAULT_CONFIG_JSON.replace(
+            r#""piper": {"exe": "", "voices": {}}"#,
+            r#""piper": {"exe": "C:/pi/piper.exe", "voices": {"lt-LT-LeonasNeural": "C:/v/x.onnx"}}"#,
+        );
+        let e = parse_config(&doc).unwrap_err();
+        assert!(e.0.contains("not piper"), "{e}");
+
+        let doc = DEFAULT_CONFIG_JSON.replace(
+            r#""piper": {"exe": "", "voices": {}}"#,
+            r#""piper": {"exe": "C:/pi/piper.exe", "voices": {"en_US-ghost": "C:/v/x.onnx"}}"#,
+        );
+        let e = parse_config(&doc).unwrap_err();
+        assert!(e.0.contains("not in the admitted registry"), "{e}");
+
+        let doc = DEFAULT_CONFIG_JSON.replace(
+            r#""piper": {"exe": "", "voices": {}}"#,
+            r#""piper": {"exe": "C:/pi/piper.exe", "voices": {"en_US-ryan": "   "}}"#,
+        );
+        let e = parse_config(&doc).unwrap_err();
+        assert!(e.0.contains("empty model path"), "{e}");
     }
 }

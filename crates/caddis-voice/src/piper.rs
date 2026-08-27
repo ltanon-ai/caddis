@@ -16,6 +16,7 @@
 use crate::adapter::{sanitize_text, validate_wav, AdapterErr, AudioFormat, RenderedAudio};
 use crate::job::ChildScope;
 use crate::registry::VoiceSpec;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,6 +61,11 @@ fn temp_pair() -> (PathBuf, PathBuf) {
 #[derive(Debug, Clone)]
 pub struct PiperAdapter {
     paths: PiperPaths,
+    /// P4: per-voice model files — the registry admits MORE than one piper
+    /// voice (ryan AND amy), so one adapter must resolve the model by the
+    /// voice it is asked to render, not by a single boot-time path. A
+    /// voice without an entry falls back to `paths.model`.
+    voice_models: BTreeMap<String, (String, String)>,
     /// F-A4 declared render cap — telemetry only.
     cap_ms: u32,
     /// Kill timer; the proven 20 s unless a test shrinks it.
@@ -74,10 +80,47 @@ impl PiperAdapter {
     pub fn new(paths: PiperPaths, cap_ms: u32) -> Self {
         PiperAdapter {
             paths,
+            voice_models: BTreeMap::new(),
             cap_ms,
             kill_deadline_ms: PIPER_KILL_DEADLINE_MS,
             argv_override: None,
         }
+    }
+
+    /// Bind one registry voice id to its own ONNX model file (P4: the
+    /// daemon bin wires this from config). The `.json` voice config rides
+    /// piper's own convention `<model>.json` unless given explicitly.
+    pub fn with_voice_model(
+        mut self,
+        voice_id: &str,
+        model: &str,
+        model_config: Option<&str>,
+    ) -> Self {
+        self.voice_models.insert(
+            voice_id.to_string(),
+            (
+                model.to_string(),
+                model_config
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("{model}.json")),
+            ),
+        );
+        self
+    }
+
+    /// The (model, config) pair a render of `voice_id` uses: the
+    /// per-voice binding when present, else the boot-time fallback.
+    fn resolve_model(&self, voice_id: &str) -> (String, String) {
+        if let Some((m, c)) = self.voice_models.get(voice_id) {
+            return (m.clone(), c.clone());
+        }
+        let m = self.paths.model.clone();
+        let c = self
+            .paths
+            .model_config
+            .clone()
+            .unwrap_or_else(|| format!("{m}.json"));
+        (m, c)
     }
 
     /// TEST LANE ONLY: full argv replacement with `{IN}`/`{OUT}`
@@ -88,24 +131,26 @@ impl PiperAdapter {
         self
     }
 
-    fn argv(&self, in_path: &str, out_path: &str, length_scale: f64) -> Vec<String> {
+    fn argv(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        length_scale: f64,
+        model: &str,
+        model_config: &str,
+    ) -> Vec<String> {
         if let Some(ov) = &self.argv_override {
             return ov
                 .iter()
                 .map(|a| a.replace("{IN}", in_path).replace("{OUT}", out_path))
                 .collect();
         }
-        let cfg = self
-            .paths
-            .model_config
-            .clone()
-            .unwrap_or_else(|| format!("{}.json", self.paths.model));
         vec![
             self.paths.exe.clone(),
             "-m".into(),
-            self.paths.model.clone(),
+            model.to_string(),
             "-c".into(),
-            cfg,
+            model_config.to_string(),
             "-i".into(),
             in_path.into(),
             "-f".into(),
@@ -131,8 +176,8 @@ impl PiperAdapter {
                 voice.id
             )));
         }
-        if self.paths.exe.is_empty() || self.paths.model.is_empty() {
-            return Err(AdapterErr("piper: exe/model not configured".into()));
+        if self.paths.exe.is_empty() {
+            return Err(AdapterErr("piper: exe not configured".into()));
         }
 
         let (in_path, out_path) = temp_pair();
@@ -140,11 +185,21 @@ impl PiperAdapter {
             return Err(AdapterErr(format!("piper: write input failed: {e}")));
         }
 
+        let (model, model_config) = self.resolve_model(&voice.id);
+        if model.is_empty() {
+            return Err(AdapterErr(format!(
+                "piper: no model configured for voice {}",
+                voice.id
+            )));
+        }
+
         let started = Instant::now();
         let argv = self.argv(
             &in_path.to_string_lossy(),
             &out_path.to_string_lossy(),
             length_scale,
+            &model,
+            &model_config,
         );
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..]);
@@ -408,7 +463,8 @@ mod tests {
             },
             1500,
         );
-        let argv = a.argv("IN.txt", "OUT.wav", 1.1);
+        let (m, c) = a.resolve_model("en_US-amy");
+        let argv = a.argv("IN.txt", "OUT.wav", 1.1, &m, &c);
         assert_eq!(
             argv,
             vec![
@@ -422,9 +478,51 @@ mod tests {
                 "-f".into(),
                 "OUT.wav".into(),
                 "--length-scale".into(),
-                "1.1".into(),
+                "1.1".to_string(),
             ]
         );
         assert_eq!(a.kill_deadline_ms, PIPER_KILL_DEADLINE_MS);
+    }
+
+    #[test]
+    fn per_voice_model_resolution() {
+        // P4: the registry admits ryan AND amy; one adapter, per-voice
+        // models, boot-time fallback for voices without a binding.
+        let a = PiperAdapter::new(
+            PiperPaths {
+                exe: "C:\\piper.exe".into(),
+                model: "C:\\amy.onnx".into(),
+                model_config: Some("C:\\amy.custom.json".into()),
+            },
+            1500,
+        )
+        .with_voice_model("en_US-ryan", "C:\\ryan.onnx", None)
+        .with_voice_model("en_US-amy", "C:\\amy2.onnx", Some("C:\\amy2.json"));
+
+        assert_eq!(
+            a.resolve_model("en_US-ryan"),
+            ("C:\\ryan.onnx".into(), "C:\\ryan.onnx.json".into())
+        );
+        assert_eq!(
+            a.resolve_model("en_US-amy"),
+            ("C:\\amy2.onnx".into(), "C:\\amy2.json".into())
+        );
+        // Unbound voice falls back to the boot pair, exact config honored.
+        assert_eq!(
+            a.resolve_model("en_US-somebody"),
+            ("C:\\amy.onnx".into(), "C:\\amy.custom.json".into())
+        );
+
+        // A voice model without a boot-time fallback: empty model is the
+        // render-time refusal, not a wrong-voice render.
+        let b = PiperAdapter::new(
+            PiperPaths {
+                exe: "C:\\piper.exe".into(),
+                model: String::new(),
+                model_config: None,
+            },
+            1500,
+        );
+        assert_eq!(b.resolve_model("en_US-ryan").0, String::new());
     }
 }
