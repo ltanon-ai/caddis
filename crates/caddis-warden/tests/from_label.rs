@@ -35,8 +35,16 @@ fn judge(from: Option<&str>, tag: &str) -> (String, String) {
     let _ = std::fs::remove_file(&ledger);
     let mut builder = Command::new(env!("CARGO_BIN_EXE_caddis-warden"));
     builder.env("CADDIS_WARDEN_LEDGER", &ledger);
-    if let Some(f) = from {
-        builder.env("CADDIS_WARDEN_FROM", f);
+    match from {
+        Some(f) => {
+            builder.env("CADDIS_WARDEN_FROM", f);
+        }
+        None => {
+            // "unset" must be TRUE unset: a harness carrying the var (omp
+            // exports it globally) would otherwise leak in and flip the
+            // default-identity expectation.
+            builder.env_remove("CADDIS_WARDEN_FROM");
+        }
     }
     let mut cmd = builder
         .stdin(Stdio::piped())
