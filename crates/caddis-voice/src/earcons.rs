@@ -206,15 +206,23 @@ pub fn parse_set(text: &str) -> Result<EarconSet, EarconErr> {
         .and_then(Value::as_str)
         .ok_or_else(|| EarconErr("missing version".into()))?
         .to_string();
-    let motifs_v = v.get("motifs").and_then(Value::as_obj).ok_or_else(|| EarconErr("missing motifs".into()))?;
+    let motifs_v = v
+        .get("motifs")
+        .and_then(Value::as_obj)
+        .ok_or_else(|| EarconErr("missing motifs".into()))?;
     let mut motifs = BTreeMap::new();
     for (id, mv) in motifs_v {
         motifs.insert(id.clone(), parse_motif(id, mv)?);
     }
-    let map_v = v.get("event_chime_map").and_then(Value::as_obj).ok_or_else(|| EarconErr("missing event_chime_map".into()))?;
+    let map_v = v
+        .get("event_chime_map")
+        .and_then(Value::as_obj)
+        .ok_or_else(|| EarconErr("missing event_chime_map".into()))?;
     let mut event_map = BTreeMap::new();
     for (ev, target) in map_v {
-        let t = target.as_str().ok_or_else(|| EarconErr(format!("event {ev}: target not a string")))?;
+        let t = target
+            .as_str()
+            .ok_or_else(|| EarconErr(format!("event {ev}: target not a string")))?;
         if !motifs.contains_key(t) {
             return Err(EarconErr(format!("event {ev} points at unknown motif {t}")));
         }
@@ -222,7 +230,14 @@ pub fn parse_set(text: &str) -> Result<EarconSet, EarconErr> {
     }
 
     // Required vocabulary: the four proven classes + both R-B classes.
-    for m in ["attention", "start", "done", "fail", "substituted", "degrade"] {
+    for m in [
+        "attention",
+        "start",
+        "done",
+        "fail",
+        "substituted",
+        "degrade",
+    ] {
         if !motifs.contains_key(m) {
             return Err(EarconErr(format!("required motif missing: {m}")));
         }
@@ -252,7 +267,11 @@ pub fn parse_set(text: &str) -> Result<EarconSet, EarconErr> {
             }
         }
     }
-    Ok(EarconSet { version, motifs, event_map })
+    Ok(EarconSet {
+        version,
+        motifs,
+        event_map,
+    })
 }
 
 fn parse_motif(id: &str, v: &Value) -> Result<Motif, EarconErr> {
@@ -264,11 +283,15 @@ fn parse_motif(id: &str, v: &Value) -> Result<Motif, EarconErr> {
     let u = |k: &str| -> Result<u32, EarconErr> {
         let n = f(k)?;
         if n < 0.0 || n.fract() != 0.0 {
-            return Err(EarconErr(format!("motif {id}: {k} must be a non-negative integer")));
+            return Err(EarconErr(format!(
+                "motif {id}: {k} must be a non-negative integer"
+            )));
         }
         Ok(n as u32)
     };
-    let chirp = v.get("chirp").ok_or_else(|| EarconErr(format!("motif {id}: missing chirp")))?;
+    let chirp = v
+        .get("chirp")
+        .ok_or_else(|| EarconErr(format!("motif {id}: missing chirp")))?;
     let harmonics_v = v
         .get("harmonics")
         .and_then(Value::as_arr)
@@ -281,7 +304,9 @@ fn parse_motif(id: &str, v: &Value) -> Result<Motif, EarconErr> {
         let mult = h.get("mult").and_then(Value::as_f64).unwrap_or(0.0);
         let amp = h.get("amp").and_then(Value::as_f64).unwrap_or(0.0);
         if mult <= 0.0 || amp <= 0.0 {
-            return Err(EarconErr(format!("motif {id}: harmonic mult/amp must be positive")));
+            return Err(EarconErr(format!(
+                "motif {id}: harmonic mult/amp must be positive"
+            )));
         }
         harmonics.push((mult, amp));
     }
@@ -294,7 +319,9 @@ fn parse_motif(id: &str, v: &Value) -> Result<Motif, EarconErr> {
                 .and_then(Value::as_f64)
                 .ok_or_else(|| EarconErr(format!("motif {id}: stereo width missing")))?;
             if !(0.0..=1.0).contains(&w) {
-                return Err(EarconErr(format!("motif {id}: stereo width {w} out of 0..1")));
+                return Err(EarconErr(format!(
+                    "motif {id}: stereo width {w} out of 0..1"
+                )));
             }
             Stereo::Width(w)
         }
@@ -316,7 +343,9 @@ fn parse_motif(id: &str, v: &Value) -> Result<Motif, EarconErr> {
                 .and_then(Value::as_f64)
                 .ok_or_else(|| EarconErr(format!("motif {id}: chirp duration_ms missing")))?;
             if d < 0.0 || d.fract() != 0.0 {
-                return Err(EarconErr(format!("motif {id}: chirp duration_ms must be a non-negative integer")));
+                return Err(EarconErr(format!(
+                    "motif {id}: chirp duration_ms must be a non-negative integer"
+                )));
             }
             d as u32
         },
@@ -327,22 +356,35 @@ fn parse_motif(id: &str, v: &Value) -> Result<Motif, EarconErr> {
         peak_dbfs: f("peak_dbfs")?,
     };
     if !matches!(m.chirp_direction.as_str(), "up" | "down") {
-        return Err(EarconErr(format!("motif {id}: chirp direction must be up/down")));
+        return Err(EarconErr(format!(
+            "motif {id}: chirp direction must be up/down"
+        )));
     }
     if !(0.1..=3.0).contains(&m.total_duration_s) {
-        return Err(EarconErr(format!("motif {id}: duration {} out of 0.1..=3.0s", m.total_duration_s)));
+        return Err(EarconErr(format!(
+            "motif {id}: duration {} out of 0.1..=3.0s",
+            m.total_duration_s
+        )));
     }
     if m.attack_ms == 0 || m.attack_ms > 100 {
-        return Err(EarconErr(format!("motif {id}: attack {} out of 1..=100ms", m.attack_ms)));
+        return Err(EarconErr(format!(
+            "motif {id}: attack {} out of 1..=100ms",
+            m.attack_ms
+        )));
     }
     if m.decay_tau_s <= 0.0 {
         return Err(EarconErr(format!("motif {id}: decay tau must be positive")));
     }
     if f64::from(m.chirp_duration_ms) / 1000.0 > m.total_duration_s {
-        return Err(EarconErr(format!("motif {id}: chirp longer than the motif")));
+        return Err(EarconErr(format!(
+            "motif {id}: chirp longer than the motif"
+        )));
     }
     if !(-24.0..=-1.0).contains(&m.peak_dbfs) {
-        return Err(EarconErr(format!("motif {id}: peak_dbfs {} out of -24..=-1", m.peak_dbfs)));
+        return Err(EarconErr(format!(
+            "motif {id}: peak_dbfs {} out of -24..=-1",
+            m.peak_dbfs
+        )));
     }
     Ok(m)
 }
@@ -398,7 +440,10 @@ mod tests {
         assert_eq!(fail.chirp_duration_ms, 380);
         assert_eq!(fail.attack_ms, 45);
         assert_eq!(set.motifs.get("attention").unwrap().total_duration_s, 1.15);
-        assert!(matches!(set.motifs.get("start").unwrap().stereo, Stereo::MonoDup));
+        assert!(matches!(
+            set.motifs.get("start").unwrap().stereo,
+            Stereo::MonoDup
+        ));
     }
 
     #[test]
@@ -440,7 +485,11 @@ mod tests {
         );
         assert!(parse_set(&bad_map).is_err());
         // Out-of-bounds duration.
-        let bad_dur = EARCON_SET_JSON.replacen("\"total_duration_s\": 1.15", "\"total_duration_s\": 30.0", 1);
+        let bad_dur = EARCON_SET_JSON.replacen(
+            "\"total_duration_s\": 1.15",
+            "\"total_duration_s\": 30.0",
+            1,
+        );
         assert!(parse_set(&bad_dur).is_err());
     }
 }

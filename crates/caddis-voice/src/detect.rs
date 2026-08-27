@@ -138,7 +138,10 @@ impl Detector {
             let segments = split_sentences(text)
                 .into_iter()
                 .zip(v.segments.iter().cloned())
-                .map(|(t, d)| Segment { text: t.to_string(), decision: d })
+                .map(|(t, d)| Segment {
+                    text: t.to_string(),
+                    decision: d,
+                })
                 .collect();
             return Utterance {
                 segments,
@@ -150,7 +153,11 @@ impl Detector {
         self.stats.misses += 1;
 
         let truncated = text.len() > self.opts.max_bytes;
-        let analyzed = if truncated { &text[..truncation_point(text, self.opts.max_bytes)] } else { text };
+        let analyzed = if truncated {
+            &text[..truncation_point(text, self.opts.max_bytes)]
+        } else {
+            text
+        };
         let started = Instant::now();
         let sentences = split_sentences(analyzed);
 
@@ -335,7 +342,9 @@ mod tests {
         let mut d = d;
         let u = d.detect("hello world. labas vakaras", Some(Lang::En));
         assert!(u.segments.iter().all(|s| {
-            s.decision.layer == Layer::CapFallback && s.decision.over_cap && s.decision.lang == Lang::En
+            s.decision.layer == Layer::CapFallback
+                && s.decision.over_cap
+                && s.decision.lang == Lang::En
         }));
     }
 
@@ -369,6 +378,9 @@ mod tests {
         });
         let u = d.detect(&text, None);
         assert!(!u.truncated);
-        assert!(u.segments.iter().all(|s| !s.decision.over_cap || s.decision.layer == Layer::CapFallback));
+        assert!(u
+            .segments
+            .iter()
+            .all(|s| !s.decision.over_cap || s.decision.layer == Layer::CapFallback));
     }
 }

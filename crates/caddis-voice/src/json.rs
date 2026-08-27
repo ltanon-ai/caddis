@@ -78,7 +78,10 @@ pub struct JsonErr {
 
 impl JsonErr {
     fn new(at: usize, msg: &str) -> Self {
-        JsonErr { at, msg: msg.to_string() }
+        JsonErr {
+            at,
+            msg: msg.to_string(),
+        }
     }
 }
 
@@ -203,8 +206,7 @@ impl<'a> Parser<'a> {
         }
         // Strict JSON: a leading zero may only stand alone ("0", "0.5"),
         // never prefix more digits ("01" is invalid).
-        let int_len = self.i - start
-            - usize::from(self.b.get(start) == Some(&b'-'));
+        let int_len = self.i - start - usize::from(self.b.get(start) == Some(&b'-'));
         if int_len == 0 {
             return Err(JsonErr::new(start, "number has no digits"));
         }
@@ -410,7 +412,10 @@ mod tests {
         assert_eq!(hit.get("docid").unwrap().as_str(), Some("#551652"));
         assert_eq!(hit.get("score").unwrap().as_f64(), Some(0.95));
         assert_eq!(hit.get("line").unwrap().as_f64(), Some(2.0));
-        assert_eq!(hit.get("snippet").unwrap().as_str().unwrap(), "@@ -1,4 @@\n---");
+        assert_eq!(
+            hit.get("snippet").unwrap().as_str().unwrap(),
+            "@@ -1,4 @@\n---"
+        );
     }
 
     #[test]

@@ -188,14 +188,23 @@ fn parse_generator(v: &Value) -> Result<GeneratorSpec, RegistryErr> {
     let lane = match v.get("lane").and_then(Value::as_str) {
         Some("offline") => Lane::Offline,
         Some("network") => Lane::Network,
-        other => return err(format!("generator '{id}': bad lane {other:?} (offline|network)")),
+        other => {
+            return err(format!(
+                "generator '{id}': bad lane {other:?} (offline|network)"
+            ))
+        }
     };
     let startup_cap_ms = num(v, "startup_cap_ms", &id)?;
     let render_cap_ms = num(v, "render_cap_ms", &id)?;
     let endpoints = v
         .get("declared_endpoints")
         .and_then(Value::as_arr)
-        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default();
     Ok(GeneratorSpec {
         id,
@@ -230,7 +239,11 @@ fn parse_voice(v: &Value) -> Result<VoiceSpec, RegistryErr> {
         .ok_or_else(|| RegistryErr(format!("voice '{id}': missing 'lang'")))?
         .parse::<Lang>()
         .map_err(|_| RegistryErr(format!("voice '{id}': bad 'lang'")))?;
-    Ok(VoiceSpec { id, generator, lang })
+    Ok(VoiceSpec {
+        id,
+        generator,
+        lang,
+    })
 }
 
 /// GA1 endpoint shape: https/wss, host present, no embedded credentials,
@@ -261,7 +274,9 @@ fn validate_endpoint(gen: &str, ep: &str) -> Result<(), RegistryErr> {
         .next()
         .unwrap_or("");
     if host.is_empty() || host.contains(char::is_whitespace) {
-        return err(format!("generator '{gen}': endpoint '{ep}' has no clean host"));
+        return err(format!(
+            "generator '{gen}': endpoint '{ep}' has no clean host"
+        ));
     }
     Ok(())
 }
@@ -295,8 +310,14 @@ mod tests {
         let mut r = Registry::default();
         r.admit(piper()).unwrap();
         r.admit(leonas()).unwrap();
-        r.admit(GeneratorSpec { id: "ona".into(), lane: Lane::Network, startup_cap_ms: 100, render_cap_ms: 1500, declared_endpoints: vec!["wss://speech.platform.bing.com".into()] })
-            .unwrap();
+        r.admit(GeneratorSpec {
+            id: "ona".into(),
+            lane: Lane::Network,
+            startup_cap_ms: 100,
+            render_cap_ms: 1500,
+            declared_endpoints: vec!["wss://speech.platform.bing.com".into()],
+        })
+        .unwrap();
         assert_eq!(r.generators.len(), 3);
     }
 
@@ -304,7 +325,13 @@ mod tests {
     fn unknown_generator_is_rejected_fail_closed() {
         let mut r = Registry::default();
         let e = r
-            .admit(GeneratorSpec { id: "elevenlabs".into(), lane: Lane::Network, startup_cap_ms: 50, render_cap_ms: 500, declared_endpoints: vec!["https://api.example.com".into()] })
+            .admit(GeneratorSpec {
+                id: "elevenlabs".into(),
+                lane: Lane::Network,
+                startup_cap_ms: 50,
+                render_cap_ms: 500,
+                declared_endpoints: vec!["https://api.example.com".into()],
+            })
             .unwrap_err();
         assert!(e.0.contains("R-E"), "{e}");
     }
@@ -342,7 +369,11 @@ mod tests {
     #[test]
     fn bad_endpoint_shapes_reject() {
         let mut r = Registry::default();
-        for bad in ["http://plain.example", "wss://h.example/u?p=1 with space", "https://user:pw@h.example"] {
+        for bad in [
+            "http://plain.example",
+            "wss://h.example/u?p=1 with space",
+            "https://user:pw@h.example",
+        ] {
             let mut g = leonas();
             g.declared_endpoints = vec![bad.into()];
             assert!(r.admit(g.clone()).is_err(), "accepted {bad}");
@@ -365,17 +396,35 @@ mod tests {
         let mut r = Registry::default();
         r.admit(leonas()).unwrap();
         r.admit(piper()).unwrap();
-        r.attach(VoiceSpec { id: "lt-LT-LeonasNeural".into(), generator: "leonas".into(), lang: Lang::Lt })
-            .unwrap();
+        r.attach(VoiceSpec {
+            id: "lt-LT-LeonasNeural".into(),
+            generator: "leonas".into(),
+            lang: Lang::Lt,
+        })
+        .unwrap();
         assert!(r
-            .attach(VoiceSpec { id: "lt-LT-OnaNeural".into(), generator: "ona".into(), lang: Lang::Lt })
+            .attach(VoiceSpec {
+                id: "lt-LT-OnaNeural".into(),
+                generator: "ona".into(),
+                lang: Lang::Lt
+            })
             .is_err()); // 'ona' generator not admitted yet — attach must fail closed
-        r.attach(VoiceSpec { id: "en_US-ryan".into(), generator: "piper".into(), lang: Lang::En })
-            .unwrap();
+        r.attach(VoiceSpec {
+            id: "en_US-ryan".into(),
+            generator: "piper".into(),
+            lang: Lang::En,
+        })
+        .unwrap();
         assert_eq!(r.voices_for(Lang::Lt), vec!["lt-LT-LeonasNeural"]);
         assert_eq!(r.voices_for(Lang::En), vec!["en_US-ryan"]);
         // Voice referencing unknown generator is rejected.
-        assert!(r.attach(VoiceSpec { id: "xx".into(), generator: "nope".into(), lang: Lang::En }).is_err());
+        assert!(r
+            .attach(VoiceSpec {
+                id: "xx".into(),
+                generator: "nope".into(),
+                lang: Lang::En
+            })
+            .is_err());
     }
 
     #[test]
@@ -402,8 +451,14 @@ mod tests {
     #[test]
     fn parse_failures_carry_context() {
         let v = crate::json::parse(r#"{"generators": []}"#).unwrap();
-        assert!(Registry::from_value(&v).unwrap_err().0.contains("no generators"));
+        assert!(Registry::from_value(&v)
+            .unwrap_err()
+            .0
+            .contains("no generators"));
         let v = crate::json::parse(r#"{"voices": []}"#).unwrap();
-        assert!(Registry::from_value(&v).unwrap_err().0.contains("generators"));
+        assert!(Registry::from_value(&v)
+            .unwrap_err()
+            .0
+            .contains("generators"));
     }
 }

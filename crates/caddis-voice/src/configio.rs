@@ -23,7 +23,7 @@
 //!   rejected without spending a verdict.
 //! - The file lands atomically: temp file + rename, never a partial write.
 
-use crate::config::{parse_config, OrganConfig, ConfigErr};
+use crate::config::{parse_config, ConfigErr, OrganConfig};
 use std::path::{Path, PathBuf};
 
 /// The tool/command names the warden sees for a voice-organ config write.
@@ -80,7 +80,13 @@ pub fn parse_verdict(reply: &str) -> Result<WardenVerdict, String> {
         .and_then(crate::json::Value::as_f64)
         .ok_or_else(|| "warden reply missing 'seq'".to_string())? as u64;
     let allow = verdict == "allow";
-    Ok(WardenVerdict { verdict, allow, reason, law, seq })
+    Ok(WardenVerdict {
+        verdict,
+        allow,
+        reason,
+        law,
+        seq,
+    })
 }
 
 /// What one judged write attempt provably did.
@@ -89,7 +95,11 @@ pub enum SaveOutcome {
     /// The warden allowed it and the ledger recorded it (`seq > 0`).
     Allowed { seq: u64 },
     /// The warden said no. Nothing was written.
-    Denied { verdict: String, reason: String, law: String },
+    Denied {
+        verdict: String,
+        reason: String,
+        law: String,
+    },
     /// Allowed but unrecorded (seq 0) — refused, no audit anchor exists.
     Unrecorded,
     /// The warden ran but its answer is unreadable — BLOCK, never a silent
@@ -137,7 +147,10 @@ impl Warden for RealWarden {
         // Write the frame; a child that exits early gets a broken pipe —
         // that is a verdict-less run, i.e. Err, i.e. BLOCK.
         {
-            let mut stdin = child.stdin.take().ok_or_else(|| "no warden stdin".to_string())?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| "no warden stdin".to_string())?;
             stdin
                 .write_all(frame.as_bytes())
                 .map_err(|e| format!("warden stdin write failed: {e}"))?;
@@ -152,7 +165,10 @@ impl Warden for RealWarden {
                     }
                     let mut out = String::new();
                     use std::io::Read;
-                    let mut pipe = child.stdout.take().ok_or_else(|| "no warden stdout".to_string())?;
+                    let mut pipe = child
+                        .stdout
+                        .take()
+                        .ok_or_else(|| "no warden stdout".to_string())?;
                     pipe.read_to_string(&mut out)
                         .map_err(|e| format!("warden stdout read failed: {e}"))?;
                     return Ok(out);
@@ -195,23 +211,21 @@ pub fn load_config(path: &Path) -> Result<(OrganConfig, ConfigSource), ConfigErr
 /// Validate, gate, and atomically write a config document. The `path` in the
 /// warden frame is the ABSOLUTE path (canonicalized when possible) — the
 /// gate must judge the real target, not a relative spelling of it.
-pub fn save_config_document(
-    path: &Path,
-    text: &str,
-    warden: &mut dyn Warden,
-) -> SaveOutcome {
+pub fn save_config_document(path: &Path, text: &str, warden: &mut dyn Warden) -> SaveOutcome {
     // 1. Validate first: the warden judges a REAL config document.
     if let Err(e) = parse_config(text) {
         return SaveOutcome::Invalid(e);
     }
     // 2. Absolute path for the frame.
-    let abs = std::fs::canonicalize(path)
-        .unwrap_or_else(|_| {
-            // Not-yet-existing file: canonicalize the parent, join the name.
-            let parent = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-            let canon_parent = std::fs::canonicalize(&parent).unwrap_or(parent);
-            canon_parent.join(path.file_name().unwrap_or_default())
-        });
+    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| {
+        // Not-yet-existing file: canonicalize the parent, join the name.
+        let parent = path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let canon_parent = std::fs::canonicalize(&parent).unwrap_or(parent);
+        canon_parent.join(path.file_name().unwrap_or_default())
+    });
     let frame = encode_frame(&abs.display().to_string(), text);
     // 3. Judge. Unreadable = BLOCK.
     let reply = match warden.judge(&frame) {
@@ -235,7 +249,10 @@ pub fn save_config_document(
     }
     // 5. Atomic write: temp in the same directory, rename over.
     let dir = abs.parent().map(Path::to_path_buf).unwrap_or_default();
-    let name = abs.file_name().and_then(|n| n.to_str()).unwrap_or("organ.json");
+    let name = abs
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("organ.json");
     // fs::write truncates/overwrites, so a stale temp from a crashed run is
     // harmless; the pid suffix keeps concurrent organ instances apart.
     let tmp = dir.join(format!(".{name}.tmp-{}", std::process::id()));
@@ -260,13 +277,18 @@ mod tests {
     }
     impl FakeWarden {
         fn new(replies: Vec<Result<String, String>>) -> Self {
-            FakeWarden { replies, calls: Vec::new() }
+            FakeWarden {
+                replies,
+                calls: Vec::new(),
+            }
         }
     }
     impl Warden for FakeWarden {
         fn judge(&mut self, frame: &str) -> Result<String, String> {
             self.calls.push(frame.to_string());
-            self.replies.pop().unwrap_or_else(|| Err("no scripted reply".into()))
+            self.replies
+                .pop()
+                .unwrap_or_else(|| Err("no scripted reply".into()))
         }
     }
 
@@ -299,7 +321,8 @@ mod tests {
         let v = parse_verdict(&allow_reply(7)).unwrap();
         assert!(v.allow);
         assert_eq!(v.seq, 7);
-        let deny = parse_verdict(r#"{"verdict":"deny","reason":"card closed","law":"L1","seq":3}"#).unwrap();
+        let deny = parse_verdict(r#"{"verdict":"deny","reason":"card closed","law":"L1","seq":3}"#)
+            .unwrap();
         assert!(!deny.allow);
         assert_eq!(deny.verdict, "deny");
         assert!(parse_verdict("not json").is_err());
@@ -348,7 +371,10 @@ mod tests {
         assert_eq!(w.calls.len(), 1);
         // The judged frame names the absolute path and the byte-exact body.
         let frame = &w.calls[0];
-        assert!(frame.contains(&p.canonicalize().unwrap().display().to_string()) || frame.contains("organ.json"));
+        assert!(
+            frame.contains(&p.canonicalize().unwrap().display().to_string())
+                || frame.contains("organ.json")
+        );
         // Round trip: what lands parses back identical.
         let (cfg, src) = load_config(&p).unwrap();
         assert_eq!(src, ConfigSource::File);
@@ -362,11 +388,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("organ.json");
         let _ = std::fs::remove_file(&p);
-        let mut w = FakeWarden::new(vec![Ok(r#"{"verdict":"deny","reason":"outside card","law":"L9","seq":5}"#.into())]);
+        let mut w = FakeWarden::new(vec![Ok(
+            r#"{"verdict":"deny","reason":"outside card","law":"L9","seq":5}"#.into(),
+        )]);
         let out = save_config_document(&p, crate::config::DEFAULT_CONFIG_JSON, &mut w);
         assert_eq!(
             out,
-            SaveOutcome::Denied { verdict: "deny".into(), reason: "outside card".into(), law: "L9".into() }
+            SaveOutcome::Denied {
+                verdict: "deny".into(),
+                reason: "outside card".into(),
+                law: "L9".into()
+            }
         );
         assert!(!p.exists(), "a denied write must not create the file");
     }
@@ -379,7 +411,10 @@ mod tests {
         // Unreadable (spawn failure shaped): BLOCK.
         let mut w = FakeWarden::new(vec![Err("warden deadline exceeded".into())]);
         let out = save_config_document(&p, crate::config::DEFAULT_CONFIG_JSON, &mut w);
-        assert_eq!(out, SaveOutcome::WardenUnreadable("warden deadline exceeded".into()));
+        assert_eq!(
+            out,
+            SaveOutcome::WardenUnreadable("warden deadline exceeded".into())
+        );
         assert!(!p.exists());
         // Garbage reply: BLOCK.
         let mut w = FakeWarden::new(vec![Ok("(((not json".into())]);
@@ -389,7 +424,10 @@ mod tests {
         ));
         // allow + seq 0: unrecorded — refused.
         let mut w = FakeWarden::new(vec![Ok(allow_reply(0))]);
-        assert_eq!(save_config_document(&p, crate::config::DEFAULT_CONFIG_JSON, &mut w), SaveOutcome::Unrecorded);
+        assert_eq!(
+            save_config_document(&p, crate::config::DEFAULT_CONFIG_JSON, &mut w),
+            SaveOutcome::Unrecorded
+        );
         assert!(!p.exists());
     }
 
@@ -401,7 +439,10 @@ mod tests {
         let mut w = FakeWarden::new(vec![Ok(allow_reply(1))]);
         let out = save_config_document(&p, "{ not a config }", &mut w);
         assert!(matches!(out, SaveOutcome::Invalid(_)));
-        assert!(w.calls.is_empty(), "invalid documents must not spend a verdict");
+        assert!(
+            w.calls.is_empty(),
+            "invalid documents must not spend a verdict"
+        );
         assert!(!p.exists());
     }
 }

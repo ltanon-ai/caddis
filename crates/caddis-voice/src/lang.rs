@@ -18,7 +18,6 @@ impl Lang {
             Lang::En => "en",
         }
     }
-
 }
 
 impl std::str::FromStr for Lang {
@@ -51,12 +50,18 @@ mod tests {
     #[test]
     fn splits_on_hard_boundaries_only() {
         let segs = split_sentences("Sveiki, pone. Kaip sekasi? Gerai! Viskas tvarkoje.");
-        assert_eq!(segs, vec!["Sveiki, pone", "Kaip sekasi", "Gerai", "Viskas tvarkoje"]);
+        assert_eq!(
+            segs,
+            vec!["Sveiki, pone", "Kaip sekasi", "Gerai", "Viskas tvarkoje"]
+        );
     }
 
     #[test]
     fn comma_does_not_split() {
-        assert_eq!(split_sentences("hello, world, and goodbye"), vec!["hello, world, and goodbye"]);
+        assert_eq!(
+            split_sentences("hello, world, and goodbye"),
+            vec!["hello, world, and goodbye"]
+        );
     }
 
     #[test]

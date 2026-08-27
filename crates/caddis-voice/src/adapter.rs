@@ -117,11 +117,16 @@ fn parse_url(url: &str) -> Result<(String, String, u16), AdapterErr> {
     }
     let (host, port) = match authority.rsplit_once(':') {
         Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
-            let port = p.parse::<u16>().map_err(|_| AdapterErr("GA1: bad port".into()))?;
+            let port = p
+                .parse::<u16>()
+                .map_err(|_| AdapterErr("GA1: bad port".into()))?;
             (h, port)
         }
         Some(_) => return err("GA1: malformed authority"),
-        None => (authority, default_port(scheme).ok_or_else(|| AdapterErr("GA1: no port".into()))?),
+        None => (
+            authority,
+            default_port(scheme).ok_or_else(|| AdapterErr("GA1: no port".into()))?,
+        ),
     };
     if host.is_empty() {
         return err("GA1: empty host");
@@ -224,7 +229,7 @@ fn secret_prefixes() -> [&'static str; 6] {
         std::str::from_utf8(&[103, 104, 112, 95]).unwrap(),                          // ghp_
         std::str::from_utf8(&[103, 104, 111, 95]).unwrap(),                          // gho_
         std::str::from_utf8(&[120, 111, 120, 98, 45]).unwrap(),                      // xoxb-
-        std::str::from_utf8(&[97, 107, 105, 97]).unwrap(),                           // akia (lowered)
+        std::str::from_utf8(&[97, 107, 105, 97]).unwrap(), // akia (lowered)
     ]
 }
 
@@ -297,7 +302,11 @@ pub struct BreakerConfig {
 
 impl Default for BreakerConfig {
     fn default() -> Self {
-        BreakerConfig { capacity: 12, refill_per_min: 12, cooldown_ms: 30_000 }
+        BreakerConfig {
+            capacity: 12,
+            refill_per_min: 12,
+            cooldown_ms: 30_000,
+        }
     }
 }
 
@@ -335,7 +344,10 @@ pub struct Breaker {
 
 impl Breaker {
     pub fn new(cfg: BreakerConfig) -> Self {
-        Breaker { cfg, buckets: BTreeMap::new() }
+        Breaker {
+            cfg,
+            buckets: BTreeMap::new(),
+        }
     }
 
     /// GA3 acquire. `now_ms` is the caller's monotonic clock; determinism
@@ -366,7 +378,10 @@ impl Breaker {
         }
         if b.tokens >= 1.0 {
             b.tokens -= 1.0;
-            Ok(Acquired { generator: generator.to_string(), tokens_left: b.tokens })
+            Ok(Acquired {
+                generator: generator.to_string(),
+                tokens_left: b.tokens,
+            })
         } else {
             let until = now_ms + cfg.cooldown_ms;
             b.blocked_until_ms = Some(until);
@@ -396,7 +411,10 @@ mod tests {
     /// Secret-shaped fixtures built at runtime (warden law: no key-shaped
     /// literal in source, ever — even detector tests).
     fn secret_fixtures() -> Vec<String> {
-        let sk: String = std::iter::once('s').chain(std::iter::once('k')).chain(std::iter::once('-')).collect();
+        let sk: String = std::iter::once('s')
+            .chain(std::iter::once('k'))
+            .chain(std::iter::once('-'))
+            .collect();
         let ghp: String = ['g', 'h', 'p', '_'].iter().collect();
         let body = "ABCDEF1234567890abcdef";
         vec![
@@ -419,7 +437,11 @@ mod tests {
         let plan = authorize_dial(&gen, "wss://speech.platform.bing.com/consumer/x?y=1").unwrap();
         assert_eq!(
             plan,
-            DialPlan { scheme: "wss".into(), host: "speech.platform.bing.com".into(), port: 443 }
+            DialPlan {
+                scheme: "wss".into(),
+                host: "speech.platform.bing.com".into(),
+                port: 443
+            }
         );
         assert!(authorize_dial(&gen, "wss://evil.example.com/x").is_err());
         assert!(authorize_dial(&gen, "wss://speech.platform.bing.com:8443/x").is_err());

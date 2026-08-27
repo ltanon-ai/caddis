@@ -65,12 +65,16 @@ impl DeadManSwitch {
         // No forget/cleanup of `job`: it is a raw handle, not RAII — going
         // out of scope keeps the kernel handle open forever, which IS the
         // dead-man contract (closed only by process death).
-        Ok(DeadManSwitch { installed_utc_ms: unix_ms() })
+        Ok(DeadManSwitch {
+            installed_utc_ms: unix_ms(),
+        })
     }
 
     #[cfg(not(windows))]
     pub fn install() -> Result<Self, JobErr> {
-        Err(JobErr("Job Objects are Windows-only; refusing to fake the dead-man switch".into()))
+        Err(JobErr(
+            "Job Objects are Windows-only; refusing to fake the dead-man switch".into(),
+        ))
     }
 }
 
@@ -104,7 +108,9 @@ impl ChildScope {
         // needs; null result is the caller's verdict to make.
         let proc = unsafe { platform::open_process_for_assignment(pid) };
         if proc.is_null() {
-            return Err(JobErr(format!("OpenProcess({pid}) refused — gone or protected")));
+            return Err(JobErr(format!(
+                "OpenProcess({pid}) refused — gone or protected"
+            )));
         }
         // SAFETY: valid job + process handle pair.
         let ok = unsafe { platform::assign_to_job(self.job, proc) };

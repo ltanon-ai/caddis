@@ -164,11 +164,9 @@ pub fn path_under_allowed_root(candidate: &Path, roots: &[PathBuf]) -> bool {
     let Ok(resolved) = candidate.canonicalize() else {
         return false;
     };
-    roots.iter().any(|root| {
-        match root.canonicalize() {
-            Ok(r) => resolved.starts_with(&r),
-            Err(_) => false,
-        }
+    roots.iter().any(|root| match root.canonicalize() {
+        Ok(r) => resolved.starts_with(&r),
+        Err(_) => false,
     })
 }
 
@@ -203,7 +201,10 @@ mod tests {
     #[test]
     fn body_policy_refuses_chunked_zero_and_oversize() {
         assert_eq!(
-            body_policy(&hdrs(&[("Transfer-Encoding", "chunked"), ("Content-Length", "5")])),
+            body_policy(&hdrs(&[
+                ("Transfer-Encoding", "chunked"),
+                ("Content-Length", "5")
+            ])),
             GuardVerdict::LengthRequired
         );
         assert_eq!(
@@ -211,7 +212,10 @@ mod tests {
             GuardVerdict::LengthRequired
         );
         assert_eq!(
-            body_policy(&hdrs(&[("Content-Length", (MAX_UPLOAD_BYTES + 1).to_string().as_str())])),
+            body_policy(&hdrs(&[(
+                "Content-Length",
+                (MAX_UPLOAD_BYTES + 1).to_string().as_str()
+            )])),
             GuardVerdict::TooLarge
         );
         assert_eq!(
@@ -260,15 +264,24 @@ mod tests {
         let outside_file = outside.join("b.wav");
         fs::write(&outside_file, b"x").unwrap();
 
-        assert!(path_under_allowed_root(&inside_file, std::slice::from_ref(&root)));
+        assert!(path_under_allowed_root(
+            &inside_file,
+            std::slice::from_ref(&root)
+        ));
         fs::create_dir_all(root.join("sub")).unwrap();
         fs::write(root.join("sub").join("c.wav"), b"x").unwrap();
         assert!(path_under_allowed_root(
             &root.join("sub").join("c.wav"),
             std::slice::from_ref(&root)
         ));
-        assert!(!path_under_allowed_root(&outside_file, std::slice::from_ref(&root)));
-        assert!(!path_under_allowed_root(&PathBuf::from("does-not-exist.wav"), std::slice::from_ref(&root)));
+        assert!(!path_under_allowed_root(
+            &outside_file,
+            std::slice::from_ref(&root)
+        ));
+        assert!(!path_under_allowed_root(
+            &PathBuf::from("does-not-exist.wav"),
+            std::slice::from_ref(&root)
+        ));
         fs::remove_dir_all(&dir).ok();
     }
 }

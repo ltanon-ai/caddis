@@ -58,8 +58,14 @@ impl VramReport {
                 ("name".into(), Value::Str(a.name.clone())),
                 ("vendor_id".into(), Value::Num(a.vendor_id as f64)),
                 ("device_id".into(), Value::Num(a.device_id as f64)),
-                ("dedicated_video_bytes".into(), Value::Num(a.dedicated_video_bytes as f64)),
-                ("dedicated_system_bytes".into(), Value::Num(a.dedicated_system_bytes as f64)),
+                (
+                    "dedicated_video_bytes".into(),
+                    Value::Num(a.dedicated_video_bytes as f64),
+                ),
+                (
+                    "dedicated_system_bytes".into(),
+                    Value::Num(a.dedicated_system_bytes as f64),
+                ),
                 ("shared_bytes".into(), Value::Num(a.shared_bytes as f64)),
             ]));
         }
@@ -70,7 +76,10 @@ impl VramReport {
                 self.reason.clone().map(Value::Str).unwrap_or(Value::Null),
             ),
             ("adapters".into(), Value::Arr(adapters)),
-            ("total_dedicated_video_bytes".into(), Value::Num(self.total_dedicated_video_bytes() as f64)),
+            (
+                "total_dedicated_video_bytes".into(),
+                Value::Num(self.total_dedicated_video_bytes() as f64),
+            ),
         ])
     }
 }
@@ -78,8 +87,16 @@ impl VramReport {
 /// Probe adapter memory now. Never panics; never blocks.
 pub fn probe() -> VramReport {
     match crate::platform::vram_probe() {
-        Ok(a) => VramReport { source: "dxgi", reason: None, adapters: a },
-        Err(reason) => VramReport { source: "unavailable", reason: Some(reason), adapters: Vec::new() },
+        Ok(a) => VramReport {
+            source: "dxgi",
+            reason: None,
+            adapters: a,
+        },
+        Err(reason) => VramReport {
+            source: "unavailable",
+            reason: Some(reason),
+            adapters: Vec::new(),
+        },
     }
 }
 
@@ -93,7 +110,10 @@ mod tests {
         // On the organ host (Windows + real GPU) DXGI must enumerate; on a
         // machine where it cannot, the report says so instead of inventing.
         if r.source == "dxgi" {
-            assert!(!r.adapters.is_empty(), "dxgi source with zero adapters is a parse bug");
+            assert!(
+                !r.adapters.is_empty(),
+                "dxgi source with zero adapters is a parse bug"
+            );
             assert!(r.total_dedicated_video_bytes() > 0);
             assert!(r.adapters.iter().all(|a| !a.name.is_empty()));
         } else {
@@ -124,7 +144,10 @@ mod tests {
             }],
         };
         let v = measured.to_value();
-        assert_eq!(v.get("adapters").and_then(Value::as_arr).map(|a| a.len()), Some(1));
+        assert_eq!(
+            v.get("adapters").and_then(Value::as_arr).map(|a| a.len()),
+            Some(1)
+        );
         assert!(crate::json::to_string(&v).contains(r#""name":"Test GPU""#));
     }
 }

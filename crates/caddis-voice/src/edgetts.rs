@@ -27,8 +27,11 @@ use std::time::Instant;
 /// OUR credentials, and nothing of ours rides this lane).
 pub const TRUSTED_CLIENT_TOKEN: &str = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
-/// Client version reported with the DRM token (reference-client shape).
-pub const SEC_MS_GEC_VERSION: &str = "1-130.0.2849.68";
+/// Client version reported with the DRM token. MUST track the reference
+/// client's current Chromium build — the edge rejects stale versions with
+/// a plain 403 (caught live 2026-08-27: the old 130-era string was the
+/// whole refusal).
+pub const SEC_MS_GEC_VERSION: &str = "1-143.0.3650.75";
 
 /// The single host the LT lanes declare (must match the registry's
 /// `declared_endpoints` — GA1 authorizes only the declared host).
@@ -155,7 +158,11 @@ pub struct Prosody {
 
 impl Default for Prosody {
     fn default() -> Self {
-        Prosody { pitch: "+0Hz".into(), rate: "+0%".into(), volume: "+0%".into() }
+        Prosody {
+            pitch: "+0Hz".into(),
+            rate: "+0%".into(),
+            volume: "+0%".into(),
+        }
     }
 }
 
@@ -210,12 +217,15 @@ pub fn parse_audio_frame(bytes: &[u8]) -> Result<Option<&[u8]>, AdapterErr> {
         return err("edge frame: shorter than the 2-byte header length");
     }
     let hlen = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
-    let end = 2usize.checked_add(hlen).ok_or_else(|| AdapterErr("edge frame: length overflow".into()))?;
+    let end = 2usize
+        .checked_add(hlen)
+        .ok_or_else(|| AdapterErr("edge frame: length overflow".into()))?;
     if bytes.len() < end {
         return err("edge frame: truncated header");
     }
     let header = &bytes[2..end];
-    let header = std::str::from_utf8(header).map_err(|_| AdapterErr("edge frame: non-UTF8 header".into()))?;
+    let header = std::str::from_utf8(header)
+        .map_err(|_| AdapterErr("edge frame: non-UTF8 header".into()))?;
     // Full-line match: "Path:audio" is a PREFIX of "Path:audio.metadata"
     // — only the CRLF-terminated form is an audio frame.
     if header.contains("Path:audio\r\n") {
@@ -270,17 +280,27 @@ pub fn synthesize(
     let s = sanitize_text(text)?;
     let rid = hex_id32(&opts.request_seed);
     let budget = opts.deadline_ms.max(1);
-    stream.set_read_timeout_ms(u32::try_from(budget).unwrap_or(u32::MAX)).map_err(AdapterErr)?;
+    stream
+        .set_read_timeout_ms(u32::try_from(budget).unwrap_or(u32::MAX))
+        .map_err(AdapterErr)?;
     stream
         .send_text(&speech_config_msg(&iso_ts(started.elapsed().as_millis())))
         .map_err(AdapterErr)?;
     stream
-        .send_text(&ssml_msg(&rid, &iso_ts(started.elapsed().as_millis()), voice, &s.text, &opts.prosody))
+        .send_text(&ssml_msg(
+            &rid,
+            &iso_ts(started.elapsed().as_millis()),
+            voice,
+            &s.text,
+            &opts.prosody,
+        ))
         .map_err(AdapterErr)?;
 
     let mut audio: Vec<u8> = Vec::new();
     loop {
-        let frame = stream.recv_frame().map_err(|e| AdapterErr(format!("edge-tts: transport: {e}")))?;
+        let frame = stream
+            .recv_frame()
+            .map_err(|e| AdapterErr(format!("edge-tts: transport: {e}")))?;
         // R-D: the budget bounds the WHOLE exchange — a frame arriving
         // past the deadline (turn.end included) fails the attempt, never
         // completes it.
@@ -347,7 +367,11 @@ mod tests {
         let ms: u128 = 1_769_608_529_000;
         let t = sec_ms_gec(ms);
         assert_eq!(t.len(), 64);
-        assert!(t.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()), "must be uppercase hex: {t}");
+        assert!(
+            t.chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+            "must be uppercase hex: {t}"
+        );
         // Same token while still inside the window (+270s → 299s < 300)…
         assert_eq!(t, sec_ms_gec(ms + 270_000));
         // …and a different one past the boundary (+280s → 309s ≥ 300).
@@ -357,13 +381,18 @@ mod tests {
         let rounded = secs - secs.rem_euclid(300);
         assert_eq!(rounded % 300, 0);
         let ticks = (rounded + WIN_EPOCH_OFFSET_S) * 10_000_000;
-        assert_eq!(t, sha256_hex_upper(format!("{ticks}{TRUSTED_CLIENT_TOKEN}").as_bytes()));
+        assert_eq!(
+            t,
+            sha256_hex_upper(format!("{ticks}{TRUSTED_CLIENT_TOKEN}").as_bytes())
+        );
     }
 
     #[test]
     fn dial_url_passes_ga1_and_carries_params() {
         let url = dial_url(&gen(), "ABCD", "c1").unwrap();
-        assert!(url.starts_with("wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?"));
+        assert!(url.starts_with(
+            "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?"
+        ));
         assert!(url.contains("TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4"));
         assert!(url.contains("Sec-MS-GEC=ABCD"));
         assert!(url.contains(&format!("Sec-MS-GEC-Version={SEC_MS_GEC_VERSION}")));
@@ -393,7 +422,13 @@ mod tests {
         assert!(cfg.starts_with("X-Timestamp:2026-08-27T18:35:29.000Z\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n"));
         assert!(cfg.contains(&format!("\"outputFormat\":\"{OUTPUT_FORMAT}\"")));
         assert!(cfg.contains("\"wordBoundaryEnabled\":\"true\""));
-        let m = ssml_msg("rid123", "TS", "lt-LT-LeonasNeural", "Sveiki & labas", &Prosody::default());
+        let m = ssml_msg(
+            "rid123",
+            "TS",
+            "lt-LT-LeonasNeural",
+            "Sveiki & labas",
+            &Prosody::default(),
+        );
         assert!(m.starts_with("X-RequestId:rid123\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:TS\r\nPath:ssml\r\n\r\n"));
         assert!(m.contains("<voice name='lt-LT-LeonasNeural'>"));
         assert!(m.contains("pitch='+0Hz' rate='+0%' volume='+0%'"));
@@ -402,7 +437,10 @@ mod tests {
 
     #[test]
     fn ssml_escapes_all_structure() {
-        assert_eq!(escape_ssml("a<b>c&d\"e'f"), "a&lt;b&gt;c&amp;d&quot;e&apos;f");
+        assert_eq!(
+            escape_ssml("a<b>c&d\"e'f"),
+            "a&lt;b&gt;c&amp;d&quot;e&apos;f"
+        );
     }
 
     fn audio_frame(audio: &[u8]) -> WsFrame {
@@ -529,18 +567,28 @@ mod tests {
             &gen(),
             "lt-LT-LeonasNeural",
             "<speak>injected</speak>",
-            &SessionOpts { request_seed: "s".into(), deadline_ms: 2_500, cap_ms: 1_500, prosody: Prosody::default() },
+            &SessionOpts {
+                request_seed: "s".into(),
+                deadline_ms: 2_500,
+                cap_ms: 1_500,
+                prosody: Prosody::default(),
+            },
         )
         .unwrap_err();
         assert!(e.0.contains("markup"), "unexpected err: {e}");
-        assert!(ws.sent.is_empty(), "no bytes may leave before text passes the guards");
+        assert!(
+            ws.sent.is_empty(),
+            "no bytes may leave before text passes the guards"
+        );
     }
 
     #[test]
     fn turn_end_without_audio_fails_ga2() {
         let mut ws = MockWs {
             sent: vec![],
-            frames: [WsFrame::Text("Path:turn.end\r\n\r\n{}".into())].into_iter().collect(),
+            frames: [WsFrame::Text("Path:turn.end\r\n\r\n{}".into())]
+                .into_iter()
+                .collect(),
             timeouts: vec![],
             stall_ms: 0,
         };
@@ -549,7 +597,12 @@ mod tests {
             &gen(),
             "v",
             "tekstas",
-            &SessionOpts { request_seed: "s".into(), deadline_ms: 2_500, cap_ms: 1_500, prosody: Prosody::default() },
+            &SessionOpts {
+                request_seed: "s".into(),
+                deadline_ms: 2_500,
+                cap_ms: 1_500,
+                prosody: Prosody::default(),
+            },
         )
         .unwrap_err();
         assert!(e.0.contains("GA2"), "unexpected err: {e}");
@@ -575,10 +628,18 @@ mod tests {
             &gen(),
             "v",
             "tekstas",
-            &SessionOpts { request_seed: "s".into(), deadline_ms: 2_500, cap_ms: 1_500, prosody: Prosody::default() },
+            &SessionOpts {
+                request_seed: "s".into(),
+                deadline_ms: 2_500,
+                cap_ms: 1_500,
+                prosody: Prosody::default(),
+            },
         )
         .unwrap_err();
-        assert!(e.0.contains("markup") || e.0.contains("GA2"), "unexpected err: {e}");
+        assert!(
+            e.0.contains("markup") || e.0.contains("GA2"),
+            "unexpected err: {e}"
+        );
     }
 
     #[test]
@@ -588,9 +649,12 @@ mod tests {
         // check must trip before the exchange completes (drill 6 shape).
         let mut ws = MockWs {
             sent: vec![],
-            frames: [audio_frame(&mp3()), WsFrame::Text("Path:turn.end\r\n\r\n{}".into())]
-                .into_iter()
-                .collect(),
+            frames: [
+                audio_frame(&mp3()),
+                WsFrame::Text("Path:turn.end\r\n\r\n{}".into()),
+            ]
+            .into_iter()
+            .collect(),
             timeouts: vec![],
             stall_ms: 30,
         };
@@ -599,7 +663,12 @@ mod tests {
             &gen(),
             "v",
             "tekstas",
-            &SessionOpts { request_seed: "s".into(), deadline_ms: 35, cap_ms: 1_500, prosody: Prosody::default() },
+            &SessionOpts {
+                request_seed: "s".into(),
+                deadline_ms: 35,
+                cap_ms: 1_500,
+                prosody: Prosody::default(),
+            },
         )
         .unwrap_err();
         assert!(e.0.contains("R-D deadline"), "unexpected err: {e}");

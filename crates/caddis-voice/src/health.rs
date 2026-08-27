@@ -69,7 +69,10 @@ impl HealthState {
                 "ports_held".into(),
                 Value::Arr(self.ports.iter().map(|p| Value::Num(*p as f64)).collect()),
             ),
-            ("spawned_children".into(), Value::Num(self.spawned_children.load(Ordering::Relaxed) as f64)),
+            (
+                "spawned_children".into(),
+                Value::Num(self.spawned_children.load(Ordering::Relaxed) as f64),
+            ),
             ("vram".into(), self.vram.to_value()),
         ]);
         json::to_string(&v)
@@ -98,23 +101,50 @@ fn reason(status: u16) -> &'static str {
 pub fn route(head: &[u8], state: &HealthState) -> Response {
     let text = match std::str::from_utf8(head) {
         Ok(t) => t,
-        Err(_) => return Response { status: 400, body: error_body("request head is not UTF-8") },
+        Err(_) => {
+            return Response {
+                status: 400,
+                body: error_body("request head is not UTF-8"),
+            }
+        }
     };
     let mut lines = text.split("\r\n");
     let request_line = match lines.next() {
         Some(l) if !l.is_empty() => l,
-        _ => return Response { status: 400, body: error_body("empty request line") },
+        _ => {
+            return Response {
+                status: 400,
+                body: error_body("empty request line"),
+            }
+        }
     };
     let mut parts = request_line.split(' ');
     let (method, path) = match (parts.next(), parts.next(), parts.next()) {
         (Some(m), Some(p), Some(_v)) => (m, p),
-        _ => return Response { status: 400, body: error_body("malformed request line") },
+        _ => {
+            return Response {
+                status: 400,
+                body: error_body("malformed request line"),
+            }
+        }
     };
     match (method, path) {
-        ("GET", "/health") => Response { status: 200, body: state.body() },
-        ("GET", _) => Response { status: 404, body: error_body("only /health exists") },
-        (_, "/health") => Response { status: 405, body: error_body("health is GET-only") },
-        _ => Response { status: 404, body: error_body("only /health exists") },
+        ("GET", "/health") => Response {
+            status: 200,
+            body: state.body(),
+        },
+        ("GET", _) => Response {
+            status: 404,
+            body: error_body("only /health exists"),
+        },
+        (_, "/health") => Response {
+            status: 405,
+            body: error_body("health is GET-only"),
+        },
+        _ => Response {
+            status: 404,
+            body: error_body("only /health exists"),
+        },
     }
 }
 
@@ -125,7 +155,11 @@ fn error_body(msg: &str) -> String {
 /// Serve on an ALREADY-BOUND listener until `stop` flips. The listener is
 /// put in non-blocking mode and polled at 25ms — a health loop that burns a
 /// core or blocks forever on accept would be its own defect.
-pub fn serve(listener: TcpListener, state: Arc<HealthState>, stop: Arc<AtomicBool>) -> std::io::Result<()> {
+pub fn serve(
+    listener: TcpListener,
+    state: Arc<HealthState>,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<()> {
     listener.set_nonblocking(true)?;
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -133,7 +167,10 @@ pub fn serve(listener: TcpListener, state: Arc<HealthState>, stop: Arc<AtomicBoo
                 let head = read_head(&mut sock);
                 let resp = match head {
                     Ok(h) => route(&h, &state),
-                    Err(e) => Response { status: 400, body: error_body(&e) },
+                    Err(e) => Response {
+                        status: 400,
+                        body: error_body(&e),
+                    },
                 };
                 let _ = write_response(&mut sock, &resp); // a failed health write is a dead peer, not our failure
             }
@@ -187,11 +224,13 @@ fn write_response(sock: &mut std::net::TcpStream, resp: &Response) -> std::io::R
 /// instant, because bind IS the claim.
 pub fn bind_health_port(port: u16) -> Result<(TcpListener, u16), crate::mutex::PortMutexErr> {
     let l = bind_exclusive(port)?;
-    let p = l.local_addr().map_err(|e| crate::mutex::PortMutexErr::Other {
-        port,
-        cause: e.to_string(),
-    })?
-    .port();
+    let p = l
+        .local_addr()
+        .map_err(|e| crate::mutex::PortMutexErr::Other {
+            port,
+            cause: e.to_string(),
+        })?
+        .port();
     Ok((l, p))
 }
 
@@ -234,7 +273,10 @@ mod tests {
         // The counter is live: bump it, see it.
         s.spawned_children.store(3, Ordering::Relaxed);
         let v2 = json::parse(&s.body()).unwrap();
-        assert_eq!(v2.get("spawned_children").and_then(Value::as_f64), Some(3.0));
+        assert_eq!(
+            v2.get("spawned_children").and_then(Value::as_f64),
+            Some(3.0)
+        );
     }
 
     #[test]
@@ -245,14 +287,19 @@ mod tests {
         drop(probe);
 
         let (listener, port) = bind_health_port(port).expect("bind health port");
-        let st = Arc::new(HealthState::boot("caddis-voice", crate::VERSION, vec![port]));
+        let st = Arc::new(HealthState::boot(
+            "caddis-voice",
+            crate::VERSION,
+            vec![port],
+        ));
         let stop = Arc::new(AtomicBool::new(false));
         let s2 = Arc::clone(&st);
         let stop2 = Arc::clone(&stop);
         let server = std::thread::spawn(move || serve(listener, s2, stop2));
 
         let mut sock = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        sock.write_all(b"GET /health HTTP/1.1\r\nHost: organ\r\n\r\n").unwrap();
+        sock.write_all(b"GET /health HTTP/1.1\r\nHost: organ\r\n\r\n")
+            .unwrap();
         let mut raw = String::new();
         sock.read_to_string(&mut raw).unwrap();
         drop(sock);
@@ -266,12 +313,16 @@ mod tests {
 
         // A 404 path through the real socket too.
         let mut sock = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        sock.write_all(b"GET /nope HTTP/1.1\r\nHost: organ\r\n\r\n").unwrap();
+        sock.write_all(b"GET /nope HTTP/1.1\r\nHost: organ\r\n\r\n")
+            .unwrap();
         let mut raw = String::new();
         sock.read_to_string(&mut raw).unwrap();
         assert!(raw.starts_with("HTTP/1.1 404"), "{raw}");
 
         stop.store(true, Ordering::Relaxed);
-        server.join().expect("serve exits cleanly").expect("serve returns Ok");
+        server
+            .join()
+            .expect("serve exits cleanly")
+            .expect("serve returns Ok");
     }
 }

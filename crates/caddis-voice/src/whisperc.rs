@@ -170,7 +170,9 @@ fn post_inference(
         .split(' ')
         .nth(1)
         .and_then(|s| s.parse().ok())
-        .ok_or_else(|| WhisperErr::BadResponse(format!("unparseable status line: {status_line:?}")))?;
+        .ok_or_else(|| {
+            WhisperErr::BadResponse(format!("unparseable status line: {status_line:?}"))
+        })?;
     if status != 200 {
         return Err(WhisperErr::Status(status));
     }
@@ -190,7 +192,11 @@ fn post_inference(
 
 /// whisper-server JSON -> the daemon contract shape (ported from
 /// `stt_gpu.normalise`): missing pieces become empty, `text` is one-lined.
-pub fn normalise(raw: &Value, duration_s: f64, language: Option<&str>) -> Result<Transcript, WhisperErr> {
+pub fn normalise(
+    raw: &Value,
+    duration_s: f64,
+    language: Option<&str>,
+) -> Result<Transcript, WhisperErr> {
     // GA2: `text` must exist and be a string. An engine answering without it
     // is a lane defect, and delivering "" would read as "silence" to the
     // operator — the worst failure shape (the drop-ledger law).
@@ -256,22 +262,26 @@ mod tests {
     /// not engine bugs.
     fn drain_request(sock: &mut std::net::TcpStream) {
         use std::time::{Duration, Instant};
-        sock.set_read_timeout(Some(Duration::from_millis(2000))).unwrap();
+        sock.set_read_timeout(Some(Duration::from_millis(2000)))
+            .unwrap();
         let mut chunk = [0u8; 65536];
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut saw_any = false;
         while Instant::now() < deadline {
             match sock.read(&mut chunk) {
                 Ok(n) if n > 0 => saw_any = true,
-                Ok(_) => break, // clean EOF
+                Ok(_) => break,                 // clean EOF
                 Err(_) if !saw_any => continue, // still waiting for first bytes
-                Err(_) => break, // went quiet after data: request complete
+                Err(_) => break,                // went quiet after data: request complete
             }
         }
     }
     #[test]
     fn one_line_collapses_runs_and_replaces_never_deletes() {
-        assert_eq!(one_line("  labas   rytas\n\nketvirta\tvalanda  "), "labas rytas ketvirta valanda");
+        assert_eq!(
+            one_line("  labas   rytas\n\nketvirta\tvalanda  "),
+            "labas rytas ketvirta valanda"
+        );
         assert_eq!(one_line("Casabl\nancos"), "Casabl ancos"); // split word: space, not fusion
         assert_eq!(one_line(""), "");
         assert_eq!(one_line("   "), "");

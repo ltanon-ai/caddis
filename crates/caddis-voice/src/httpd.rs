@@ -83,7 +83,12 @@ fn reason(status: u16) -> &'static str {
 }
 
 /// Serialize one response (health shape or endpoint shape).
-fn write_response(sock: &mut TcpStream, status: u16, body: &str, extra: &[(String, String)]) -> std::io::Result<()> {
+fn write_response(
+    sock: &mut TcpStream,
+    status: u16,
+    body: &str,
+    extra: &[(String, String)],
+) -> std::io::Result<()> {
     let mut head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
         status,
@@ -104,7 +109,8 @@ fn write_response(sock: &mut TcpStream, status: u16, body: &str, extra: &[(Strin
 /// that writes head+body in one write is routine, and losing those bytes to a
 /// head-only buffer would dead-wait the body read (measured defect this tick).
 fn read_head(sock: &mut TcpStream) -> Result<(Vec<u8>, Vec<u8>), String> {
-    sock.set_read_timeout(Some(HEAD_TIMEOUT)).map_err(|e| e.to_string())?;
+    sock.set_read_timeout(Some(HEAD_TIMEOUT))
+        .map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
@@ -136,7 +142,8 @@ fn read_body(sock: &mut TcpStream, len: usize, carry: Vec<u8>) -> Result<Vec<u8>
     if carry.len() > len {
         return Err("body longer than Content-Length".into());
     }
-    sock.set_read_timeout(Some(BODY_TIMEOUT)).map_err(|e| e.to_string())?;
+    sock.set_read_timeout(Some(BODY_TIMEOUT))
+        .map_err(|e| e.to_string())?;
     let mut body = carry;
     let mut chunk = [0u8; 16 * 1024];
     while body.len() < len {
@@ -152,7 +159,13 @@ fn read_body(sock: &mut TcpStream, len: usize, carry: Vec<u8>) -> Result<Vec<u8>
 }
 
 /// Route one parsed request to a response, socket-free (table-testable).
-pub fn route(routes: &OrganRoutes, method: &str, path: &str, headers: &[(String, String)], body: &[u8]) -> (u16, String, Vec<(String, String)>) {
+pub fn route(
+    routes: &OrganRoutes,
+    method: &str,
+    path: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> (u16, String, Vec<(String, String)>) {
     let path_only = path.split('?').next().unwrap_or(path);
     match (method, path_only) {
         ("GET", "/health") => {
@@ -164,22 +177,38 @@ pub fn route(routes: &OrganRoutes, method: &str, path: &str, headers: &[(String,
         }
         ("POST", "/transcribe") => {
             if let Some(rej) = routes.horn.guard_head(headers) {
-                let EndpointResponse { status, body, headers } = rej;
+                let EndpointResponse {
+                    status,
+                    body,
+                    headers,
+                } = rej;
                 return (status, body, headers);
             }
             let r = routes.horn.handle_body(headers, body);
             (r.status, r.body, r.headers)
         }
-        ("GET", "/transcribe") => (405, "{\"error\":\"transcribe is POST-only\"}".into(), Vec::new()),
+        ("GET", "/transcribe") => (
+            405,
+            "{\"error\":\"transcribe is POST-only\"}".into(),
+            Vec::new(),
+        ),
         ("POST", "/health") => (405, "{\"error\":\"health is GET-only\"}".into(), Vec::new()),
-        _ => (404, "{\"error\":\"only /health and /transcribe exist\"}".into(), Vec::new()),
+        _ => (
+            404,
+            "{\"error\":\"only /health and /transcribe exist\"}".into(),
+            Vec::new(),
+        ),
     }
 }
 
 /// Serve on an ALREADY-BOUND (mutex-held) listener until `stop` flips.
 /// Thread per connection, capped; every write failure is a dead peer, not a
 /// defect (hang-up tolerance law).
-pub fn serve(listener: TcpListener, routes: Arc<OrganRoutes>, stop: Arc<AtomicBool>) -> std::io::Result<()> {
+pub fn serve(
+    listener: TcpListener,
+    routes: Arc<OrganRoutes>,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<()> {
     listener.set_nonblocking(true)?;
     let live: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     let mut threads = Vec::new();
@@ -264,7 +293,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn routes_with(engine_port: u16, listen_port: u16, label: &str) -> (OrganRoutes, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("caddis-voice-httpd-{}-{label}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("caddis-voice-httpd-{}-{label}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let tf = dir.join("token.txt");
         std::fs::write(&tf, "tok").unwrap();
@@ -279,7 +309,11 @@ mod tests {
         );
         (
             OrganRoutes {
-                health: Arc::new(HealthState::boot("caddis-voice", crate::VERSION, vec![8785])),
+                health: Arc::new(HealthState::boot(
+                    "caddis-voice",
+                    crate::VERSION,
+                    vec![8785],
+                )),
                 horn: Arc::new(horn),
             },
             dir,
@@ -314,7 +348,10 @@ mod tests {
             &routes,
             "POST",
             "/transcribe",
-            &[("Host".into(), "127.0.0.1:8785".into()), ("Content-Length".into(), "10".into())],
+            &[
+                ("Host".into(), "127.0.0.1:8785".into()),
+                ("Content-Length".into(), "10".into()),
+            ],
             b"",
         );
         assert_eq!(s, 401);
@@ -400,8 +437,11 @@ mod tests {
 
         // Health answers WHILE a transcribe could be running (concurrent).
         let mut sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        sock.write_all(format!("GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").as_bytes())
-            .unwrap();
+        sock.write_all(
+            format!("GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .unwrap();
         let mut resp = Vec::new();
         sock.read_to_end(&mut resp).unwrap();
         assert!(String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 200"));

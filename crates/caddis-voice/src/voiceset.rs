@@ -67,12 +67,7 @@ pub enum RouteDecision {
 /// detected language, registry order = deterministic preference). The
 /// banned outcome (EN voice reading LT) is unreachable: a substitute always
 /// speaks the detected language.
-pub fn resolve(
-    set: &VoiceSet,
-    lang: Lang,
-    path: SpeechPath,
-    registry: &Registry,
-) -> RouteDecision {
+pub fn resolve(set: &VoiceSet, lang: Lang, path: SpeechPath, registry: &Registry) -> RouteDecision {
     if let Some(voice) = set.get(lang) {
         if registry.voice(voice).is_some() {
             return RouteDecision::Speak(voice.clone());
@@ -129,10 +124,24 @@ mod tests {
             declared_endpoints: vec!["wss://speech.platform.bing.com".into()],
         })
         .unwrap();
-        r.attach(VoiceSpec { id: "en_US-ryan".into(), generator: "piper".into(), lang: Lang::En }).unwrap();
-        r.attach(VoiceSpec { id: "en_US-amy".into(), generator: "piper".into(), lang: Lang::En }).unwrap();
-        r.attach(VoiceSpec { id: "lt-LT-LeonasNeural".into(), generator: "leonas".into(), lang: Lang::Lt })
-            .unwrap();
+        r.attach(VoiceSpec {
+            id: "en_US-ryan".into(),
+            generator: "piper".into(),
+            lang: Lang::En,
+        })
+        .unwrap();
+        r.attach(VoiceSpec {
+            id: "en_US-amy".into(),
+            generator: "piper".into(),
+            lang: Lang::En,
+        })
+        .unwrap();
+        r.attach(VoiceSpec {
+            id: "lt-LT-LeonasNeural".into(),
+            generator: "leonas".into(),
+            lang: Lang::Lt,
+        })
+        .unwrap();
         r
     }
 
@@ -153,7 +162,10 @@ mod tests {
     #[test]
     fn confirm_path_never_substitutes() {
         let r = test_registry();
-        let en_only = VoiceSet { lt: None, en: Some("en_US-ryan".into()) };
+        let en_only = VoiceSet {
+            lt: None,
+            en: Some("en_US-ryan".into()),
+        };
         let d = resolve(&en_only, Lang::Lt, SpeechPath::GatedConfirm, &r);
         assert!(matches!(d, RouteDecision::Degrade { .. }), "{d:?}");
     }
@@ -161,11 +173,17 @@ mod tests {
     #[test]
     fn general_path_substitutes_with_warning() {
         let r = test_registry();
-        let en_only = VoiceSet { lt: None, en: Some("en_US-ryan".into()) };
+        let en_only = VoiceSet {
+            lt: None,
+            en: Some("en_US-ryan".into()),
+        };
         let d = resolve(&en_only, Lang::Lt, SpeechPath::GeneralSpeech, &r);
         assert_eq!(
             d,
-            RouteDecision::Substitute { voice: "lt-LT-LeonasNeural".into(), warning: true }
+            RouteDecision::Substitute {
+                voice: "lt-LT-LeonasNeural".into(),
+                warning: true
+            }
         );
     }
 
@@ -175,10 +193,16 @@ mod tests {
         // Strip LT voices to empty the substitute pool.
         let mut r2 = r.clone();
         r2.voices.retain(|v| v.lang != Lang::Lt);
-        let set = VoiceSet { lt: None, en: Some("en_US-ryan".into()) };
+        let set = VoiceSet {
+            lt: None,
+            en: Some("en_US-ryan".into()),
+        };
         for path in [SpeechPath::GatedConfirm, SpeechPath::GeneralSpeech] {
             assert!(
-                matches!(resolve(&set, Lang::Lt, path, &r2), RouteDecision::Degrade { .. }),
+                matches!(
+                    resolve(&set, Lang::Lt, path, &r2),
+                    RouteDecision::Degrade { .. }
+                ),
                 "{path:?}"
             );
         }
@@ -202,7 +226,10 @@ mod tests {
     #[test]
     fn phantom_config_voice_fails_honest_not_phantom_speak() {
         let r = test_registry();
-        let lying = VoiceSet { lt: Some("lt-LT-Ghost".into()), en: None };
+        let lying = VoiceSet {
+            lt: Some("lt-LT-Ghost".into()),
+            en: None,
+        };
         assert!(matches!(
             resolve(&lying, Lang::Lt, SpeechPath::GeneralSpeech, &r),
             RouteDecision::Substitute { .. }

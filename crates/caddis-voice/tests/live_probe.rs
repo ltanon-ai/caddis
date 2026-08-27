@@ -65,8 +65,14 @@ fn live_adopt_identity() {
     // The assertion is only that the identity reads WORK on this machine;
     // both adopt and refuse are legal outcomes (daemon-owned engine adopts;
     // anything else refuses).
-    assert!(pid.is_some(), "port is taken but netstat found no listener pid — identity machinery broken");
-    assert!(image.is_some(), "tasklist could not resolve the listener image");
+    assert!(
+        pid.is_some(),
+        "port is taken but netstat found no listener pid — identity machinery broken"
+    );
+    assert!(
+        image.is_some(),
+        "tasklist could not resolve the listener image"
+    );
 }
 
 #[test]

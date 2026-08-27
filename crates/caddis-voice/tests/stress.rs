@@ -54,7 +54,10 @@ fn python_path() -> String {
     // actually runs the -c script; for a real interpreter it equals
     // sys.executable.
     let out = Command::new("python")
-        .args(["-c", "import sys; print(getattr(sys, '_base_executable', sys.executable))"])
+        .args([
+            "-c",
+            "import sys; print(getattr(sys, '_base_executable', sys.executable))",
+        ])
         .output()
         .expect("resolve python");
     String::from_utf8_lossy(&out.stdout)
@@ -73,7 +76,13 @@ fn free_port() -> u16 {
         .port()
 }
 
-fn wait_port(world: &mut OsEngineWorld, host: &str, port: u16, up: bool, timeout: Duration) -> bool {
+fn wait_port(
+    world: &mut OsEngineWorld,
+    host: &str,
+    port: u16,
+    up: bool,
+    timeout: Duration,
+) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if world.port_taken(host, port) == up {
@@ -117,7 +126,9 @@ fn f5_spawn_kill_cycles_do_not_leak() {
             r.state,
             r.actions
         );
-        let HornState::Spawned { pid } = r.state else { unreachable!() };
+        let HornState::Spawned { pid } = r.state else {
+            unreachable!()
+        };
         // The child REALLY binds the port.
         assert!(
             wait_port(&mut world, "127.0.0.1", port, true, Duration::from_secs(10)),
@@ -131,14 +142,20 @@ fn f5_spawn_kill_cycles_do_not_leak() {
             let cmdline = |p: u32| {
                 String::from_utf8_lossy(
                     &Command::new("wmic")
-                        .args(["process", "where", &format!("ProcessId={p}"), "get", "CommandLine"])
+                        .args([
+                            "process",
+                            "where",
+                            &format!("ProcessId={p}"),
+                            "get",
+                            "CommandLine",
+                        ])
                         .output()
                         .map(|o| o.stdout)
                         .unwrap_or_default(),
                 )
                 .lines()
                 .filter(|l| !l.trim().is_empty() && !l.contains("CommandLine"))
- .take(1)
+                .take(1)
                 .collect::<String>()
             };
             panic!(
@@ -151,7 +168,13 @@ fn f5_spawn_kill_cycles_do_not_leak() {
         // Kill through the supervisor; port must free (no orphan).
         sup.stop_own().expect("cycle {cycle}: stop_own");
         assert!(
-            wait_port(&mut world, "127.0.0.1", port, false, Duration::from_secs(15)),
+            wait_port(
+                &mut world,
+                "127.0.0.1",
+                port,
+                false,
+                Duration::from_secs(15)
+            ),
             "cycle {cycle}: port still held after stop_own — LEAK"
         );
         seen_pids.push(pid);
@@ -160,7 +183,10 @@ fn f5_spawn_kill_cycles_do_not_leak() {
     // cached handle — the Adopted-class identity lesson).
     assert_eq!(seen_pids.len(), 3, "pids: {seen_pids:?}");
     // Resource ceiling: no listener left behind, nothing on the port.
-    assert!(!world.port_taken("127.0.0.1", port), "listener survived all cycles");
+    assert!(
+        !world.port_taken("127.0.0.1", port),
+        "listener survived all cycles"
+    );
     let _ = std::fs::remove_file(&log);
     println!("F5 cycles OK: pids {seen_pids:?}, port {port} clean");
 }
@@ -197,9 +223,15 @@ fn f5_adopt_never_kills() {
     );
 
     // stop_own REFUSES: adopted engines are never killed by the horn (P5 law).
-    assert!(sup.stop_own().is_err(), "stop_own must refuse an adopted engine");
+    assert!(
+        sup.stop_own().is_err(),
+        "stop_own must refuse an adopted engine"
+    );
     // And the engine is still alive — the refusal was not cosmetic.
-    assert!(world.port_taken("127.0.0.1", port), "adopted engine must still be serving");
+    assert!(
+        world.port_taken("127.0.0.1", port),
+        "adopted engine must still be serving"
+    );
 
     // Cleanup by the OWNER side (the test), not the horn.
     let _ = Command::new("taskkill")
@@ -207,7 +239,13 @@ fn f5_adopt_never_kills() {
         .output();
     let _ = owner.wait();
     assert!(
-        wait_port(&mut world, "127.0.0.1", port, false, Duration::from_secs(15)),
+        wait_port(
+            &mut world,
+            "127.0.0.1",
+            port,
+            false,
+            Duration::from_secs(15)
+        ),
         "owner kill left the port held — leak outside the horn"
     );
     // The horn notices the adopted engine is gone and STANDS DOWN (no spawn).
@@ -215,5 +253,8 @@ fn f5_adopt_never_kills() {
     assert_eq!(r.state, HornState::NoServer);
     assert!(r.actions.iter().any(|a| a.contains("stands down")));
     let _ = std::fs::remove_file(&log);
-    println!("F5 adopt OK: adopted pid={} refused-kill, stood down after owner exit", owner.id());
+    println!(
+        "F5 adopt OK: adopted pid={} refused-kill, stood down after owner exit",
+        owner.id()
+    );
 }

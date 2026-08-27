@@ -79,43 +79,48 @@ pub mod httpd;
 pub mod job;
 pub mod json;
 pub mod lang;
-pub mod mutex;
 pub mod multipart;
+pub mod mutex;
 pub mod piper;
 pub mod platform;
 pub mod registry;
+pub mod sha1;
 pub mod sha256;
 pub mod transcribe;
 pub mod trigram;
 pub mod voiceset;
 pub mod vram;
 pub mod whisperc;
+pub mod wss;
 
-pub use config::{OrganConfig, DEFAULT_CONFIG_JSON};
-pub use configio::{
-    load_config, save_config_document, ConfigSource, RealWarden, SaveOutcome, Warden, WardenVerdict,
-    COMMAND as WARDEN_COMMAND, TOOL as WARDEN_TOOL,
-};
-pub use detect::{CacheStats, Decision, DetectOptions, Detector, Layer, Segment, Utterance};
-pub use health::{route as route_health, HealthState, Response as HealthResponse};
-pub use job::{ChildScope, DeadManSwitch, JobErr};
-pub use lang::Lang;
-pub use mutex::{bind_exclusive, PortMutexErr};
-pub use registry::{GeneratorSpec, Lane, Registry, RegistryErr, VoiceSpec, INTERNAL_GENERATORS};
-pub use voiceset::{RouteDecision, SpeechPath, VoiceSet};
-pub use vram::{probe as probe_vram, AdapterMem, VramReport};
-pub use guards::{GuardVerdict, TokenGuard, MAX_UPLOAD_BYTES};
-pub use horn::{adopt_decision, backoff_for, EngineWorld, HornSettings, HornState, OsEngineWorld, Supervisor, TickReport};
-pub use httpd::{route as route_organ, OrganRoutes};
-pub use transcribe::{HornService, WavMeta, ENGINE_NAME, MIN_AUDIO_S};
-pub use whisperc::{transcribe as engine_transcribe, Transcript, WhisperErr};
 pub use adapter::{
     authorize_dial, sanitize_text, validate_mp3, validate_wav, AdapterErr, AudioFormat, Breaker,
     BreakerConfig, RenderedAudio,
 };
+pub use config::{OrganConfig, DEFAULT_CONFIG_JSON};
+pub use configio::{
+    load_config, save_config_document, ConfigSource, RealWarden, SaveOutcome, Warden,
+    WardenVerdict, COMMAND as WARDEN_COMMAND, TOOL as WARDEN_TOOL,
+};
+pub use detect::{CacheStats, Decision, DetectOptions, Detector, Layer, Segment, Utterance};
 pub use earcons::{parse_set as parse_earcon_set, EarconSet, Motif, EARCON_SET_JSON};
 pub use edgetts::{dial_url, sec_ms_gec, synthesize as edge_synthesize, Prosody, SessionOpts};
+pub use guards::{GuardVerdict, TokenGuard, MAX_UPLOAD_BYTES};
+pub use health::{route as route_health, HealthState, Response as HealthResponse};
+pub use horn::{
+    adopt_decision, backoff_for, EngineWorld, HornSettings, HornState, OsEngineWorld, Supervisor,
+    TickReport,
+};
+pub use httpd::{route as route_organ, OrganRoutes};
+pub use job::{ChildScope, DeadManSwitch, JobErr};
+pub use lang::Lang;
+pub use mutex::{bind_exclusive, PortMutexErr};
 pub use piper::{PiperAdapter, PiperPaths, PIPER_KILL_DEADLINE_MS};
+pub use registry::{GeneratorSpec, Lane, Registry, RegistryErr, VoiceSpec, INTERNAL_GENERATORS};
+pub use transcribe::{HornService, WavMeta, ENGINE_NAME, MIN_AUDIO_S};
+pub use voiceset::{RouteDecision, SpeechPath, VoiceSet};
+pub use vram::{probe as probe_vram, AdapterMem, VramReport};
+pub use whisperc::{transcribe as engine_transcribe, Transcript, WhisperErr};
 
 pub const VERSION: &str = "0.1.0";
 
@@ -134,25 +139,41 @@ mod tests {
         // Marked LT utterance → L1 → Leonas speaks (confirm path OK).
         let u = det.detect("Patvirtinta, užduotis įvykdyta.", sgt.declared);
         assert_eq!(u.segments[0].decision.layer, Layer::L1Diacritic);
-        let d = voiceset::resolve(&sgt.set, u.segments[0].decision.lang, SpeechPath::GatedConfirm, &cfg.registry);
+        let d = voiceset::resolve(
+            &sgt.set,
+            u.segments[0].decision.lang,
+            SpeechPath::GatedConfirm,
+            &cfg.registry,
+        );
         assert_eq!(d, RouteDecision::Speak("lt-LT-LeonasNeural".into()));
 
         // Plain EN utterance → L2 → ryan.
         let u = det.detect("The pipeline is green, deploying now.", sgt.declared);
         assert_eq!(u.segments[0].decision.lang, Lang::En);
-        let d = voiceset::resolve(&sgt.set, u.segments[0].decision.lang, SpeechPath::GeneralSpeech, &cfg.registry);
+        let d = voiceset::resolve(
+            &sgt.set,
+            u.segments[0].decision.lang,
+            SpeechPath::GeneralSpeech,
+            &cfg.registry,
+        );
         assert_eq!(d, RouteDecision::Speak("en_US-ryan".into()));
 
         // A label with no LT voice: confirm degrades honestly, general
         // substitutes Leonas WITH warning.
-        let en_only = VoiceSet { lt: None, en: Some("en_US-ryan".into()) };
+        let en_only = VoiceSet {
+            lt: None,
+            en: Some("en_US-ryan".into()),
+        };
         assert!(matches!(
             voiceset::resolve(&en_only, Lang::Lt, SpeechPath::GatedConfirm, &cfg.registry),
             RouteDecision::Degrade { .. }
         ));
         assert_eq!(
             voiceset::resolve(&en_only, Lang::Lt, SpeechPath::GeneralSpeech, &cfg.registry),
-            RouteDecision::Substitute { voice: "lt-LT-LeonasNeural".into(), warning: true }
+            RouteDecision::Substitute {
+                voice: "lt-LT-LeonasNeural".into(),
+                warning: true
+            }
         );
 
         // Mixed utterance is detected as mixed — per-segment voices.

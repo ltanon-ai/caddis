@@ -66,9 +66,15 @@ pub fn bind_exclusive(port: u16) -> Result<TcpListener, PortMutexErr> {
     }
     let addr = ("127.0.0.1", port)
         .to_socket_addrs()
-        .map_err(|e| PortMutexErr::Other { port, cause: e.to_string() })?
+        .map_err(|e| PortMutexErr::Other {
+            port,
+            cause: e.to_string(),
+        })?
         .next()
-        .ok_or_else(|| PortMutexErr::Other { port, cause: "no address resolved".into() })?;
+        .ok_or_else(|| PortMutexErr::Other {
+            port,
+            cause: "no address resolved".into(),
+        })?;
     TcpListener::bind(addr).map_err(|e| {
         let cause = e.to_string();
         match e.kind() {
@@ -97,7 +103,10 @@ mod tests {
 
     #[test]
     fn port_zero_is_categorically_refused() {
-        assert_eq!(bind_exclusive(0).unwrap_err(), PortMutexErr::EphemeralRefused);
+        assert_eq!(
+            bind_exclusive(0).unwrap_err(),
+            PortMutexErr::EphemeralRefused
+        );
     }
 
     #[test]
@@ -123,7 +132,10 @@ mod tests {
     fn occupied_error_names_the_port() {
         let held = TcpListener::bind("127.0.0.1:0").expect("probe");
         let port = held.local_addr().unwrap().port();
-        assert_eq!(bind_exclusive(port).unwrap_err(), PortMutexErr::Occupied(port));
+        assert_eq!(
+            bind_exclusive(port).unwrap_err(),
+            PortMutexErr::Occupied(port)
+        );
         drop(held);
     }
 }

@@ -19,14 +19,26 @@ const PIPER_MODEL: &str =
 #[ignore]
 fn live_piper_render_end_to_end() {
     let adapter = PiperAdapter::new(
-        PiperPaths { exe: PIPER_EXE.into(), model: PIPER_MODEL.into(), model_config: None },
+        PiperPaths {
+            exe: PIPER_EXE.into(),
+            model: PIPER_MODEL.into(),
+            model_config: None,
+        },
         1500,
     );
 
-    let voice = VoiceSpec { id: "en_US-amy".into(), generator: "piper".into(), lang: Lang::En };
+    let voice = VoiceSpec {
+        id: "en_US-amy".into(),
+        generator: "piper".into(),
+        lang: Lang::En,
+    };
     let started = std::time::Instant::now();
     let r = adapter
-        .render(&voice, "Voice organ adapter live probe. Piper lane speaking.", 1.0)
+        .render(
+            &voice,
+            "Voice organ adapter live probe. Piper lane speaking.",
+            1.0,
+        )
         .expect("live render must succeed");
     let wall = started.elapsed();
 
@@ -42,7 +54,11 @@ fn live_piper_render_end_to_end() {
     // GA2 offline validation already ran inside render(); sanity: header.
     assert_eq!(&r.bytes[0..4], b"RIFF");
     // A real spoken sentence is at least a half-second of audio.
-    assert!(r.bytes.len() > 22_050, "implausibly small WAV: {}", r.bytes.len());
+    assert!(
+        r.bytes.len() > 22_050,
+        "implausibly small WAV: {}",
+        r.bytes.len()
+    );
     // And it must land under the proven kill budget.
     assert!(r.elapsed_ms < PIPER_KILL_DEADLINE_MS);
 }

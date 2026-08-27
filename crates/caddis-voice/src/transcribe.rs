@@ -41,7 +41,11 @@ pub struct EndpointResponse {
 
 impl EndpointResponse {
     fn json(status: u16, body: String) -> Self {
-        EndpointResponse { status, body, headers: Vec::new() }
+        EndpointResponse {
+            status,
+            body,
+            headers: Vec::new(),
+        }
     }
     fn err(status: u16, msg: &str) -> Self {
         Self::json(status, format!("{{\"error\":\"{msg}\"}}"))
@@ -347,7 +351,8 @@ mod tests {
     }
 
     fn setup(label: &str) -> (PathBuf, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("caddis-voice-tr-{}-{label}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("caddis-voice-tr-{}-{label}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let tf = dir.join("token.txt");
         std::fs::write(&tf, "tok123").unwrap();
@@ -416,7 +421,10 @@ mod tests {
         assert_eq!(resp.status, 200, "body: {}", resp.body);
         let v = json::parse(&resp.body).unwrap();
         assert_eq!(v.get("text").and_then(|t| t.as_str()), Some("labas rytas"));
-        assert_eq!(v.get("transcript").and_then(|t| t.as_str()), Some("labas rytas"));
+        assert_eq!(
+            v.get("transcript").and_then(|t| t.as_str()),
+            Some("labas rytas")
+        );
         assert_eq!(v.get("engine").and_then(|t| t.as_str()), Some(ENGINE_NAME));
         assert_eq!(v.get("device").and_then(|t| t.as_str()), Some("gpu"));
         assert_eq!(svc.ok.load(Ordering::Relaxed), 1);
@@ -438,7 +446,10 @@ mod tests {
         let bad_host = vec![("Host".into(), "evil.example:8785".into())];
         assert_eq!(svc.guard_head(&bad_host).unwrap().status, 421);
 
-        let no_token = vec![("Host".into(), "127.0.0.1:8785".into()), ("Content-Length".into(), "10".into())];
+        let no_token = vec![
+            ("Host".into(), "127.0.0.1:8785".into()),
+            ("Content-Length".into(), "10".into()),
+        ];
         assert_eq!(svc.guard_head(&no_token).unwrap().status, 401);
 
         let chunked = vec![
@@ -581,12 +592,14 @@ mod tests {
         let svc2 = svc.clone();
         let headers2 = headers.clone();
         let body2 = body.clone();
-        let first =
-            std::thread::spawn(move || svc2.handle_body(&headers2, &body2));
+        let first = std::thread::spawn(move || svc2.handle_body(&headers2, &body2));
         std::thread::sleep(std::time::Duration::from_millis(150)); // let it engage the engine
         let r = svc.handle_body(&headers, &body);
         assert_eq!(r.status, 429);
-        assert!(r.headers.iter().any(|(k, v)| k == "Retry-After" && v == "2"));
+        assert!(r
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Retry-After" && v == "2"));
         assert_eq!(svc.busy_rejects.load(Ordering::Relaxed), 1);
         release.store(true, Ordering::Relaxed);
         assert_eq!(first.join().unwrap().status, 200);

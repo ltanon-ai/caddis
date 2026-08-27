@@ -72,7 +72,12 @@ pub struct PiperAdapter {
 
 impl PiperAdapter {
     pub fn new(paths: PiperPaths, cap_ms: u32) -> Self {
-        PiperAdapter { paths, cap_ms, kill_deadline_ms: PIPER_KILL_DEADLINE_MS, argv_override: None }
+        PiperAdapter {
+            paths,
+            cap_ms,
+            kill_deadline_ms: PIPER_KILL_DEADLINE_MS,
+            argv_override: None,
+        }
     }
 
     /// TEST LANE ONLY: full argv replacement with `{IN}`/`{OUT}`
@@ -121,7 +126,10 @@ impl PiperAdapter {
     ) -> Result<RenderedAudio, AdapterErr> {
         let s = sanitize_text(text)?;
         if voice.generator != "piper" {
-            return Err(AdapterErr(format!("piper: voice {} is not a piper voice", voice.id)));
+            return Err(AdapterErr(format!(
+                "piper: voice {} is not a piper voice",
+                voice.id
+            )));
         }
         if self.paths.exe.is_empty() || self.paths.model.is_empty() {
             return Err(AdapterErr("piper: exe/model not configured".into()));
@@ -133,7 +141,11 @@ impl PiperAdapter {
         }
 
         let started = Instant::now();
-        let argv = self.argv(&in_path.to_string_lossy(), &out_path.to_string_lossy(), length_scale);
+        let argv = self.argv(
+            &in_path.to_string_lossy(),
+            &out_path.to_string_lossy(),
+            length_scale,
+        );
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..]);
         // Both streams null (the daemon captured them for the same
@@ -218,7 +230,11 @@ mod tests {
     use crate::lang::Lang;
 
     fn voice() -> VoiceSpec {
-        VoiceSpec { id: "en_US-amy".into(), generator: "piper".into(), lang: Lang::En }
+        VoiceSpec {
+            id: "en_US-amy".into(),
+            generator: "piper".into(),
+            lang: Lang::En,
+        }
     }
 
     /// Secret-shaped text fixture built at runtime (warden law: no
@@ -262,7 +278,11 @@ mod tests {
     fn stub_adapter(tag: &str) -> (PiperAdapter, PathBuf) {
         let canned = canned_wav(tag);
         let a = PiperAdapter::new(
-            PiperPaths { exe: "cmd".into(), model: "unused".into(), model_config: None },
+            PiperPaths {
+                exe: "cmd".into(),
+                model: "unused".into(),
+                model_config: None,
+            },
             1500,
         )
         .with_stub_argv(
@@ -295,13 +315,24 @@ mod tests {
         // A stub that sleeps ~30s: the kill deadline must fire and the
         // child die under it.
         let a = PiperAdapter::new(
-            PiperPaths { exe: "cmd".into(), model: "unused".into(), model_config: None },
+            PiperPaths {
+                exe: "cmd".into(),
+                model: "unused".into(),
+                model_config: None,
+            },
             1500,
         )
         .with_stub_argv(
             // `ping -n 30` sleeps without stdin; `pause` would exit at
             // once on the null stdio render children get.
-            vec!["cmd".into(), "/c".into(), "ping".into(), "-n".into(), "30".into(), "127.0.0.1".into()],
+            vec![
+                "cmd".into(),
+                "/c".into(),
+                "ping".into(),
+                "-n".into(),
+                "30".into(),
+                "127.0.0.1".into(),
+            ],
             300,
         );
         let started = Instant::now();
@@ -321,7 +352,11 @@ mod tests {
         let junk = std::env::temp_dir().join("caddis-piper-test-junk.bin");
         std::fs::write(&junk, b"this is definitely not a wav").unwrap();
         let a = PiperAdapter::new(
-            PiperPaths { exe: "cmd".into(), model: "unused".into(), model_config: None },
+            PiperPaths {
+                exe: "cmd".into(),
+                model: "unused".into(),
+                model_config: None,
+            },
             1500,
         )
         .with_stub_argv(
@@ -336,7 +371,10 @@ mod tests {
             8_000,
         );
         let e = a.render(&voice(), "junk out", 1.0).unwrap_err();
-        assert!(e.0.contains("GA2") || e.0.contains("RIFF"), "unexpected err: {e}");
+        assert!(
+            e.0.contains("GA2") || e.0.contains("RIFF"),
+            "unexpected err: {e}"
+        );
         let _ = std::fs::remove_file(junk);
     }
 
@@ -345,9 +383,16 @@ mod tests {
         let (a, canned) = stub_adapter("guard");
         // Secret-shaped text is refused before any process spawns.
         let e = a.render(&voice(), &secret_text(), 1.0).unwrap_err();
-        assert!(e.to_string().starts_with("adapter: text"), "unexpected err: {e}");
+        assert!(
+            e.to_string().starts_with("adapter: text"),
+            "unexpected err: {e}"
+        );
         // Wrong-generator voice refused.
-        let v2 = VoiceSpec { id: "lt-LT-OnaNeural".into(), generator: "ona".into(), lang: Lang::Lt };
+        let v2 = VoiceSpec {
+            id: "lt-LT-OnaNeural".into(),
+            generator: "ona".into(),
+            lang: Lang::Lt,
+        };
         let e2 = a.render(&v2, "ok text", 1.0).unwrap_err();
         assert!(e2.0.contains("not a piper voice"), "unexpected err: {e2}");
         let _ = std::fs::remove_file(canned);
@@ -356,7 +401,11 @@ mod tests {
     #[test]
     fn production_argv_is_daemon_template() {
         let a = PiperAdapter::new(
-            PiperPaths { exe: "C:\\piper.exe".into(), model: "C:\\amy.onnx".into(), model_config: None },
+            PiperPaths {
+                exe: "C:\\piper.exe".into(),
+                model: "C:\\amy.onnx".into(),
+                model_config: None,
+            },
             1500,
         );
         let argv = a.argv("IN.txt", "OUT.wav", 1.1);

@@ -314,7 +314,9 @@ impl<W: EngineWorld> Supervisor<W> {
     /// [`EngineWorld`]; every conclusion lands in the report.
     pub fn tick(&mut self) -> TickReport {
         let mut actions = Vec::new();
-        let taken = self.world.port_taken(&self.settings.engine_host, self.settings.engine_port);
+        let taken = self
+            .world
+            .port_taken(&self.settings.engine_host, self.settings.engine_port);
 
         if taken {
             match &self.state {
@@ -332,7 +334,10 @@ impl<W: EngineWorld> Supervisor<W> {
                     let image = pid.and_then(|p| self.world.image_name(p));
                     match adopt_decision(pid, image.clone(), &self.settings.engine_exe) {
                         Some((pid, image)) => {
-                            self.state = HornState::Adopted { pid, image: image.clone() };
+                            self.state = HornState::Adopted {
+                                pid,
+                                image: image.clone(),
+                            };
                             self.healthy_since = Some(Instant::now());
                             actions.push(format!("adopted engine pid={pid} ({image}) — supervised, never killed by the horn"));
                         }
@@ -341,7 +346,10 @@ impl<W: EngineWorld> Supervisor<W> {
                                 (Some(p), Some(i)) => (p, i),
                                 _ => (0, "unknown".into()),
                             };
-                            self.state = HornState::StrangerOnPort { pid, image: image.clone() };
+                            self.state = HornState::StrangerOnPort {
+                                pid,
+                                image: image.clone(),
+                            };
                             actions.push(format!(
                                 "port {} held by pid={pid} ({image}) — NOT ours, NOT adopted, NOT touched",
                                 self.settings.engine_port
@@ -350,7 +358,10 @@ impl<W: EngineWorld> Supervisor<W> {
                     }
                 }
             }
-            return TickReport { state: self.state.clone(), actions };
+            return TickReport {
+                state: self.state.clone(),
+                actions,
+            };
         }
 
         // Port free.
@@ -361,7 +372,9 @@ impl<W: EngineWorld> Supervisor<W> {
             }
             HornState::Adopted { pid, image } => {
                 // The adopted engine went away on its own (owner stopped it).
-                actions.push(format!("adopted engine pid={pid} ({image}) is gone — horn stands down, does not spawn"));
+                actions.push(format!(
+                    "adopted engine pid={pid} ({image}) is gone — horn stands down, does not spawn"
+                ));
                 self.state = HornState::NoServer;
                 self.failures = 0;
                 self.healthy_since = None;
@@ -380,7 +393,10 @@ impl<W: EngineWorld> Supervisor<W> {
                 self.try_spawn(&mut actions);
             }
         }
-        TickReport { state: self.state.clone(), actions }
+        TickReport {
+            state: self.state.clone(),
+            actions,
+        }
     }
 
     /// Record a failure, park in Blocked when the budget is spent.
@@ -391,7 +407,9 @@ impl<W: EngineWorld> Supervisor<W> {
                 "failures={} >= max: BLOCKED until unblock()",
                 self.failures
             ));
-            HornState::Blocked { failures: self.failures }
+            HornState::Blocked {
+                failures: self.failures,
+            }
         } else {
             let wait = backoff_for(self.failures);
             self.next_spawn_at = Some(Instant::now() + wait);
@@ -437,7 +455,9 @@ impl<W: EngineWorld> Supervisor<W> {
         let pid = match &self.state {
             HornState::Spawned { pid } => *pid,
             HornState::Adopted { .. } => {
-                return Err("refused: adopted engines are never killed by the horn (P5 law)".into());
+                return Err(
+                    "refused: adopted engines are never killed by the horn (P5 law)".into(),
+                );
             }
             s => return Err(format!("nothing to stop in state {s:?}")),
         };
@@ -446,7 +466,10 @@ impl<W: EngineWorld> Supervisor<W> {
             .output();
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
-            if !self.world.port_taken(&self.settings.engine_host, self.settings.engine_port) {
+            if !self
+                .world
+                .port_taken(&self.settings.engine_host, self.settings.engine_port)
+            {
                 self.state = HornState::NoServer;
                 self.failures = 0;
                 self.healthy_since = None;
@@ -480,7 +503,9 @@ mod tests {
     }
     impl FakeWorld {
         fn new(obs: Vec<WorldObs>) -> Self {
-            FakeWorld { script: RefCell::new(obs.into()) }
+            FakeWorld {
+                script: RefCell::new(obs.into()),
+            }
         }
     }
     impl EngineWorld for FakeWorld {
@@ -520,13 +545,21 @@ mod tests {
     #[test]
     fn adopt_decision_requires_image_identity() {
         assert_eq!(
-            adopt_decision(Some(42), Some("whisper-server.exe".into()), r"E:\x\whisper-server.exe"),
+            adopt_decision(
+                Some(42),
+                Some("whisper-server.exe".into()),
+                r"E:\x\whisper-server.exe"
+            ),
             Some((42, "whisper-server.exe".into()))
         );
         // Case-insensitive image, colon-anchored port is netstat's job; here:
         // a stranger image is never adopted.
         assert_eq!(
-            adopt_decision(Some(7), Some("python.exe".into()), r"E:\x\whisper-server.exe"),
+            adopt_decision(
+                Some(7),
+                Some("python.exe".into()),
+                r"E:\x\whisper-server.exe"
+            ),
             None
         );
         assert_eq!(adopt_decision(None, None, "x"), None);
@@ -543,7 +576,10 @@ mod tests {
         let r = sup.tick();
         assert_eq!(
             r.state,
-            HornState::Adopted { pid: 313, image: "WHISPER-SERVER.EXE".into() }
+            HornState::Adopted {
+                pid: 313,
+                image: "WHISPER-SERVER.EXE".into()
+            }
         );
         assert!(sup.stop_own().is_err()); // adopted: refused by law
     }
@@ -557,7 +593,13 @@ mod tests {
         ]);
         let mut sup = Supervisor::new(small_settings(), w);
         let r = sup.tick();
-        assert_eq!(r.state, HornState::StrangerOnPort { pid: 9, image: "chrome.exe".into() });
+        assert_eq!(
+            r.state,
+            HornState::StrangerOnPort {
+                pid: 9,
+                image: "chrome.exe".into()
+            }
+        );
         assert!(r.actions.iter().any(|a| a.contains("NOT ours")));
     }
 
@@ -620,7 +662,7 @@ mod tests {
         let w = FakeWorld::new(vec![
             WorldObs::Taken(false),
             WorldObs::Spawn(Ok(77)),
-            WorldObs::Taken(true), // bound: healthy, ours
+            WorldObs::Taken(true),  // bound: healthy, ours
             WorldObs::Taken(false), // died
             WorldObs::Taken(false), // window open (NOT zeroed on purpose)
             WorldObs::Taken(false),
@@ -644,5 +686,4 @@ mod tests {
         let r = sup.tick();
         assert_eq!(r.state, HornState::Spawned { pid: 78 }); // healthy again
     }
-
 }

@@ -105,7 +105,9 @@ fn from_value(v: &Value) -> Result<OrganConfig, ConfigErr> {
     if let Some(map) = v.get("generators_enabled").and_then(Value::as_obj) {
         for (id, on) in map {
             if registry.generator(id).is_none() {
-                return Err(ConfigErr(format!("generators_enabled: unknown generator '{id}'")));
+                return Err(ConfigErr(format!(
+                    "generators_enabled: unknown generator '{id}'"
+                )));
             }
             enabled.insert(id.clone(), on.as_bool().unwrap_or(false));
         }
@@ -131,7 +133,9 @@ fn from_value(v: &Value) -> Result<OrganConfig, ConfigErr> {
                 match sv.get(k) {
                     None | Some(Value::Null) => Ok(None),
                     Some(x) => {
-                        let id = x.as_str().ok_or_else(|| ConfigErr(format!("label '{name}': set.{k} not a string")))?;
+                        let id = x.as_str().ok_or_else(|| {
+                            ConfigErr(format!("label '{name}': set.{k} not a string"))
+                        })?;
                         validate_voice(&registry, id, lang)?;
                         Ok(Some(id.to_string()))
                     }
@@ -141,7 +145,10 @@ fn from_value(v: &Value) -> Result<OrganConfig, ConfigErr> {
                 name.clone(),
                 LabelConfig {
                     declared,
-                    set: VoiceSet { lt: pick("lt", Lang::Lt)?, en: pick("en", Lang::En)? },
+                    set: VoiceSet {
+                        lt: pick("lt", Lang::Lt)?,
+                        en: pick("en", Lang::En)?,
+                    },
                 },
             );
         }
@@ -169,7 +176,9 @@ fn validate_voice(reg: &Registry, id: &str, lang: Lang) -> Result<(), ConfigErr>
             "voice '{id}' is {:?}, expected {lang:?}",
             v.lang
         ))),
-        None => Err(ConfigErr(format!("voice '{id}' is not in the admitted registry"))),
+        None => Err(ConfigErr(format!(
+            "voice '{id}' is not in the admitted registry"
+        ))),
     }
 }
 
@@ -252,10 +261,7 @@ mod tests {
 
     #[test]
     fn deadline_defaults_when_missing() {
-        let doc = DEFAULT_CONFIG_JSON.replace(
-            ",\n    \"lt_network_deadline_ms\": 2500,",
-            ",",
-        );
+        let doc = DEFAULT_CONFIG_JSON.replace(",\n    \"lt_network_deadline_ms\": 2500,", ",");
         let c = parse_config(&doc).unwrap();
         assert_eq!(c.lt_network_deadline_ms, DEFAULT_LT_NETWORK_DEADLINE_MS);
     }

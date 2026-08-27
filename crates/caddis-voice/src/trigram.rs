@@ -167,7 +167,10 @@ pub struct TrigramVerdict {
 /// Classify a segment. `None` = too few letters to even try (caller falls
 /// back to the declared default / LT tie-break).
 pub fn classify(text: &str) -> Option<TrigramVerdict> {
-    let letters = text.chars().filter(|c| c.is_ascii_alphabetic() || "ąčęėįšųūžĄČĘĖĮŠŲŪŽ".contains(*c)).count();
+    let letters = text
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic() || "ąčęėįšųūžĄČĘĖĮŠŲŪŽ".contains(*c))
+        .count();
     if letters < MIN_LETTERS {
         return None;
     }

@@ -99,7 +99,8 @@ pub fn parse(body: &[u8], boundary: &str) -> Result<Vec<Part>, MultipartErr> {
         let head = std::str::from_utf8(&body[head_start..head_end])
             .map_err(|_| MultipartErr("part headers not UTF-8"))?;
         let data_start = head_end + 4;
-        let next_delim = find(body, delim_b, data_start).ok_or(MultipartErr("unterminated part"))?;
+        let next_delim =
+            find(body, delim_b, data_start).ok_or(MultipartErr("unterminated part"))?;
         // Data runs to the CRLF immediately before the next delimiter.
         let mut data_end = next_delim;
         if data_end >= 2 && &body[data_end - 2..data_end] == b"\r\n" {
@@ -167,7 +168,10 @@ pub fn field(parts: &[Part], name: &str) -> Option<String> {
 /// ordered text fields. Returns (body, content_type), or an error when the
 /// audio contains every candidate boundary — a collision would make the body
 /// ambiguous, and a REFUSAL is always cheaper than a corrupted transcription.
-pub fn build(file_bytes: &[u8], fields: &[(&str, &str)]) -> Result<(Vec<u8>, String), MultipartErr> {
+pub fn build(
+    file_bytes: &[u8],
+    fields: &[(&str, &str)],
+) -> Result<(Vec<u8>, String), MultipartErr> {
     // Deterministic candidates, no RNG needed: salt the prefix until one is
     // absent from the audio.
     let mut boundary = String::from("----caddisvoicehorn0123456789");
@@ -240,11 +244,7 @@ mod tests {
     #[test]
     fn roundtrip_file_plus_fields() {
         let wav: &[u8] = &[0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0xFF, 0x00];
-        let (body, ctype) = build(
-            wav,
-            &[("response_format", "json"), ("language", "lt")],
-        )
-        .unwrap();
+        let (body, ctype) = build(wav, &[("response_format", "json"), ("language", "lt")]).unwrap();
         let b = boundary_from_content_type(&ctype).unwrap();
         let parts = parse(&body, &b).unwrap();
         assert_eq!(parts.len(), 3);
@@ -258,7 +258,11 @@ mod tests {
     #[test]
     fn parse_rejects_garbage() {
         assert!(parse(b"not multipart at all", "b").is_err());
-        assert!(parse(b"--b\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\n", "b").is_err()); // unterminated
+        assert!(parse(
+            b"--b\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\n",
+            "b"
+        )
+        .is_err()); // unterminated
     }
 
     #[test]

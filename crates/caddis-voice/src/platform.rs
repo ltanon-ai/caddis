@@ -229,11 +229,7 @@ mod job_ffi {
             len: c_ulong,
         ) -> c_int;
         pub fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> c_int;
-        pub fn OpenProcess(
-            access: c_ulong,
-            inherit: c_int,
-            pid: c_ulong,
-        ) -> *mut c_void;
+        pub fn OpenProcess(access: c_ulong, inherit: c_int, pid: c_ulong) -> *mut c_void;
         pub fn GetCurrentProcess() -> *mut c_void;
         pub fn CloseHandle(handle: *mut c_void) -> c_int;
     }
@@ -241,6 +237,182 @@ mod job_ffi {
 
 #[cfg(windows)]
 pub use job_ffi::*;
+
+// ---------------------------------------------------------------------------
+// SSPI/schannel primitives (consumed by wss.rs — the WSS transport)
+// ---------------------------------------------------------------------------
+
+/// Raw SSPI declarations for a schannel CLIENT TLS stream. Std-only law:
+/// raw `extern "system"` against secur32, no windows-sys. The handshake
+/// loop, record buffering, and WebSocket framing live in wss.rs; this is
+/// only the ABI truth.
+#[cfg(windows)]
+mod sspi_ffi {
+    use std::os::raw::{c_int, c_ulong, c_void};
+
+    pub type SspiStatus = c_int; // SECURITY_STATUS / HRESULT
+
+    // Status codes the TLS client branches on.
+    pub const SEC_E_OK: SspiStatus = 0;
+    pub const SEC_I_CONTINUE_NEEDED: SspiStatus = 0x00090312;
+    pub const SEC_I_CONTEXT_EXPIRED: SspiStatus = 0x00090317;
+    pub const SEC_E_INCOMPLETE_MESSAGE: SspiStatus = 0x80090318u32 as SspiStatus;
+    pub const SEC_I_RENEGOTIATE: SspiStatus = 0x00090321;
+
+    pub const SECPKG_CRED_OUTBOUND: c_ulong = 0x00000002;
+    pub const SECURITY_NATIVE_DREP: c_ulong = 0x00000010;
+
+    pub const SECBUFFER_VERSION: c_ulong = 0;
+    pub const SECBUFFER_EMPTY: c_ulong = 0;
+    pub const SECBUFFER_DATA: c_ulong = 1;
+    pub const SECBUFFER_TOKEN: c_ulong = 2;
+    pub const SECBUFFER_MISSING: c_ulong = 4;
+    pub const SECBUFFER_EXTRA: c_ulong = 5;
+    // sspi.h: STREAM_TRAILER is 6, STREAM_HEADER is 7, STREAM is 10 — a
+    // transposed pair here once cost a full SEC_E_ENCRYPT_FAILURE hunt.
+    pub const SECBUFFER_STREAM_TRAILER: c_ulong = 6;
+    pub const SECBUFFER_STREAM_HEADER: c_ulong = 7;
+    pub const SECBUFFER_ALERT: c_ulong = 17;
+    pub const SECBUFFER_STREAM: c_ulong = 10;
+    pub const ISC_REQ_REPLAY_DETECT: u32 = 0x00000004;
+    pub const ISC_REQ_SEQUENCE_DETECT: u32 = 0x00000008;
+    pub const ISC_REQ_CONFIDENTIALITY: u32 = 0x00000010;
+    pub const ISC_REQ_ALLOCATE_MEMORY: u32 = 0x00000100;
+    pub const ISC_REQ_STREAM: u32 = 0x00008000;
+    pub const ISC_REQ_INTEGRITY: u32 = 0x00010000;
+    /// SECBUFFER_APPLICATION_PROTOCOLS — the ALPN list buffer type.
+    pub const SECBUFFER_APPLICATION_PROTOCOLS: c_ulong = 18;
+    /// SEC_APPLICATION_PROTOCOL_NEGOTIATION_EXT_ALPN.
+    pub const SEC_APPLICATION_PROTOCOL_NEGOTIATION_EXT_ALPN: u32 = 2;
+
+    /// SECPKG_ATTR_STREAM_SIZES class for QueryContextAttributes.
+    pub const SECPKG_ATTR_STREAM_SIZES: c_ulong = 4;
+
+    /// SCH_CREDENTIALS.dwVersion — the version-5 credentials struct.
+    pub const SCH_CREDENTIALS_VERSION: c_ulong = 0x00000005;
+    /// No client certificate: the LT lanes authenticate nothing of ours.
+    pub const SCH_CRED_NO_DEFAULT_CREDS: c_ulong = 0x00000010;
+    /// SCHANNEL_SHUTDOWN control-token VALUE (the buffer carries this dword).
+    pub const SCHANNEL_SHUTDOWN: c_ulong = 0x00000001;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct SecHandle {
+        pub dw_lower: usize,
+        pub dw_upper: usize,
+    }
+
+    impl SecHandle {
+        pub const fn null() -> Self {
+            Self {
+                dw_lower: 0,
+                dw_upper: 0,
+            }
+        }
+        pub fn is_null(&self) -> bool {
+            self.dw_lower == 0 && self.dw_upper == 0
+        }
+    }
+
+    #[repr(C)]
+    pub struct SecBuffer {
+        pub cb_buffer: c_ulong,
+        pub buffer_type: c_ulong,
+        pub pv_buffer: *mut c_void,
+    }
+
+    #[repr(C)]
+    pub struct SecBufferDesc {
+        pub ul_version: c_ulong,
+        pub c_buffers: c_ulong,
+        pub p_buffers: *mut SecBuffer,
+    }
+
+    /// SCH_CREDENTIALS (schannel.h, dwVersion 5). Zeroed tail = default TLS
+    /// parameters (all system-supported protocols), no client certs.
+    #[repr(C)]
+    pub struct SchCredentials {
+        pub dw_version: c_ulong,
+        pub dw_cred_format: c_ulong,
+        pub c_creds: c_ulong,
+        pub pa_cred: *const *const c_void,
+        pub h_root_store: *mut c_void,
+        pub c_mappers: c_ulong,
+        pub aph_mappers: *const *const c_void,
+        pub dw_session_lifespan: c_ulong,
+        pub dw_flags: c_ulong,
+        pub c_tls_parameters: c_ulong,
+        pub p_tls_parameters: *const c_void,
+    }
+
+    /// SecPkgContext_StreamSizes — the record framing sizes
+    /// EncryptMessage/DecryptMessage need.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct StreamSizes {
+        pub cb_header: c_ulong,
+        pub cb_trailer: c_ulong,
+        pub cb_maximum_message: c_ulong,
+        pub c_buffers: c_ulong,
+        pub cb_block_size: c_ulong,
+    }
+
+    #[link(name = "secur32")]
+    extern "system" {
+        pub fn AcquireCredentialsHandleW(
+            psz_principal: *const u16,
+            psz_package: *const u16,
+            f_credential_use: c_ulong,
+            pv_logon_id: *const c_void,
+            p_auth_data: *const c_void,
+            p_get_key_fn: *const c_void,
+            pv_get_key_argument: *const c_void,
+            ph_credential: *mut SecHandle,
+            pts_expiry: *mut i64,
+        ) -> SspiStatus;
+        pub fn FreeCredentialsHandle(ph_credential: *mut SecHandle) -> SspiStatus;
+        pub fn InitializeSecurityContextW(
+            ph_credential: *const SecHandle,
+            ph_context: *const SecHandle,
+            psz_target_name: *const u16,
+            f_context_req: u32,
+            reserved1: c_ulong,
+            target_data_rep: c_ulong,
+            p_input: *const SecBufferDesc,
+            reserved2: c_ulong,
+            ph_new_context: *mut SecHandle,
+            p_output: *mut SecBufferDesc,
+            pf_context_attr: *mut u32,
+            pts_expiry: *mut i64,
+        ) -> SspiStatus;
+        pub fn DeleteSecurityContext(ph_context: *const SecHandle) -> SspiStatus;
+        pub fn ApplyControlToken(
+            ph_context: *const SecHandle,
+            p_input: *const SecBufferDesc,
+        ) -> SspiStatus;
+        pub fn QueryContextAttributesW(
+            ph_context: *const SecHandle,
+            ul_attribute: c_ulong,
+            p_buffer: *mut c_void,
+        ) -> SspiStatus;
+        pub fn EncryptMessage(
+            ph_context: *const SecHandle,
+            f_qop: c_ulong,
+            p_message: *mut SecBufferDesc,
+            message_seq_no: c_ulong,
+        ) -> SspiStatus;
+        pub fn DecryptMessage(
+            ph_context: *const SecHandle,
+            p_message: *mut SecBufferDesc,
+            message_seq_no: c_ulong,
+            pf_qop: *mut c_ulong,
+        ) -> SspiStatus;
+        pub fn FreeContextBuffer(pv_context_buffer: *mut c_void) -> SspiStatus;
+    }
+}
+
+#[cfg(windows)]
+pub use sspi_ffi::*;
 
 #[cfg(windows)]
 use std::os::raw::{c_int, c_ulong, c_void};
