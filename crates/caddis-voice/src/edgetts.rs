@@ -6,7 +6,11 @@
 //! only the declared host, by construction), the two handshake messages,
 //! SSML assembly with escaping, binary/text frame parsing, the R-D
 //! single-attempt deadline, and GA2 MP3 validation of the accumulated
-//! audio.
+//! audio. Output is MP3 24 kHz mono: a live sweep (2026-08-27, tick
+//! probe) showed the endpoint REFUSES every uncompressed format
+//! (`raw-*`/`riff-*` close the stream; only `*-mp3` and `webm-opus`
+//! complete) — decode-to-WAV is the LANE's business, in the ffmpeg
+//! child configured for it.
 //!
 //! The TLS/WSS TRANSPORT is deliberately the NEXT unit (schannel FFI
 //! under the std-only law): [`WsStream`] below is the exact contract it
@@ -37,9 +41,9 @@ pub const SEC_MS_GEC_VERSION: &str = "1-143.0.3650.75";
 /// `declared_endpoints` — GA1 authorizes only the declared host).
 pub const WSS_HOST: &str = "speech.platform.bing.com";
 
-/// Reference-client output format: MP3, 24 kHz mono.
+/// Requested output format: MP3, 24 kHz mono — the endpoint's speech
+/// dialect (every raw/riff PCM variant is refused; see the module doc).
 pub const OUTPUT_FORMAT: &str = "audio-24khz-48kbitrate-mono-mp3";
-
 /// Windows epoch offset (1601-01-01 vs 1970-01-01), in seconds.
 const WIN_EPOCH_OFFSET_S: i64 = 11_644_473_600;
 

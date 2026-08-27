@@ -1210,9 +1210,13 @@ mod tests {
     #[ignore = "live network: cargo test -p caddis-voice wss::tests::live -- --ignored --nocapture"]
     fn live_edge_tts_443_probe() {
         use crate::adapter::AudioFormat;
-        use crate::edgetts::{dial_url, hex_id32, sec_ms_gec, synthesize, Prosody, SessionOpts};
-        use crate::registry::Lane;
+        use crate::edgetts_lane::EdgeTtsLane;
+        use crate::lang::Lang;
+        use crate::registry::{Lane, VoiceSpec};
+        use crate::say::RenderLane;
 
+        // The FULL lane path: GA1 dial + DRM + synthesis (MP3 wire) +
+        // ffmpeg decode → a WAV the dispatcher could cache and play.
         let gen = GeneratorSpec {
             id: "leonas".into(),
             lane: Lane::Network,
@@ -1220,33 +1224,28 @@ mod tests {
             render_cap_ms: 1500,
             declared_endpoints: vec!["wss://speech.platform.bing.com".into()],
         };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap();
-        let url = dial_url(&gen, &sec_ms_gec(now.as_millis()), &hex_id32("live-probe"))
-            .expect("GA1-sanctioned dial");
-        let mut ws = WsClient::connect(&gen, &url, 10_000, 10_000).expect("dial + upgrade");
-        let audio = synthesize(
-            &mut ws,
-            &gen,
-            "lt-LT-LeonasNeural",
-            "Labas, čia tiesioginis ryšio patikrinimas.",
-            &SessionOpts {
-                request_seed: "live-probe-1".into(),
-                deadline_ms: 20_000,
-                cap_ms: 5_000,
-                prosody: Prosody::default(),
-            },
-        )
-        .expect("full synthesis");
-        assert!(matches!(audio.format, AudioFormat::Mp3));
+        let voice = VoiceSpec {
+            id: "lt-LT-LeonasNeural".into(),
+            generator: "leonas".into(),
+            lang: Lang::Lt,
+        };
+        let ffmpeg = "C:/ffmpeg/bin/ffmpeg.exe";
+        assert!(
+            std::path::Path::new(ffmpeg).exists(),
+            "live probe needs the operator-box decoder at {ffmpeg}"
+        );
+        let lane = EdgeTtsLane::new(gen, 20_000, ffmpeg.into());
+        let audio = lane
+            .render(&voice, "Labas, čia tiesioginis ryšio patikrinimas.", 1.0)
+            .expect("full lane render");
+        assert!(matches!(audio.format, AudioFormat::Wav));
         assert!(
             audio.bytes.len() > 1_000,
             "suspiciously small payload: {} bytes",
             audio.bytes.len()
         );
         println!(
-            "LIVE PROBE OK: {} bytes MP3, elapsed {}ms (cap {}ms, over_cap={})",
+            "LIVE PROBE OK: {} bytes WAV (24k mono), lane elapsed {}ms (cap {}ms, over_cap={})",
             audio.bytes.len(),
             audio.elapsed_ms,
             audio.cap_ms,

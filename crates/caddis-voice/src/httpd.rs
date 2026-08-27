@@ -328,7 +328,11 @@ fn route_earcon(
 ) -> (u16, String, Vec<(String, String)>) {
     use crate::json;
     if body.len() > SAY_BODY_CAP {
-        return (413, "{\"error\":\"earcon body over cap\"}".into(), Vec::new());
+        return (
+            413,
+            "{\"error\":\"earcon body over cap\"}".into(),
+            Vec::new(),
+        );
     }
     let Some(svc) = routes.say.clone() else {
         return (
@@ -349,7 +353,13 @@ fn route_earcon(
     };
     let event = match v.get("event").and_then(json::Value::as_str) {
         Some(e) => e.trim().to_string(),
-        None => return (400, "{\"error\":\"event (string) required\"}".into(), Vec::new()),
+        None => {
+            return (
+                400,
+                "{\"error\":\"event (string) required\"}".into(),
+                Vec::new(),
+            )
+        }
     };
     match crate::sayd::SayService::earcon(&svc, &event) {
         Ok(()) => (200, "{\"ok\":true}".into(), Vec::new()),
@@ -488,7 +498,7 @@ mod tests {
     /// A minimal live SayService (stub lane + counting sink) for the
     /// /say + /earcon route tests.
     fn say_service() -> Arc<crate::sayd::SayService> {
-        use crate::adapter::{AdapterErr, RenderedAudio, BreakerConfig};
+        use crate::adapter::{AdapterErr, BreakerConfig, RenderedAudio};
         use crate::say::{PlaySink, RenderLane};
         use crate::sayd::SayService;
         struct Lane;
@@ -563,9 +573,21 @@ mod tests {
         assert_eq!(s, 400);
         let (s, _, _) = route(&routes, "POST", "/say", &[], br#"{"text":"   "}"#);
         assert_eq!(s, 400);
-        let (s, _, _) = route(&routes, "POST", "/say", &[], br#"{"text":"a","priority":3}"#);
+        let (s, _, _) = route(
+            &routes,
+            "POST",
+            "/say",
+            &[],
+            br#"{"text":"a","priority":3}"#,
+        );
         assert_eq!(s, 400);
-        let (s, _, _) = route(&routes, "POST", "/say", &[], br#"{"text":"a","path":"loud"}"#);
+        let (s, _, _) = route(
+            &routes,
+            "POST",
+            "/say",
+            &[],
+            br#"{"text":"a","path":"loud"}"#,
+        );
         assert_eq!(s, 400);
         let (s, _, _) = route(&routes, "POST", "/say", &[], b"not json");
         assert_eq!(s, 400);

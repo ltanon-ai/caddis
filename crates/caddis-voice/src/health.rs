@@ -49,7 +49,6 @@ pub struct HealthState {
 }
 
 impl HealthState {
-
     pub fn boot(organ: &'static str, version: &'static str, ports: Vec<u16>) -> Self {
         HealthState {
             organ,

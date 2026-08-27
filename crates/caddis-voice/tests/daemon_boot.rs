@@ -50,7 +50,10 @@ fn write_config(home: &Path, port: u16) -> PathBuf {
             "C:/Users/ashpac/stt-daemon/stt-token.txt",
             &token.to_string_lossy().replace('\\', "/"),
         )
-        .replace("\"device_name\": \"default\"", "\"device_name\": \"caddis-e2e-no-device\"");
+        .replace(
+            "\"device_name\": \"default\"",
+            "\"device_name\": \"caddis-e2e-no-device\"",
+        );
     let path = home.join("organ.json");
     std::fs::write(&path, doc).unwrap();
     path
@@ -94,10 +97,7 @@ fn wait_healthy(port: u16) {
             "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
         ) {
             assert!(body.contains("\"organ\":\"caddis-voice\""), "{body}");
-            assert!(
-                body.contains(&format!("\"ports_held\":[{port}]")),
-                "{body}"
-            );
+            assert!(body.contains(&format!("\"ports_held\":[{port}]")), "{body}");
             assert!(body.contains("\"spawned_children\":0"), "{body}");
             return;
         }
@@ -160,7 +160,11 @@ fn daemon_boots_serves_and_guards() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut health = String::new();
     while Instant::now() < deadline {
-        let (s, b) = http(d.port, "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").unwrap();
+        let (s, b) = http(
+            d.port,
+            "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        )
+        .unwrap();
         assert_eq!(s, 200);
         health = b;
         if health.contains("\"dropped\":1") {
@@ -168,8 +172,14 @@ fn daemon_boots_serves_and_guards() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(health.contains("\"soak\""), "soak section present: {health}");
-    assert!(health.contains("\"dropped\":1"), "lane drop counted: {health}");
+    assert!(
+        health.contains("\"soak\""),
+        "soak section present: {health}"
+    );
+    assert!(
+        health.contains("\"dropped\":1"),
+        "lane drop counted: {health}"
+    );
     assert!(
         health.contains("\"windows\""),
         "availability windows present: {health}"

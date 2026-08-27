@@ -479,12 +479,7 @@ impl SayQueue {
     /// only loss valve. `None` = nothing due (an empty queue or a head
     /// still inside its due delay is the queue correctly waiting, not a
     /// stall).
-    pub fn pop(
-        &mut self,
-        now: f64,
-        clock: &IdleClock,
-        ledger: &mut DropLedger,
-    ) -> Option<SayItem> {
+    pub fn pop(&mut self, now: f64, clock: &IdleClock, ledger: &mut DropLedger) -> Option<SayItem> {
         loop {
             // Best READY item: priority first, FIFO within a class.
             let best = self
@@ -492,11 +487,7 @@ impl SayQueue {
                 .iter()
                 .enumerate()
                 .filter(|(_, i)| now >= i.due_at)
-                .min_by(|a, b| {
-                    a.1.priority
-                        .cmp(&b.1.priority)
-                        .then(a.1.seq.cmp(&b.1.seq))
-                })
+                .min_by(|a, b| a.1.priority.cmp(&b.1.priority).then(a.1.seq.cmp(&b.1.seq)))
                 .map(|(idx, _)| idx)?;
             let item = self.items.remove(best);
             // Staleness budget: CUES only, in SILENT seconds. Waiting
@@ -606,9 +597,8 @@ pub fn wav_cache_key(
     length_scale: f64,
     phrase_pack_version: &str,
 ) -> String {
-    let composite = format!(
-        "{text}:{voice}:{engine}:{rate}:{pitch}:{length_scale}:{phrase_pack_version}"
-    );
+    let composite =
+        format!("{text}:{voice}:{engine}:{rate}:{pitch}:{length_scale}:{phrase_pack_version}");
     sha256_hex(composite.as_bytes())[..24].to_string()
 }
 
@@ -676,7 +666,8 @@ impl WavCache {
         self.bytes += audio.bytes.len();
         self.tick += 1;
         let last_used = self.tick;
-        self.entries.insert(key.to_string(), CacheEntry { audio, last_used });
+        self.entries
+            .insert(key.to_string(), CacheEntry { audio, last_used });
         self.stores += 1;
         true
     }
@@ -780,7 +771,11 @@ mod tests {
         let mut l = DropLedger::new(None);
         l.record(&item("bee", "job done", 1, false), "coalesced", 10.0);
         l.record(&item("bee", "job failed", 1, true), "stale_age", 11.0);
-        l.record(&item("bee", "render blew up", 2, true), "render_error", 12.0);
+        l.record(
+            &item("bee", "render blew up", 2, true),
+            "render_error",
+            12.0,
+        );
         let h = l.health();
         assert_eq!(h.total, 3);
         assert_eq!(h.undelivered, 2); // coalesced is NOT loss
@@ -833,14 +828,38 @@ mod tests {
         let base = wav_cache_key("hello", "ryan", "piper", "+0%", "low", 1.0, "1.0.0");
         assert_eq!(base.len(), 24);
         assert!(base.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(base, wav_cache_key("hello", "ryan", "piper", "+0%", "low", 1.0, "1.0.0"));
-        assert_ne!(base, wav_cache_key("hellO", "ryan", "piper", "+0%", "low", 1.0, "1.0.0"));
-        assert_ne!(base, wav_cache_key("hello", "leonas", "piper", "+0%", "low", 1.0, "1.0.0"));
-        assert_ne!(base, wav_cache_key("hello", "ryan", "leonas", "+0%", "low", 1.0, "1.0.0"));
-        assert_ne!(base, wav_cache_key("hello", "ryan", "piper", "+5%", "low", 1.0, "1.0.0"));
-        assert_ne!(base, wav_cache_key("hello", "ryan", "piper", "+0%", "high", 1.0, "1.0.0"));
-        assert_ne!(base, wav_cache_key("hello", "ryan", "piper", "+0%", "low", 0.9, "1.0.0"));
-        assert_ne!(base, wav_cache_key("hello", "ryan", "piper", "+0%", "low", 1.0, "2.0.0"));
+        assert_eq!(
+            base,
+            wav_cache_key("hello", "ryan", "piper", "+0%", "low", 1.0, "1.0.0")
+        );
+        assert_ne!(
+            base,
+            wav_cache_key("hellO", "ryan", "piper", "+0%", "low", 1.0, "1.0.0")
+        );
+        assert_ne!(
+            base,
+            wav_cache_key("hello", "leonas", "piper", "+0%", "low", 1.0, "1.0.0")
+        );
+        assert_ne!(
+            base,
+            wav_cache_key("hello", "ryan", "leonas", "+0%", "low", 1.0, "1.0.0")
+        );
+        assert_ne!(
+            base,
+            wav_cache_key("hello", "ryan", "piper", "+5%", "low", 1.0, "1.0.0")
+        );
+        assert_ne!(
+            base,
+            wav_cache_key("hello", "ryan", "piper", "+0%", "high", 1.0, "1.0.0")
+        );
+        assert_ne!(
+            base,
+            wav_cache_key("hello", "ryan", "piper", "+0%", "low", 0.9, "1.0.0")
+        );
+        assert_ne!(
+            base,
+            wav_cache_key("hello", "ryan", "piper", "+0%", "low", 1.0, "2.0.0")
+        );
     }
 
     fn audio(n: usize) -> CachedAudio {
@@ -859,7 +878,10 @@ mod tests {
         assert!(c.get("k").is_some());
         assert!(c.get("k").is_some());
         let s = c.stats();
-        assert_eq!((s.hits, s.misses, s.stores, s.evictions, s.rejects), (2, 1, 1, 0, 0));
+        assert_eq!(
+            (s.hits, s.misses, s.stores, s.evictions, s.rejects),
+            (2, 1, 1, 0, 0)
+        );
         assert_eq!((s.entries, s.bytes), (1, 10));
     }
 
@@ -951,7 +973,14 @@ mod tests {
         // Fill with criticals only: no eviction, no refusal.
         let mut q2 = SayQueue::with_bounds(2, 2.0, 8.0);
         for i in 0..5 {
-            let adm = q2.submit("alarm", &format!("crit {i}"), true, 0, 100.0 + i as f64, 0.0);
+            let adm = q2.submit(
+                "alarm",
+                &format!("crit {i}"),
+                true,
+                0,
+                100.0 + i as f64,
+                0.0,
+            );
             assert!(matches!(adm, Admission::Queued), "crit {i}");
         }
         assert_eq!(q2.len(), 5); // cap exceeded rather than losing a critical
@@ -988,10 +1017,16 @@ mod tests {
     fn stale_cue_dropped_via_ledger_scan_continues() {
         let (mut q, c, mut l) = fresh();
         // A cue admitted at t=0 with busy 0; system silent the whole time.
-        assert_eq!(q.submit("ev", "old cue", false, 2, 0.0, 0.0), Admission::Queued);
+        assert_eq!(
+            q.submit("ev", "old cue", false, 2, 0.0, 0.0),
+            Admission::Queued
+        );
         // A narration admitted at t=9 (still fresh by construction —
         // narration never ages, and its idle wait starts at admission).
-        assert_eq!(q.submit("ev", "real report", true, 2, 9.0, 0.0), Admission::Queued);
+        assert_eq!(
+            q.submit("ev", "real report", true, 2, 9.0, 0.0),
+            Admission::Queued
+        );
         // Pop at t=20: the cue waited 20 SILENT seconds (> 8) -> dropped
         // loudly; the narration behind it is served in the same pop call.
         let got = q.pop(20.0, &c, &mut l).unwrap();
@@ -1008,18 +1043,28 @@ mod tests {
         let (mut q, mut c, mut l) = fresh();
         // Cue enqueued at t=0, busy snapshot 0. The system then SPEAKS
         // 0..15 (a long narration in flight).
-        assert_eq!(q.submit("ev", "behind speech", false, 2, 0.0, 0.0), Admission::Queued);
+        assert_eq!(
+            q.submit("ev", "behind speech", false, 2, 0.0, 0.0),
+            Admission::Queued
+        );
         c.start_speaking(0.0);
         // Pop attempt at t=14: only 14 wall, 14 spoken -> idle wait 0.
         let got = q.pop(14.0, &c, &mut l).unwrap();
         assert_eq!(got.text, "behind speech");
-        assert_eq!(l.health().total, 0, "waiting behind speech is not staleness");
+        assert_eq!(
+            l.health().total,
+            0,
+            "waiting behind speech is not staleness"
+        );
     }
 
     #[test]
     fn narration_never_ages_out() {
         let (mut q, c, mut l) = fresh();
-        assert_eq!(q.submit("r", "long report", true, 2, 0.0, 0.0), Admission::Queued);
+        assert_eq!(
+            q.submit("r", "long report", true, 2, 0.0, 0.0),
+            Admission::Queued
+        );
         // A hundred silent seconds later, narration is still served.
         let got = q.pop(100.0, &c, &mut l).unwrap();
         assert_eq!(got.text, "long report");
@@ -1047,7 +1092,7 @@ mod tests {
         c.start_speaking(12.0);
         q.submit("x", "mid speech", false, 2, 15.0, c.busy_now(15.0));
         c.stop_speaking(20.0); // busy_total = 18
-        // At t=23: wall wait 8, busy added since enqueue = 3 -> idle 5 < 8.
+                               // At t=23: wall wait 8, busy added since enqueue = 3 -> idle 5 < 8.
         assert!(q.pop(23.0, &c, &mut l).is_some());
         assert_eq!(l.health().total, 0);
     }

@@ -381,7 +381,11 @@ impl SoakShared {
     /// non-fatal (module doc law).
     fn append(&self, row: &str) {
         let Some(path) = &self.ledger else { return };
-        let mut f = match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let mut f = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             Ok(f) => f,
             Err(e) => {
                 eprintln!(
@@ -396,7 +400,6 @@ impl SoakShared {
         }
     }
 }
-
 
 fn ledger_row(op: &str, lane: &str, ok: bool, cache_hit: bool, ms: u64) -> String {
     json::to_string(&Value::Obj(vec![
@@ -451,10 +454,8 @@ mod tests {
     use std::fs;
 
     fn tmpdir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "caddis-voice-soak-{}-{name}",
-            std::process::id()
-        ));
+        let d =
+            std::env::temp_dir().join(format!("caddis-voice-soak-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
@@ -505,7 +506,10 @@ mod tests {
             Some("transcribe")
         );
         let route_row = json::parse(lines[4]).unwrap();
-        assert_eq!(route_row.get("lane").and_then(Value::as_str), Some("_route"));
+        assert_eq!(
+            route_row.get("lane").and_then(Value::as_str),
+            Some("_route")
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -553,7 +557,12 @@ mod tests {
         // all: piper 2/3, leonas 0/1; combined 2/4 (route row excluded).
         let p = get("all", "piper").unwrap();
         assert_eq!((p.ok, p.total), (2, 3));
-        let combined = &w.windows.iter().find(|w| w.label == "all").unwrap().combined;
+        let combined = &w
+            .windows
+            .iter()
+            .find(|w| w.label == "all")
+            .unwrap()
+            .combined;
         assert_eq!((combined.ok, combined.total), (2, 4));
         let _ = fs::remove_dir_all(&dir);
     }

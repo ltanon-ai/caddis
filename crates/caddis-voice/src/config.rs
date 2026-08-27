@@ -69,6 +69,12 @@ pub struct OrganConfig {
     pub token_file: String,
     /// Offline piper lane boot facts (exe + per-voice models).
     pub piper: PiperConfig,
+    /// The network lane's MP3 decoder: an ffmpeg-style CLI exe that
+    /// reads MP3 on stdin and writes WAV on stdout. Empty = leonas/ona
+    /// lanes not wired (LT speech drops loudly) — same honest-degraded
+    /// law as an empty piper exe. The endpoint refuses uncompressed
+    /// output (live sweep 2026-08-27), so decode is not optional.
+    pub mp3_decoder_exe: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,7 +110,7 @@ pub const DEFAULT_CONFIG_JSON: &str = r#"{
     "listen_port": 8768,
     "token_file": "C:/Users/ashpac/stt-daemon/stt-token.txt",
     "piper": {"exe": "", "voices": {}},
-    "lt_network_deadline_ms": 2500,
+    "mp3_decoder_exe": "",
     "labels": {
         "sergeant": {"declared": null, "set": {"lt": "lt-LT-LeonasNeural", "en": "en_US-ryan"}},
         "kamane":   {"declared": null, "set": {"lt": "lt-LT-OnaNeural",    "en": "en_US-amy"}}
@@ -267,6 +273,20 @@ fn from_value(v: &Value) -> Result<OrganConfig, ConfigErr> {
         }
     }
 
+    // mp3_decoder_exe: the network lane's decode child. Empty = network
+    // lanes unwired (the loud-drop law); any value must at least look
+    // like a path.
+    let mp3_decoder_exe = v
+        .get("mp3_decoder_exe")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_default();
+    if mp3_decoder_exe.contains(char::is_whitespace) {
+        return Err(ConfigErr(
+            "mp3_decoder_exe: path with whitespace refused (quote-free spawn law)".into(),
+        ));
+    }
+
     Ok(OrganConfig {
         registry,
         defaults,
@@ -277,6 +297,7 @@ fn from_value(v: &Value) -> Result<OrganConfig, ConfigErr> {
         listen_port,
         token_file,
         piper,
+        mp3_decoder_exe,
     })
 }
 
@@ -401,7 +422,10 @@ mod tests {
         // A slice-(b)-era config file (no P4 keys) still boots with defaults.
         let doc = DEFAULT_CONFIG_JSON
             .replace(",\n    \"listen_port\": 8768,", ",")
-            .replace(",\n    \"token_file\": \"C:/Users/ashpac/stt-daemon/stt-token.txt\"", "")
+            .replace(
+                ",\n    \"token_file\": \"C:/Users/ashpac/stt-daemon/stt-token.txt\"",
+                "",
+            )
             .replace(",\n    \"piper\": {\"exe\": \"\", \"voices\": {}}", "");
         let c = parse_config(&doc).unwrap();
         assert_eq!(c.listen_port, DEFAULT_LISTEN_PORT);

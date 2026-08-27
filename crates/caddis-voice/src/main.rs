@@ -24,8 +24,8 @@ use caddis_voice::horn::{HornSettings, OsEngineWorld, Supervisor};
 use caddis_voice::httpd::{self, OrganRoutes};
 use caddis_voice::say::RenderLane;
 use caddis_voice::{
-    bind_exclusive, load_config, AudioOut, BreakerConfig, HealthState, HornService, PiperAdapter,
-    PiperPaths, SayService, TokenGuard, VERSION,
+    bind_exclusive, load_config, AudioOut, BreakerConfig, EdgeTtsLane, HealthState, HornService,
+    PiperAdapter, PiperPaths, SayService, TokenGuard, VERSION,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -86,7 +86,10 @@ fn run_daemon(argv: &[String]) -> i32 {
     let (config, source) = match load_config(&cfg_path) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("daemon: config {}: {e} — REFUSING to boot on defaults", cfg_path.display());
+            eprintln!(
+                "daemon: config {}: {e} — REFUSING to boot on defaults",
+                cfg_path.display()
+            );
             return 2;
         }
     };
@@ -162,8 +165,9 @@ fn run_daemon(argv: &[String]) -> i32 {
     // The real render lanes from config. Piper with an empty exe = lane
     // simply not wired: every /say then drops LOUDLY (ledger + fail
     // chime) — an honest degraded boot, never a wrong-voice render.
-    // leonas/ona (network LT) are admitted in the registry; their EdgeTts
-    // lane lands in the next P4 slice.
+    // Network LT lanes (leonas + ona): direct edge-tts, one lane per
+    // generator, dialing only its declared endpoint (GA1), under the
+    // config's R-D single-attempt budget.
     let mut lanes: Vec<Box<dyn RenderLane + Send>> = Vec::new();
     if config.piper.exe.is_empty() {
         eprintln!(
@@ -175,7 +179,13 @@ fn run_daemon(argv: &[String]) -> i32 {
             .generator("piper")
             .map(|g| g.render_cap_ms)
             .unwrap_or(1500);
-        let fallback = config.piper.voices.values().next().cloned().unwrap_or_default();
+        let fallback = config
+            .piper
+            .voices
+            .values()
+            .next()
+            .cloned()
+            .unwrap_or_default();
         let mut adapter = PiperAdapter::new(
             PiperPaths {
                 exe: config.piper.exe.clone(),
@@ -192,6 +202,33 @@ fn run_daemon(argv: &[String]) -> i32 {
             config.piper.voices.len()
         );
         lanes.push(Box::new(adapter));
+    }
+    for id in ["leonas", "ona"] {
+        if config.generators_enabled.get(id) != Some(&true) {
+            eprintln!(
+                "daemon: {id} lane OFF (generators_enabled) — LT speech on {id} drops loudly"
+            );
+            continue;
+        }
+        if config.mp3_decoder_exe.is_empty() {
+            eprintln!(
+                "daemon: {id} lane OFF (mp3_decoder_exe empty — no decoder, no lane) — LT speech on {id} drops loudly"
+            );
+            continue;
+        }
+        let Some(spec) = config.registry.generator(id) else {
+            eprintln!("daemon: {id} lane OFF (not in registry) — misconfig, refusing to wire");
+            continue;
+        };
+        lanes.push(Box::new(EdgeTtsLane::new(
+            spec.clone(),
+            config.lt_network_deadline_ms,
+            config.mp3_decoder_exe.clone(),
+        )));
+        eprintln!(
+            "daemon: {id} lane ON (edge-tts mp3 + decode, deadline {}ms, cap {}ms)",
+            config.lt_network_deadline_ms, spec.render_cap_ms
+        );
     }
 
     let sink = AudioOut::new(&config.device_name);

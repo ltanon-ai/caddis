@@ -50,7 +50,11 @@ mod win {
             ])
             .output()
             .unwrap();
-        assert_eq!(st.status.code(), Some(10), "unreadable wav => EXIT_BAD_INPUT");
+        assert_eq!(
+            st.status.code(),
+            Some(10),
+            "unreadable wav => EXIT_BAD_INPUT"
+        );
     }
 
     #[test]
@@ -60,7 +64,11 @@ mod win {
         let wav = dir.join("bad.wav");
         std::fs::write(&wav, b"RIFF----WAVEjunk").unwrap();
         let st = bin()
-            .args(["play-view", wav.to_str().unwrap(), "no-such-device-caddis-test"])
+            .args([
+                "play-view",
+                wav.to_str().unwrap(),
+                "no-such-device-caddis-test",
+            ])
             .output()
             .unwrap();
         assert_eq!(st.status.code(), Some(10), "non-PCM16 => EXIT_BAD_INPUT");
@@ -76,7 +84,11 @@ mod win {
         // health-truth law says unknown name is NO_VIEW, never a default
         // fallback.
         let st = bin()
-            .args(["play-view", wav.to_str().unwrap(), "no-such-device-caddis-test"])
+            .args([
+                "play-view",
+                wav.to_str().unwrap(),
+                "no-such-device-caddis-test",
+            ])
             .output()
             .unwrap();
         assert_eq!(

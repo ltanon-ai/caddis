@@ -38,7 +38,7 @@ use crate::adapter::BreakerConfig;
 use crate::config::{LabelConfig, OrganConfig};
 use crate::detect::{DetectOptions, Detector, Utterance};
 use crate::earcons::{synth_wav, EarconSet, EARCON_SAMPLE_RATE};
-use crate::gramophone::{Admission, DropLedger, DropHealth, IdleClock, SayItem, SayQueue};
+use crate::gramophone::{Admission, DropHealth, DropLedger, IdleClock, SayItem, SayQueue};
 use crate::lang::Lang;
 use crate::say::{Dispatcher, PlaySink, RenderLane, SayOutcome};
 use crate::voiceset::{self, RouteDecision, SpeechPath};
@@ -408,10 +408,14 @@ fn drain(worker: &mut Worker, front: &Mutex<FrontStage>, now_s: f64, now_ms: u12
     let mut spoken = 0;
     loop {
         let due = {
-            let Ok(mut f) = front.lock() else { return spoken };
+            let Ok(mut f) = front.lock() else {
+                return spoken;
+            };
             worker.next_due(&mut f, now_s)
         };
-        let Some((item, path)) = due else { return spoken };
+        let Some((item, path)) = due else {
+            return spoken;
+        };
         let delta = worker.speak_item(item, path, now_s, now_ms);
         spoken += delta.spoken + delta.dropped;
         if let Ok(mut f) = front.lock() {
@@ -496,7 +500,10 @@ impl SayService {
                     match rx.recv_timeout(WORKER_POLL) {
                         Ok(Msg::Earcon(ev)) => {
                             if worker.play_earcon(&ev, wall_s())
-                                && front_w.lock().map(|mut f| f.counts.earcons_played += 1).is_err()
+                                && front_w
+                                    .lock()
+                                    .map(|mut f| f.counts.earcons_played += 1)
+                                    .is_err()
                             {
                                 // Counting is best-effort; the chime played.
                             }
@@ -689,12 +696,28 @@ mod tests {
         {
             let mut f = front.lock().unwrap();
             assert!(matches!(
-                submit_stage(&mut f, "sergeant", "Labas rytas, operatoriau.", true, 1, SpeechPath::GeneralSpeech, 10.0),
+                submit_stage(
+                    &mut f,
+                    "sergeant",
+                    "Labas rytas, operatoriau.",
+                    true,
+                    1,
+                    SpeechPath::GeneralSpeech,
+                    10.0
+                ),
                 Admission::Queued
             ));
             // Same line inside the window: coalesced (non-critical).
             assert!(matches!(
-                submit_stage(&mut f, "sergeant", "Labas rytas, operatoriau.", true, 1, SpeechPath::GeneralSpeech, 10.5),
+                submit_stage(
+                    &mut f,
+                    "sergeant",
+                    "Labas rytas, operatoriau.",
+                    true,
+                    1,
+                    SpeechPath::GeneralSpeech,
+                    10.5
+                ),
                 Admission::Coalesced
             ));
         }
@@ -729,9 +752,25 @@ mod tests {
             let mut f = front.lock().unwrap();
             // LT text, label with NO LT voice: GeneralSpeech substitutes
             // the first admitted LT voice (LeonasNeural) + warning earcon.
-            submit_stage(&mut f, "enonly", "Labas, čia substitucija.", true, 1, SpeechPath::GeneralSpeech, 5.0);
+            submit_stage(
+                &mut f,
+                "enonly",
+                "Labas, čia substitucija.",
+                true,
+                1,
+                SpeechPath::GeneralSpeech,
+                5.0,
+            );
             // Same label on the confirm path: honest degrade (chime + ledger).
-            submit_stage(&mut f, "enonly", "Patvirtinta.", true, 1, SpeechPath::GatedConfirm, 6.0);
+            submit_stage(
+                &mut f,
+                "enonly",
+                "Patvirtinta.",
+                true,
+                1,
+                SpeechPath::GatedConfirm,
+                6.0,
+            );
         }
         drain(&mut w, &front, 8.0, 8_000);
         let c = front.lock().unwrap().counts.clone();
@@ -741,7 +780,11 @@ mod tests {
         // Two chimes + one speech = three sink plays.
         assert_eq!(inner.plays.load(std::sync::atomic::Ordering::Relaxed), 3);
         let h = w.ledger_health();
-        assert_eq!(h.by_reason.get("render_error"), Some(&1), "degrade is lossy");
+        assert_eq!(
+            h.by_reason.get("render_error"),
+            Some(&1),
+            "degrade is lossy"
+        );
         assert!(h.undelivered >= 1);
     }
 
@@ -762,25 +805,59 @@ mod tests {
         let front = Mutex::new(FrontStage::new());
         {
             let mut f = front.lock().unwrap();
-            submit_stage(&mut f, "sergeant", "Hello operator.", true, 1, SpeechPath::GeneralSpeech, 1.0);
-            submit_stage(&mut f, "sergeant", "Different line entirely.", true, 1, SpeechPath::GeneralSpeech, 1.1);
+            submit_stage(
+                &mut f,
+                "sergeant",
+                "Hello operator.",
+                true,
+                1,
+                SpeechPath::GeneralSpeech,
+                1.0,
+            );
+            submit_stage(
+                &mut f,
+                "sergeant",
+                "Different line entirely.",
+                true,
+                1,
+                SpeechPath::GeneralSpeech,
+                1.1,
+            );
         }
         drain(&mut w, &front, 2.0, 2_000);
         let c = front.lock().unwrap().counts.clone();
         assert_eq!(c.spoken, 1);
         assert_eq!(c.dropped, 1, "second render tripped the capacity-1 breaker");
         assert_eq!(c.earcons_played, 1, "the fail chime fired");
-        assert_eq!(inner.plays.load(std::sync::atomic::Ordering::Relaxed), 2, "one speech + one chime");
+        assert_eq!(
+            inner.plays.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "one speech + one chime"
+        );
     }
 
     #[test]
     fn stand_down_ledgers_pending() {
         let (sink, _inner) = new_sink();
-        let mut w = Worker::new(OrganConfig::default(), lanes_both(), Box::new(sink), None, big_breaker());
+        let mut w = Worker::new(
+            OrganConfig::default(),
+            lanes_both(),
+            Box::new(sink),
+            None,
+            big_breaker(),
+        );
         let front = Mutex::new(FrontStage::new());
         {
             let mut f = front.lock().unwrap();
-            submit_stage(&mut f, "sergeant", "Nebaigta eilutė.", true, 1, SpeechPath::GeneralSpeech, 1.0);
+            submit_stage(
+                &mut f,
+                "sergeant",
+                "Nebaigta eilutė.",
+                true,
+                1,
+                SpeechPath::GeneralSpeech,
+                1.0,
+            );
         }
         let n = {
             let mut f = front.lock().unwrap();
@@ -847,8 +924,24 @@ mod tests {
         let front = Mutex::new(FrontStage::new());
         {
             let mut f = front.lock().unwrap();
-            submit_stage(&mut f, "sergeant", "Labas, operatoriau.", true, 1, SpeechPath::GeneralSpeech, 10.0);
-            submit_stage(&mut f, "unknown-label", "Patvirtinta.", true, 1, SpeechPath::GatedConfirm, 11.0);
+            submit_stage(
+                &mut f,
+                "sergeant",
+                "Labas, operatoriau.",
+                true,
+                1,
+                SpeechPath::GeneralSpeech,
+                10.0,
+            );
+            submit_stage(
+                &mut f,
+                "unknown-label",
+                "Patvirtinta.",
+                true,
+                1,
+                SpeechPath::GatedConfirm,
+                11.0,
+            );
         }
         drain(&mut w, &front, 12.0, 12_000);
         let snap = soak.snapshot();

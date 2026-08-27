@@ -109,6 +109,7 @@ pub mod configio;
 pub mod detect;
 pub mod earcons;
 pub mod edgetts;
+pub mod edgetts_lane;
 pub mod gramophone;
 pub mod guards;
 pub mod health;
@@ -117,11 +118,12 @@ pub mod httpd;
 pub mod job;
 pub mod json;
 pub mod lang;
+pub mod mp3dec;
 pub mod multipart;
 pub mod mutex;
 pub mod piper;
-pub mod play;
 pub mod platform;
+pub mod play;
 pub mod registry;
 pub mod say;
 pub mod sayd;
@@ -146,7 +148,9 @@ pub use configio::{
 };
 pub use detect::{CacheStats, Decision, DetectOptions, Detector, Layer, Segment, Utterance};
 pub use earcons::{parse_set as parse_earcon_set, EarconSet, Motif, EARCON_SET_JSON};
+pub use earcons::{synth_wav as synth_earcon_wav, EARCON_SAMPLE_RATE};
 pub use edgetts::{dial_url, sec_ms_gec, synthesize as edge_synthesize, Prosody, SessionOpts};
+pub use edgetts_lane::EdgeTtsLane;
 pub use gramophone::{
     wav_cache_key, Admission, CachedAudio, DropHealth, DropLedger, IdleClock, SayItem, SayQueue,
     WavCache, LOSSY_REASONS,
@@ -161,17 +165,16 @@ pub use httpd::{route as route_organ, OrganRoutes};
 pub use job::{ChildScope, DeadManSwitch, JobErr};
 pub use lang::Lang;
 pub use mutex::{bind_exclusive, PortMutexErr};
-pub use soak::{DetectTelemetry, LaneCounters, SoakShared, SoakSnapshot, SoakWindows, WindowStat};
 pub use piper::{PiperAdapter, PiperPaths, PIPER_KILL_DEADLINE_MS};
 pub use play::{
-    is_default as is_default_device, read_wav, fit_channels, resample, AudioOut, Pcm,
-    PlaybackOutcome, PlayFail, EXIT_BAD_INPUT, EXIT_NO_VIEW, EXIT_OK, EXIT_OPEN_FAILED,
-    EXIT_PLAY_FAILED, PLAY_STARTUP_BUDGET_S, TIMEOUT_RC,
+    fit_channels, is_default as is_default_device, read_wav, resample, AudioOut, Pcm, PlayFail,
+    PlaybackOutcome, EXIT_BAD_INPUT, EXIT_NO_VIEW, EXIT_OK, EXIT_OPEN_FAILED, EXIT_PLAY_FAILED,
+    PLAY_STARTUP_BUDGET_S, TIMEOUT_RC,
 };
 pub use registry::{GeneratorSpec, Lane, Registry, RegistryErr, VoiceSpec, INTERNAL_GENERATORS};
 pub use say::{Dispatcher, PlaySink, RenderLane, SayOutcome};
 pub use sayd::{EarconPlayer, SayCounts, SayService, Worker as SayWorker};
-pub use earcons::{synth_wav as synth_earcon_wav, EARCON_SAMPLE_RATE};
+pub use soak::{DetectTelemetry, LaneCounters, SoakShared, SoakSnapshot, SoakWindows, WindowStat};
 pub use transcribe::{HornService, WavMeta, ENGINE_NAME, MIN_AUDIO_S};
 pub use voiceset::{RouteDecision, SpeechPath, VoiceSet};
 pub use vram::{probe as probe_vram, AdapterMem, VramReport};

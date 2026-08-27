@@ -49,7 +49,10 @@ fn err<T>(msg: impl Into<String>) -> Result<T, AdapterErr> {
     Err(AdapterErr(msg.into()))
 }
 
-/// Output container format of a render.
+/// Output container format of a render. The network lane's WIRE format
+/// is MP3 (the endpoint refuses every uncompressed variant — live
+/// sweep 2026-08-27); it decodes to RIFF/WAVE before the render is
+/// returned, so everything downstream (cache, play, GA2) speaks WAV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioFormat {
     Wav,
@@ -164,8 +167,8 @@ pub fn authorize_dial(gen: &GeneratorSpec, url: &str) -> Result<DialPlan, Adapte
 // GA2 — response validation
 // ---------------------------------------------------------------------------
 
-/// GA2: validate an MP3 payload from a network lane. Frame-sync or ID3
-/// start, size-bounded, never markup.
+/// GA2: validate an MP3 payload from the network lane. Frame-sync or
+/// ID3 start, size-bounded, never markup.
 pub fn validate_mp3(bytes: &[u8]) -> Result<usize, AdapterErr> {
     if bytes.is_empty() {
         return err("GA2: empty audio payload");
@@ -191,7 +194,7 @@ pub fn validate_mp3(bytes: &[u8]) -> Result<usize, AdapterErr> {
     Ok(bytes.len())
 }
 
-/// Offline-lane equivalent: piper's WAV output must be a sane RIFF file
+/// GA2: a rendered WAV payload (both lanes) must be a sane RIFF file
 /// (reuses the horn's proven `wav_meta`) with a plausible duration.
 pub fn validate_wav(bytes: &[u8]) -> Result<(), AdapterErr> {
     if bytes.len() > MAX_AUDIO_BYTES {
@@ -450,6 +453,22 @@ mod tests {
     }
 
     #[test]
+    fn ga2_mp3_sync_id3_and_rejects() {
+        let mut mp3 = vec![0xFF, 0xFB, 0x90, 0x00];
+        mp3.extend_from_slice(&[0u8; 400]);
+        assert_eq!(validate_mp3(&mp3).unwrap(), mp3.len());
+        let mut id3 = b"ID3\x04\x00".to_vec();
+        id3.extend_from_slice(&[0xFF, 0xFB, 0x00, 0x00]);
+        id3.extend_from_slice(&[0u8; 100]);
+        assert!(validate_mp3(&id3).is_ok());
+        assert!(validate_mp3(b"").is_err());
+        assert!(validate_mp3(b"<?xml version='1.0'?><err/>").is_err());
+        assert!(validate_mp3(b"  \n <speak>hello</speak>").is_err());
+        assert!(validate_mp3(&[0u8; 100]).is_err());
+        assert!(validate_mp3(&[0xFFu8; MAX_AUDIO_BYTES + 1]).is_err());
+    }
+
+    #[test]
     fn ga1_offline_never_dials() {
         let gen = GeneratorSpec {
             id: "piper".into(),
@@ -471,22 +490,6 @@ mod tests {
         assert!(authorize_dial(&gen, "not-a-url").is_err());
         assert!(authorize_dial(&gen, "ftp://speech.platform.bing.com").is_err());
         assert!(authorize_dial(&gen, "wss:// speech.com").is_err());
-    }
-
-    #[test]
-    fn ga2_mp3_sync_id3_and_rejects() {
-        let mut mp3 = vec![0xFF, 0xFB, 0x90, 0x00];
-        mp3.extend_from_slice(&[0u8; 400]);
-        assert_eq!(validate_mp3(&mp3).unwrap(), mp3.len());
-        let mut id3 = b"ID3\x04\x00".to_vec();
-        id3.extend_from_slice(&[0xFF, 0xFB, 0x00, 0x00]);
-        id3.extend_from_slice(&[0u8; 100]);
-        assert!(validate_mp3(&id3).is_ok());
-        assert!(validate_mp3(b"").is_err());
-        assert!(validate_mp3(b"<?xml version='1.0'?><err/>").is_err());
-        assert!(validate_mp3(b"  \n <speak>hello</speak>").is_err());
-        assert!(validate_mp3(&[0u8; 100]).is_err());
-        assert!(validate_mp3(&[0xFFu8; MAX_AUDIO_BYTES + 1]).is_err());
     }
 
     #[test]

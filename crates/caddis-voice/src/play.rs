@@ -119,8 +119,7 @@ pub fn read_wav(bytes: &[u8]) -> Option<Pcm> {
                 if len < 16 {
                     return None;
                 }
-                let audio_format =
-                    u16::from_le_bytes([bytes[body], bytes[body + 1]]);
+                let audio_format = u16::from_le_bytes([bytes[body], bytes[body + 1]]);
                 if audio_format != 1 {
                     return None; // not PCM
                 }
@@ -272,11 +271,7 @@ mod winmm {
     #[link(name = "winmm")]
     extern "system" {
         fn waveOutGetNumDevs() -> u32;
-        fn waveOutGetDevCapsW(
-            device_id: usize,
-            caps: *mut WaveOutCapsW,
-            caps_size: u32,
-        ) -> u32;
+        fn waveOutGetDevCapsW(device_id: usize, caps: *mut WaveOutCapsW, caps_size: u32) -> u32;
         fn waveOutOpen(
             handle: *mut usize,
             device_id: usize,
@@ -337,7 +332,14 @@ mod winmm {
             let f = fmt_(ch, rate, 16);
             let mut h = WAVE_MAPPER;
             unsafe {
-                waveOutOpen(&mut h, device_id, &f, 0, 0, CALLBACK_NULL | WAVE_FORMAT_QUERY)
+                waveOutOpen(
+                    &mut h,
+                    device_id,
+                    &f,
+                    0,
+                    0,
+                    CALLBACK_NULL | WAVE_FORMAT_QUERY,
+                )
             }
         };
         // Format probe first (play_proc checked output settings): a view
@@ -410,7 +412,6 @@ mod winmm {
     }
 }
 
-
 /// winmm failure phase (maps to exit 30 / 40).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayFail {
@@ -442,11 +443,14 @@ pub fn play_view(wav_path: &str, device_name: &str) -> i32 {
         };
         match winmm::play_on(id, &pcm) {
             Ok(()) => {
-                let duration =
-                    pcm.frames.len() as f64 / (pcm.channels * pcm.rate as usize) as f64;
+                let duration = pcm.frames.len() as f64 / (pcm.channels * pcm.rate as usize) as f64;
                 println!(
                     "{{\"device\":\"{}\",\"rate\":{},\"channels\":{},\"duration_s\":{:.3}}}",
-                    if is_default(device_name) { "default" } else { device_name },
+                    if is_default(device_name) {
+                        "default"
+                    } else {
+                        device_name
+                    },
                     pcm.rate,
                     pcm.channels,
                     duration
@@ -490,7 +494,6 @@ impl PlaybackOutcome {
         matches!(self, PlaybackOutcome::Played)
     }
 }
-
 
 /// Plays wavs through the named device, one killable child per attempt
 /// (audio.py `AudioOut`). Single-owner by design: the dispatch worker
@@ -544,13 +547,21 @@ impl AudioOut {
         match &self.child_argv {
             Some(ov) => ov
                 .iter()
-                .map(|a| a.replace("{WAV}", wav).replace("{DEVICE}", &self.device_name))
+                .map(|a| {
+                    a.replace("{WAV}", wav)
+                        .replace("{DEVICE}", &self.device_name)
+                })
                 .collect(),
             None => {
                 let exe = std::env::current_exe()
                     .map(|p: PathBuf| p.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                vec![exe, "play-view".into(), wav.into(), self.device_name.clone()]
+                vec![
+                    exe,
+                    "play-view".into(),
+                    wav.into(),
+                    self.device_name.clone(),
+                ]
             }
         }
     }
@@ -585,11 +596,17 @@ impl AudioOut {
                 PlaybackOutcome::Timeout
             }
             Some(rc) => {
-                self.fail(format!("play failed on device {:?} (rc={rc})", self.device_name));
+                self.fail(format!(
+                    "play failed on device {:?} (rc={rc})",
+                    self.device_name
+                ));
                 PlaybackOutcome::AudioFailed
             }
             None => {
-                self.fail(format!("play child spawn failed for {:?}", self.device_name));
+                self.fail(format!(
+                    "play child spawn failed for {:?}",
+                    self.device_name
+                ));
                 PlaybackOutcome::AudioFailed
             }
         }
@@ -728,7 +745,14 @@ mod tests {
 
     #[test]
     fn default_sentinels_verbatim() {
-        for s in ["", "default", "__default__", "system default", "DEFAULT", " Default "] {
+        for s in [
+            "",
+            "default",
+            "__default__",
+            "system default",
+            "DEFAULT",
+            " Default ",
+        ] {
             assert!(is_default(s), "{s:?} must be a default sentinel");
         }
         assert!(!is_default(" Speakers (AMD HD Audio) "));
@@ -817,10 +841,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn audioout_spawn_failure_is_audio_failed() {
-        let mut out = AudioOut::new("default").with_child_argv(
-            vec!["no-such-exe-xyz".into()],
-            5.0,
-        );
+        let mut out = AudioOut::new("default").with_child_argv(vec!["no-such-exe-xyz".into()], 5.0);
         let wav = tiny_wav(0.05, 22_050, 1);
         assert_eq!(out.play(&wav), PlaybackOutcome::AudioFailed);
         assert!(out.last_error().unwrap().contains("spawn failed"));
@@ -828,8 +849,13 @@ mod tests {
 
     #[test]
     fn timeout_rc_cannot_collide_with_honest_exits() {
-        for honest in [EXIT_OK, EXIT_BAD_INPUT, EXIT_NO_VIEW, EXIT_OPEN_FAILED, EXIT_PLAY_FAILED]
-        {
+        for honest in [
+            EXIT_OK,
+            EXIT_BAD_INPUT,
+            EXIT_NO_VIEW,
+            EXIT_OPEN_FAILED,
+            EXIT_PLAY_FAILED,
+        ] {
             assert_ne!(honest, TIMEOUT_RC);
         }
     }

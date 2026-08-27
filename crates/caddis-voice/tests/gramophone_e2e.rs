@@ -83,7 +83,11 @@ fn big_breaker() -> BreakerConfig {
     }
 }
 
-fn wait_counts(svc: &SayService, want_spoken: u64, deadline_s: u64) -> caddis_voice::sayd::SayCounts {
+fn wait_counts(
+    svc: &SayService,
+    want_spoken: u64,
+    deadline_s: u64,
+) -> caddis_voice::sayd::SayCounts {
     let deadline = Instant::now() + Duration::from_secs(deadline_s);
     loop {
         let c = svc.counts();
@@ -128,7 +132,8 @@ fn say_over_real_socket_end_to_end() {
     });
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stop_srv = stop.clone();
-    let srv = std::thread::spawn(move || caddis_voice::httpd::serve(listener, routes, stop_srv).unwrap());
+    let srv =
+        std::thread::spawn(move || caddis_voice::httpd::serve(listener, routes, stop_srv).unwrap());
 
     // /say one EN line: queued, then spoken by the worker.
     let body = br#"{"text":"End to end over the socket.","label":"sergeant"}"#;
@@ -149,7 +154,10 @@ fn say_over_real_socket_end_to_end() {
     }
     let s = sizes.lock().unwrap().clone();
     assert_eq!(s.len(), 2, "speech + earcon reached the sink: {s:?}");
-    assert!(s[1] > s[0] * 4, "the earcon is its own, larger payload: {s:?}");
+    assert!(
+        s[1] > s[0] * 4,
+        "the earcon is its own, larger payload: {s:?}"
+    );
 
     // A gated-confirm degrade over the socket: unknown label (no voice
     // set) + confirm path → degrade chime, nothing spoken beyond line 1.
@@ -223,7 +231,11 @@ fn earcon_wav_through_real_play_child_is_exit_20() {
     // the child answers NO_VIEW — proving the synth product is exactly
     // what the play child consumes, without a sound.
     let st = Command::new(env!("CARGO_BIN_EXE_caddis-voice"))
-        .args(["play-view", path.to_str().unwrap(), "no-such-device-caddis-test"])
+        .args([
+            "play-view",
+            path.to_str().unwrap(),
+            "no-such-device-caddis-test",
+        ])
         .output()
         .unwrap();
     assert_eq!(
@@ -259,7 +271,13 @@ fn full_chain_real_child_drop_is_loud_and_chimeless() {
         big_breaker(),
         None,
     );
-    let (adm, _) = svc.say("sergeant", "Real child chain.", true, 0, caddis_voice::SpeechPath::GeneralSpeech);
+    let (adm, _) = svc.say(
+        "sergeant",
+        "Real child chain.",
+        true,
+        0,
+        caddis_voice::SpeechPath::GeneralSpeech,
+    );
     assert!(matches!(adm, caddis_voice::Admission::Queued));
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline && svc.counts().dropped < 1 {

@@ -456,8 +456,7 @@ pub fn synth_wav(motif: &Motif, sample_rate: u32) -> Vec<u8> {
         };
         phi += 2.0 * std::f64::consts::PI * f0 / sr;
         // Attack ramps 0→1; decay runs from t=0 (the daemon multiplied both).
-        let env = (if t < attack_s { t / attack_s } else { 1.0 })
-            * (-t / motif.decay_tau_s).exp();
+        let env = (if t < attack_s { t / attack_s } else { 1.0 }) * (-t / motif.decay_tau_s).exp();
         let mut s = 0.0;
         for (mult, amp) in &motif.harmonics {
             s += amp * (mult * phi).sin();
@@ -474,9 +473,7 @@ pub fn synth_wav(motif: &Motif, sample_rate: u32) -> Vec<u8> {
     } else {
         0.0
     };
-    let to_i16 = |x: f64| -> i16 {
-        (x * scale * 32767.0).round().clamp(-32767.0, 32767.0) as i16
-    };
+    let to_i16 = |x: f64| -> i16 { (x * scale * 32767.0).round().clamp(-32767.0, 32767.0) as i16 };
 
     let mut pcm: Vec<u8> = Vec::with_capacity(n * 4);
     for (l, r) in left.iter().zip(right.iter()) {
