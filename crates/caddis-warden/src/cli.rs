@@ -29,7 +29,8 @@ USAGE:
                                     candidate laws mined from allow-then-undo history
   caddis-warden card open <card.md> declare a card open for THIS session
   caddis-warden card status         which card this session holds open
-  caddis-warden card close          close it; refuses if the card file changed
+  caddis-warden card close [--verify -- <cmd>]  close; --verify runs cmd first
+  caddis-warden ledger rotate       archive the live ledger; never rewrite it
   caddis-warden attest --card <CARD-ID> [--json]
                                     a proof bundle for one card, from the ledger
   caddis-warden attest --verify <bundle.json>

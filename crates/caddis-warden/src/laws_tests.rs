@@ -104,6 +104,8 @@ fn a_torn_row_is_counted_and_does_not_break_the_market() {
     let m = market(&(deny(1, "t", "rm -rf /", "fs.rmrf") + torn));
     assert_eq!(m.unreadable, 1);
     assert_eq!(m.laws.get("fs.rmrf").expect("fired").deny, 1);
+    let text = render_text(&m);
+    assert!(text.contains("FILE-WIDE"), "{text}");
 }
 
 #[test]

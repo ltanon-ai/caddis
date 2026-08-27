@@ -218,13 +218,9 @@ pub fn render_json(p: &Proposals) -> String {
 /// The ledger text, or `None` after reporting why not. Shared with `laws` so
 /// both subcommands fail the same way for the same reason.
 pub fn read_ledger(who: &str) -> Option<String> {
-    let path = match std::env::var("CADDIS_WARDEN_LEDGER") {
-        Ok(p) if !p.is_empty() => p,
-        _ => {
-            eprintln!("{who}: CADDIS_WARDEN_LEDGER is not set; the ledger path is required");
-            return None;
-        }
-    };
+    let path = crate::identity::ledger_path()
+        .to_string_lossy()
+        .into_owned();
     match std::fs::read_to_string(&path) {
         Ok(t) => Some(t),
         // AN ABSENT LEDGER IS AN EMPTY ONE. Nothing has been recorded yet, which

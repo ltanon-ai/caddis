@@ -119,3 +119,19 @@ fn a_secret_refusal_never_persists_the_secret() {
         "the secret literal must never persist into the ledger, got: {rows}"
     );
 }
+
+#[test]
+fn a_secret_row_carries_pre_redaction_fingerprint() {
+    let key = format!("s{}{}", "k-", "aB1".repeat(11));
+    let command = format!("echo key = \"{key}\"");
+    let rows = judge(&command, "fp");
+    let fp = format!("{:016x}", caddis_warden::identity::fnv1a(&command));
+    assert!(
+        rows.contains(&fp),
+        "pre-redaction fingerprint {fp} missing: {rows}"
+    );
+    assert!(
+        !rows.contains(&key),
+        "the secret literal must never persist: {rows}"
+    );
+}

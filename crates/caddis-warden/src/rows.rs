@@ -83,16 +83,52 @@ pub(crate) fn unescape(s: &str) -> String {
     out
 }
 
-/// Split `tag|command|path|why` — the command may contain pipes (it is
-/// never re-derived from elsewhere), so the tail splits from the RIGHT.
+/// Split `tag|command|path|why` or `tag|command|path|why|fp`.
+/// Command may contain pipes; the tail splits from the RIGHT.
+/// A trailing 16-hex field is a pre-redaction fingerprint (CARD-0129)
+/// and is stripped so command extraction matches 4-field rows.
 pub(crate) fn split_body(body: &str) -> Option<(String, String)> {
     let (tag, rest) = body.split_once('|')?;
-    // rest = "command|path|why": strip why, then path — from the right, so
-    // pipes INSIDE the command survive.
+    let rest = strip_fp(rest);
     let without_why = rest.rsplit_once('|')?.0;
     let cmd = without_why.rsplit_once('|')?.0;
     Some((tag.to_string(), cmd.to_string()))
 }
+
+fn strip_fp(rest: &str) -> &str {
+    match rest.rsplit_once('|') {
+        Some((head, tail)) if is_fp(tail) => head,
+        _ => rest,
+    }
+}
+
+fn is_fp(s: &str) -> bool {
+    s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Path field after stripping a trailing fingerprint. Empty if the body
+/// has too few fields.
+pub(crate) fn body_path(body: &str) -> String {
+    let rest = match body.split_once('|') {
+        Some((_, r)) => strip_fp(r),
+        None => return String::new(),
+    };
+    rest.rsplit_once('|')
+        .and_then(|(head, _why)| head.rsplit_once('|').map(|(_, p)| p.to_string()))
+        .unwrap_or_default()
+}
+
+/// Why field after stripping a trailing fingerprint.
+pub(crate) fn body_why(body: &str) -> String {
+    let rest = match body.split_once('|') {
+        Some((_, r)) => strip_fp(r),
+        None => return String::new(),
+    };
+    rest.rsplit_once('|')
+        .map(|(_, w)| w.to_string())
+        .unwrap_or_default()
+}
+
 
 pub(crate) fn first_line_capped(s: &str) -> String {
     s.lines().next().unwrap_or("").chars().take(60).collect()

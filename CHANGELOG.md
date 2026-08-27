@@ -4,6 +4,15 @@ Rendered from the work history. The engine's development log — 25 red-first
 hardening iterations, each with its failing test, measurement and review — lives
 in the private workshop; what ships here is the product view.
 
+
+## Unreleased — the bee organ lives in the OS
+
+`caddis bee spawn --harness omp|claude|qpi -- <cmd>` is part of the join
+binary. The child receives `CADDIS_HARNESS` and `CADDIS_WARDEN_FROM` from
+the launcher. Missing `--harness` is usage, never a guess. The crate is
+projected into this repository so the bee lives in the agentic OS, not
+beside it.
+
 ## 0.3.1 — every gate that should have guarded 0.3.0 had quietly not run
 
 **No runtime behaviour changed.** Under `crates/` every edit is to a test: two

@@ -31,6 +31,7 @@ pub struct CardState {
 
 pub const OPEN_TYPE: &str = "card.open";
 pub const CLOSE_TYPE: &str = "card.close";
+pub const VERIFY_TYPE: &str = "card.verify";
 
 /// Body shape shared by both row types: `verb|id|path|hash`.
 ///

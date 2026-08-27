@@ -29,17 +29,18 @@ pub mod attest;
 pub mod attest_verify;
 pub mod card;
 pub mod card_state;
+pub mod card_verify;
 pub mod checks;
 pub mod cli;
 pub mod identity;
 pub mod law;
 pub mod laws;
+pub mod ledger_rotate;
 pub mod propose;
 pub mod receipt;
 pub mod receipt_report;
 pub mod replay;
 pub mod report;
-pub mod verify;
 pub mod wire;
 
 // Rendering for `replay`, and the ONE ledger-row parser both `replay` and

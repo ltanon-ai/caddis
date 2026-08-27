@@ -29,12 +29,10 @@ const BIN =
   `${process.env.USERPROFILE || process.env.HOME}/.caddis/bin/caddis-warden.exe`;
 
 // Who is asking: one conscience serves several harnesses, and
-// the shared ledger must be able to say WHICH one made each call. A launcher
-// that knows its lane stamps CADDIS_WARDEN_FROM; without it this copy's
-// built-in default speaks, so the file is safe to copy around unmodified.
-// ATTRIBUTION ONLY: any process can set the env var — routing/observability,
-// never access control.
-const CALLER = process.env.CADDIS_WARDEN_FROM || "agent";
+// the shared ledger must be able to say WHICH one made each call. The onboarding
+// script stamps this constant per agent; an unstamped copy keeps the built-in
+// binary's default, so the file is safe to copy around unmodified.
+const CALLER = "agent";
 
 type Verdict = { verdict: string; reason: string; law: string; seq: number };
 

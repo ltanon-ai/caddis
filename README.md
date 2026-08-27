@@ -123,6 +123,7 @@ nothing is ever sent off the box.**
 | **Ladder** | measured L1–L3 levels for local model executors |
 | **Skill** | the manual the agent itself loads and obeys |
 | **Adapters** | one thin nerve per harness, no policy inside |
+| **Bee** | spawn a child stamped with the launcher harness — OMP launch is an OMP bee, Claude launch is a Claude bee |
 | **Onboard** | one command; proves itself with a live denial |
 | **Replay** | preview law changes against your own history |
 | **Report** | reads the ledger back: counts, callers, deny-by-law |
@@ -495,10 +496,8 @@ and applies the verdict. Three shapes ship, one per harness family:
 - **`adapters/caddis-warden.ts`** — for extension-based harnesses. A steer is
   delivered on the tool *result* (the action was legitimate; the law arrives
   at the moment it applies), with the owed-laws map keyed by tool-call id and
-  deleted on delivery. The caller stamp is a `CALLER` default the onboard
-  script seds per agent; a launcher that knows its lane overrides it per spawn
-  via `CADDIS_WARDEN_FROM` (attribution only — spoofable, see
-  `adapters/README.md`).
+  deleted on delivery. The caller stamp is a `CALLER` constant the onboard
+  script seds per agent.
 - **`adapters/claude-code/caddis-warden-gate.py`** — a PreToolUse hook. The
   `from:` stamp comes from an optional `~/.caddis/lanes.json` cwd-prefix →
   label map (longest prefix wins, either path separator, case folded only

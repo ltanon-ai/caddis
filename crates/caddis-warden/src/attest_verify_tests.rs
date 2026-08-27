@@ -35,6 +35,15 @@ fn the_row_path_survives_pipes_inside_the_command() {
 }
 
 #[test]
+fn the_row_path_strips_a_trailing_fingerprint() {
+    assert_eq!(
+        row_path("allow|git log | grep x|src/a.rs|why|deadbeefdeadbeef"),
+        "src/a.rs"
+    );
+}
+
+
+#[test]
 fn the_text_bundle_leads_with_what_went_outside_the_declaration() {
     let t = render_text(&bundle());
     assert!(t.contains("OUTSIDE     : 1 file(s) written outside"), "{t}");

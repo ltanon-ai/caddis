@@ -13,7 +13,7 @@
 //! also count an honest fix-then-retry. It is a lead worth reading, never a
 //! verdict about an agent.
 
-use crate::rows::{from_matches, law_id_bracketed, parse_row, split_body, Row};
+use crate::rows::{body_why, from_matches, law_id_bracketed, parse_row, split_body, Row};
 use std::collections::BTreeMap;
 
 /// How many rows after a denial count as "shortly after". Wide enough to cover
@@ -77,9 +77,9 @@ fn head_verb(cmd: &str) -> String {
 
 fn judged(row: &Row) -> Option<Judged> {
     let (tag, cmd) = split_body(&row.body)?;
-    let why = row.body.rsplit('|').next().unwrap_or("");
+    let why = body_why(&row.body);
     let ids = match tag.as_str() {
-        "deny" => law_id_bracketed(why).into_iter().collect(),
+        "deny" => law_id_bracketed(&why).into_iter().collect(),
         "steer" => why
             .split(", ")
             .filter(|s| !s.is_empty())
@@ -212,7 +212,10 @@ pub fn render_text(m: &Market) -> String {
          SAME caller running the same head verb and being allowed. It counts an honest \
          fix-and-retry too. Read it as a lead, never as a verdict about an agent."
     ));
-    s.push_str(&format!("\n{} ledger line(s) unreadable", m.unreadable));
+    s.push_str(&format!(
+        "\n{} unreadable line(s) FILE-WIDE (a torn row has no window to belong to)",
+        m.unreadable
+    ));
     s
 }
 

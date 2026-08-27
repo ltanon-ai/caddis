@@ -12,11 +12,10 @@ use crate::json_read::{arr_len, num, obj_len, text_field};
 use crate::wire::json_escape;
 
 /// The `path` field of a `tag|command|path|why` body, split from the RIGHT so
-/// pipes inside the command survive.
+/// pipes inside the command survive. A trailing 16-hex fingerprint (CARD-0129)
+/// is stripped first; otherwise the path is the why field.
 pub fn row_path(body: &str) -> String {
-    body.rsplit_once('|')
-        .and_then(|(head, _why)| head.rsplit_once('|').map(|(_, p)| p.to_string()))
-        .unwrap_or_default()
+    crate::rows::body_path(body)
 }
 
 pub fn render_text(b: &Bundle) -> String {

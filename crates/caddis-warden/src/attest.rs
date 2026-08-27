@@ -19,7 +19,7 @@
 //! admits the gap is worth more than a confident one nobody can check.
 
 use crate::attest_window::{declared, locate, looks_like_red_test, red_test_lines};
-use crate::rows::{parse_row, split_body, Row};
+use crate::rows::{body_why, parse_row, split_body, Row};
 use std::collections::BTreeMap;
 
 pub struct Bundle {
@@ -104,7 +104,7 @@ fn fold(b: &mut Bundle, row: &Row, red_lines: &[String]) {
     let Some((tag, cmd)) = split_body(&row.body) else {
         return;
     };
-    let why = row.body.rsplit('|').next().unwrap_or("");
+    let why = body_why(&row.body);
     match tag.as_str() {
         "allow" => b.allow += 1,
         "steer" => {
@@ -115,7 +115,7 @@ fn fold(b: &mut Bundle, row: &Row, red_lines: &[String]) {
         }
         "deny" => {
             b.deny += 1;
-            if let Some(id) = crate::rows::law_id_bracketed(why) {
+            if let Some(id) = crate::rows::law_id_bracketed(&why) {
                 *b.laws.entry(id).or_default() += 1;
             }
         }

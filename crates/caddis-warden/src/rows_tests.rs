@@ -101,6 +101,14 @@ fn split_body_refuses_a_body_with_too_few_fields() {
 }
 
 #[test]
+fn split_body_strips_a_trailing_fingerprint() {
+    let (tag, cmd) = split_body("allow|git log | grep x|/repo|why|deadbeefdeadbeef")
+        .expect("5-field body splits");
+    assert_eq!(tag, "allow");
+    assert_eq!(cmd, "git log | grep x");
+}
+
+#[test]
 fn first_line_capped_takes_one_line_and_at_most_sixty_characters() {
     assert_eq!(first_line_capped("head\ntail"), "head");
     assert_eq!(first_line_capped(""), "");

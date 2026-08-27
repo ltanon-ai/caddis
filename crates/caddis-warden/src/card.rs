@@ -9,11 +9,11 @@
 //! card, so the state can be proven correct before anything starts refusing
 //! work on the strength of it.
 
-use crate::card_state::{self, ActiveCard, CardState, CLOSE_TYPE, OPEN_TYPE};
+use crate::card_state::{self, ActiveCard, CardState, OPEN_TYPE};
 use crate::identity::{caller_id, fnv1a, is_session_scoped, ledger_path, unix_seconds};
 
 const USAGE: &str = "\
-usage: caddis-warden card open <card.md> | card status | card close";
+usage: caddis-warden card open <card.md> | card status | card close [--verify -- <cmd>]";
 
 pub fn run(args: &[String]) -> i32 {
     match args.get(2).map(String::as_str) {
@@ -22,18 +22,18 @@ pub fn run(args: &[String]) -> i32 {
             None => fail("card open needs a path to a card"),
         },
         Some("status") => status(),
-        Some("close") => close(),
+        Some("close") => crate::card_verify::close(&args[3..]),
         _ => fail("unknown card subcommand"),
     }
 }
 
-fn fail(why: &str) -> i32 {
+pub(crate) fn fail(why: &str) -> i32 {
     eprintln!("card: {why}\n{USAGE}");
     2
 }
 
 /// The ledger text and the caller, or an error already reported.
-fn read_state() -> Result<(String, String, CardState), i32> {
+pub(crate) fn read_state() -> Result<(String, String, CardState), i32> {
     let caller = caller_id();
     let path = ledger_path();
     // An unreadable ledger is an ERROR, never an empty one: "no card is open"
@@ -76,6 +76,9 @@ fn open(card_path: &str) -> i32 {
              CADDIS_WARDEN_FROM=<label>.<session> (CARD-0109)"
         ));
     }
+    if let Some(why) = bee_unbounded(&caller, &card) {
+        return fail(&why);
+    }
     // Refuse, never nest: a nested card has no defensible answer to "which
     // allowlist applies".
     if let Some(active) = state.active {
@@ -116,6 +119,22 @@ fn bound_note(card: &caddis_card::Card) -> String {
         None => "  NOT BOUNDED: no EXECUTION contract, so no allowlist to enforce \
                  (this is a v1 card; writes are recorded, not restricted)"
             .to_string(),
+    }
+}
+
+/// Bee lanes (little-coder / droid / bee) may not open a v1 card: no
+/// EXECUTION means the gate cannot bound their writes (CARD-0131).
+fn bee_unbounded(caller: &str, card: &caddis_card::Card) -> Option<String> {
+    if card.execution().is_some() {
+        return None;
+    }
+    let label = caller.split('.').next().unwrap_or(caller);
+    if matches!(label, "little-coder" | "droid" | "bee") {
+        Some(format!(
+            "v1 card has no EXECUTION; bee lane `{label}` cannot open it unbounded"
+        ))
+    } else {
+        None
     }
 }
 
@@ -164,45 +183,13 @@ fn status() -> i32 {
     0
 }
 
-fn close() -> i32 {
-    let (_, caller, state) = match read_state() {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-    let Some(active) = state.active else {
-        return fail(&format!("no card is open for {caller}"));
-    };
-    if let Some(why) = changed_since_open(&active) {
-        return fail(&why);
-    }
-    match append(
-        CLOSE_TYPE,
-        &card_state::body("close", &active.id, &active.path, &active.hash),
-        &caller,
-    ) {
-        Ok(seq) => {
-            println!("card close: {} seq={seq}", active.id);
-            // WARN, NEVER REFUSE. This ledger records the command a tool was
-            // ASKED to run, before it ran, with no exit code anywhere in the
-            // row — so it cannot show that a RED-TEST passed, only that
-            // something matching it was attempted. Refusing on evidence this
-            // weak would be a gate that means less than it appears to.
-            println!(
-                "  note: this ledger cannot prove the RED-TEST passed — it records \
-                 intent, not results. `card close --verify` is owed (program REVISION 1)."
-            );
-            0
-        }
-        Err(why) => fail(&why),
-    }
-}
 
 /// The card file must be the card that was opened.
 ///
 /// Nothing else stops an executor from editing its own allowlist mid-card,
 /// which would make the whole declaration meaningless. Detects an edit, not a
 /// forgery — see `identity::fnv1a` for why a stronger hash buys nothing here.
-fn changed_since_open(active: &ActiveCard) -> Option<String> {
+pub(crate) fn changed_since_open(active: &ActiveCard) -> Option<String> {
     let now = match std::fs::read_to_string(&active.path) {
         Ok(b) => format!("{:016x}", fnv1a(&b)),
         Err(e) => {
@@ -233,7 +220,7 @@ fn changed_since_open(active: &ActiveCard) -> Option<String> {
 /// The body is NOT routed through `mask_at_rest`: a card path is easily long
 /// enough to be redacted whole, and a redacted card row cannot be reconstructed
 /// into state (quorum, program REVISION 1).
-fn append(row_type: &str, body: &str, caller: &str) -> Result<u64, String> {
+pub(crate) fn append(row_type: &str, body: &str, caller: &str) -> Result<u64, String> {
     let path = ledger_path();
     let mut led = caddis_core::ledger::Ledger::open(&path)
         .map_err(|e| format!("ledger unavailable at {}: {e}", path.display()))?;

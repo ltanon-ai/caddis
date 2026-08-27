@@ -1,0 +1,8 @@
+[package]
+name = "caddis"
+version = "0.1.0"
+edition = "2021"
+description = "Caddis join binary: attach a chair (CARD-0118 / join CARD-0). rotate is CARD-1 (sergeant organ)."
+
+# Join CLI, not a world organ. Zero runtime deps (TCB/AGENT-LAW).
+[dependencies]

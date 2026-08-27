@@ -174,3 +174,31 @@ fn report_rejects_an_unknown_verdict_filter() {
     let _ = std::fs::remove_file(&path);
     assert_eq!(code, 2, "usage errors exit 2, never a bogus report");
 }
+
+#[test]
+fn report_defaults_to_home_ledger() {
+    let home = std::env::temp_dir().join(format!(
+        "caddis-report-home-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(home.join(".caddis")).unwrap();
+    std::fs::write(home.join(".caddis").join("warden-ledger.jsonl"), "").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_caddis-warden"))
+        .arg("report")
+        .env_remove("CADDIS_WARDEN_LEDGER")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    assert!(stdout.contains("rows: 0"), "{stdout}");
+    assert!(
+        !stderr.contains("CADDIS_WARDEN_LEDGER is not set"),
+        "{stderr}"
+    );
+}

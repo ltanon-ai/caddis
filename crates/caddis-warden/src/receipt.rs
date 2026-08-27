@@ -17,7 +17,10 @@
 //! removes fabrication, not the need to write.
 
 use crate::receipt_report::{render_json, render_text};
-use crate::rows::{first_line_capped, from_matches, law_id_bracketed, parse_row, split_body, Row};
+use crate::rows::{
+    body_path, body_why, first_line_capped, from_matches, law_id_bracketed, parse_row, split_body,
+    Row,
+};
 use std::collections::BTreeMap;
 
 /// Everything one window of the ledger says about one caller.
@@ -128,15 +131,14 @@ fn fold(r: &mut Receipt, row: &Row) {
     }
     // The row's `path` field lives between the command and the why; a write
     // with an empty path contributes nothing rather than an empty entry.
-    if let Some(path) = row_path(&row.body) {
-        if !path.is_empty() {
-            *r.files.entry(path).or_default() += 1;
-        }
+    let path = body_path(&row.body);
+    if !path.is_empty() {
+        *r.files.entry(path).or_default() += 1;
     }
 }
 
 fn fold_verdict(r: &mut Receipt, row: &Row, tag: &str) {
-    let why = row.body.rsplit('|').next().unwrap_or("");
+    let why = body_why(&row.body);
     match tag {
         "allow" => r.allow += 1,
         "steer" => {
@@ -147,7 +149,7 @@ fn fold_verdict(r: &mut Receipt, row: &Row, tag: &str) {
         }
         "deny" => {
             r.deny += 1;
-            let id = law_id_bracketed(why).unwrap_or_else(|| "(unattributed)".to_string());
+            let id = law_id_bracketed(&why).unwrap_or_else(|| "(unattributed)".to_string());
             r.deny_by_law.entry(id.clone()).or_default().push(row.seq);
             *r.law_fires.entry(id).or_default() += 1;
         }
@@ -171,12 +173,6 @@ fn fold_card(r: &mut Receipt, row: &Row) -> bool {
     }
 }
 
-/// The `path` field of a `tag|command|path|why` body, split from the RIGHT so
-/// pipes inside the command survive.
-fn row_path(body: &str) -> Option<String> {
-    let without_why = body.rsplit_once('|')?.0;
-    Some(without_why.rsplit_once('|')?.1.to_string())
-}
 
 /// One command's head, for the digest. Kept here so the renderer never has to
 /// know the body grammar.
@@ -185,13 +181,9 @@ pub fn command_head(body: &str) -> String {
 }
 
 pub fn run(args: &[String]) -> i32 {
-    let path = match std::env::var("CADDIS_WARDEN_LEDGER") {
-        Ok(p) if !p.is_empty() => p,
-        _ => {
-            eprintln!("receipt: CADDIS_WARDEN_LEDGER is not set; the ledger path is required");
-            return 2;
-        }
-    };
+    let path = crate::identity::ledger_path()
+        .to_string_lossy()
+        .into_owned();
     // An unreadable ledger is an ERROR, never an empty receipt: "you did
     // nothing" and "I could not look" must never print the same.
     let text = match std::fs::read_to_string(&path) {

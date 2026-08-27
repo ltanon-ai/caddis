@@ -47,29 +47,14 @@ not Python semantics.
 
 ## Stamping the caller — per adapter
 
-- **`caddis-warden.ts`**: the ledger's `from:` field attributes every verdict
-  to the caller that made the call. Two ways to stamp it: the `CALLER` default
-  baked into the copy (the onboard script sets it: `./onboard my-agent-name`),
-  and a `CADDIS_WARDEN_FROM` env var set by a launcher that knows its lane —
-  the env var wins when present. A launcher-stamped copy still falls back to
-  its built-in default, so the file is safe to copy around unmodified.
-  ⚠ **The env var is SPOOFABLE**: any process can set it. It is
-  routing/observability — attribution, not access control. Never let a
-  security decision trust a `from:` label.
-  Live OMP launchers that stamp: `loop-runner` (the sergeant/bee organ) maps
-  loop name → `sergeant-tick` / `bee-kamane` / `bee-bitute` (anything else →
-  unstamped, adapter default), and the sergeant heartbeat Task Scheduler path
-  stamps `sergeant-tick` via its wscript wrapper's PROCESS env. Registration
-  surface for the fleet: `warden ledger replay --from <label>` — there is no
-  other registry; the label list lives in the launchers, nowhere else.
+- **`caddis-warden.ts`**: the `CALLER` constant at the top of the adapter is
+  stamped per agent so the shared ledger's `from:` field attributes every
+  verdict to the caller that made the call. The onboard script stamps it for
+  you: `./onboard my-agent-name`. An unstamped copy logs under the adapter's
+  built-in default — safe to copy around.
 - **`claude-code/caddis-warden-gate.py`**: the `from:` stamp comes from an
   optional `~/.caddis/lanes.json` cwd-prefix → label map (longest prefix wins,
   either path separator); unmapped sessions are stamped `claude-code`.
-  ⚠ The map is AUTHORITATIVE for every claude-code session under a mapped
-  prefix — do not add "documentation-only" entries: a prefix that happens to
-  match an unrelated session re-stamps it. The omp family deliberately does
-  NOT use lanes.json: sergeant ticks and bees all share one cwd (`pepworld`),
-  so only the launcher env var separates their lanes.
 - **`rlm/warden_repl.py`**: every warden spawn is stamped
   `CADDIS_WARDEN_FROM=rlm` — the nerve is the whole adapter, so there is
   no per-agent stamp to configure; kernel attribution is the harness's

@@ -81,6 +81,7 @@ fn usage_documents_every_path_a_caller_can_take() {
         "card open",
         "card status",
         "card close",
+        "ledger rotate",
         "--version",
         "--help",
     ] {

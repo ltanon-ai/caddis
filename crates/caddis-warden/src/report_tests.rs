@@ -34,6 +34,15 @@ fn the_tag_leads_and_the_why_trails_with_pipes_between_them_surviving() {
 }
 
 #[test]
+fn a_fingerprint_tail_is_not_the_why() {
+    let body = "deny|git push --force origin main||\
+caddis-warden [git.push.force-to-protected]: force-push|28efa5781ffbef43";
+    let (tag, why) = tag_and_why(body);
+    assert_eq!(tag, "deny");
+    assert_eq!(law_id(&why), "git.push.force-to-protected");
+}
+
+#[test]
 fn an_unbracketed_deny_reason_groups_as_unattributed_rather_than_being_dropped() {
     // Sensitive-path denials predate the bracket form; losing them would
     // understate the deny count in every report over old history.

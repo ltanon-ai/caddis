@@ -77,12 +77,12 @@ impl Filters {
     }
 }
 
-/// `tag|command|path|why` — the verdict tag leads, the why field trails;
-/// both split from their own end so pipes inside the command survive.
+/// `tag|command|path|why` or `tag|command|path|why|fp` (CARD-0129).
+/// Why is never the fingerprint.
 fn tag_and_why(body: &str) -> (String, String) {
     (
         body.split('|').next().unwrap_or("").to_string(),
-        body.rsplit('|').next().unwrap_or("").to_string(),
+        crate::rows::body_why(body),
     )
 }
 
@@ -199,15 +199,9 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
-    let path = match std::env::var("CADDIS_WARDEN_LEDGER") {
-        Ok(p) if !p.is_empty() => p,
-        _ => {
-            eprintln!(
-                "report: CADDIS_WARDEN_LEDGER is not set; the shared ledger path is required"
-            );
-            return 2;
-        }
-    };
+    let path = crate::identity::ledger_path()
+        .to_string_lossy()
+        .into_owned();
     let kept = match load_rows(&path, &filters) {
         Ok(rows) => rows,
         Err(e) => {
