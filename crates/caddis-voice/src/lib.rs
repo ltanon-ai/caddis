@@ -74,8 +74,18 @@
 //! byte-budget LRU). All four are ports of the daemon's proven
 //! operator-reliability organs (scheduler.py / idle_clock.py /
 //! drop_ledger.py / tts.py) — pure arithmetic on a caller-supplied clock.
-//! The killable play child, adapter dispatch and /say land next; cutover
-//! + soak are P4-P5.
+//!
+//! **P3 slice (b)** — playback + dispatch (this slice): [`play`] the
+//! KILLABLE PLAY CHILD (audio.py + play_proc.py ported onto winmm
+//! `waveOut`: one short-lived child per attempt, per device view, exit
+//! contract 0/10/20/30/40, default-device sentinels re-resolved in the
+//! fresh child, deadline = duration + the daemon's measured 15 s
+//! budget, wedged child KILLED) and [`say`] the dispatch bracket
+//! (scheduler_emit.py `_speak`): cache-first, GA3 breaker gating the
+//! lane (a trip is an ANOMALY drop, ledger-recorded), render → GA2 →
+//! play — all inside the idle-clock SPEAKING bracket so queued speech
+//! never ages. Earcon playback wiring (QQ5) and the /say route are the
+//! next slices; cutover + soak are P4-P5.
 
 pub mod adapter;
 pub mod config;
@@ -94,8 +104,10 @@ pub mod lang;
 pub mod multipart;
 pub mod mutex;
 pub mod piper;
+pub mod play;
 pub mod platform;
 pub mod registry;
+pub mod say;
 pub mod sha1;
 pub mod sha256;
 pub mod transcribe;
@@ -132,7 +144,13 @@ pub use job::{ChildScope, DeadManSwitch, JobErr};
 pub use lang::Lang;
 pub use mutex::{bind_exclusive, PortMutexErr};
 pub use piper::{PiperAdapter, PiperPaths, PIPER_KILL_DEADLINE_MS};
+pub use play::{
+    is_default as is_default_device, read_wav, fit_channels, resample, AudioOut, Pcm,
+    PlaybackOutcome, PlayFail, EXIT_BAD_INPUT, EXIT_NO_VIEW, EXIT_OK, EXIT_OPEN_FAILED,
+    EXIT_PLAY_FAILED, PLAY_STARTUP_BUDGET_S, TIMEOUT_RC,
+};
 pub use registry::{GeneratorSpec, Lane, Registry, RegistryErr, VoiceSpec, INTERNAL_GENERATORS};
+pub use say::{Dispatcher, PlaySink, RenderLane, SayOutcome};
 pub use transcribe::{HornService, WavMeta, ENGINE_NAME, MIN_AUDIO_S};
 pub use voiceset::{RouteDecision, SpeechPath, VoiceSet};
 pub use vram::{probe as probe_vram, AdapterMem, VramReport};

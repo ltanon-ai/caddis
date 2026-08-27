@@ -32,6 +32,11 @@ pub struct OrganConfig {
     pub labels: BTreeMap<String, LabelConfig>,
     pub generators_enabled: BTreeMap<String, bool>,
     pub lt_network_deadline_ms: u32,
+    /// The playback device view for the gramophone (daemon
+    /// `device_name`): a Windows output device NAME, or a default
+    /// sentinel ("default" — the operator's standing ruling: always
+    /// strictly the default sound card).
+    pub device_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +68,7 @@ pub const DEFAULT_CONFIG_JSON: &str = r#"{
     ],
     "defaults": {"lt": "lt-LT-LeonasNeural", "en": "en_US-ryan"},
     "generators_enabled": {"piper": true, "leonas": true, "ona": true},
+    "device_name": "default",
     "lt_network_deadline_ms": 2500,
     "labels": {
         "sergeant": {"declared": null, "set": {"lt": "lt-LT-LeonasNeural", "en": "en_US-ryan"}},
@@ -160,12 +166,19 @@ fn from_value(v: &Value) -> Result<OrganConfig, ConfigErr> {
         .map(|n| n as u32)
         .unwrap_or(DEFAULT_LT_NETWORK_DEADLINE_MS);
 
+    let device_name = v
+        .get("device_name")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "default".to_string());
+
     Ok(OrganConfig {
         registry,
         defaults,
         labels,
         generators_enabled: enabled,
         lt_network_deadline_ms,
+        device_name,
     })
 }
 
