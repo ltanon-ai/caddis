@@ -44,7 +44,21 @@ use caddis_voice::{Admission, BreakerConfig, SpeechPath};
 struct FaultInner {
     name: &'static str,
     fail: AtomicBool,
+    /// Custom failure text (deadline-shaped verdicts etc.); None →
+    /// the default "lane down" line.
+    fail_msg: std::sync::Mutex<Option<String>>,
     renders: AtomicU32,
+}
+
+impl FaultProbe {
+    /// Fail with a custom error shape (e.g. an R-D deadline verdict).
+    /// (std-only crate: no parking_lot — poison-safe into_inner instead
+    /// of unwrap, per the rs-parking-lot rule's target pattern.)
+    fn fail_with(&self, msg: &str) {
+        let mut g = self.0.fail_msg.lock().unwrap_or_else(|e| e.into_inner());
+        *g = Some(msg.to_string());
+        self.0.fail.store(true, Ordering::SeqCst);
+    }
 }
 
 /// A cloneable handle to one render lane; cloning keeps the counters
@@ -57,6 +71,7 @@ impl FaultProbe {
         Self(Arc::new(FaultInner {
             name,
             fail: AtomicBool::new(false),
+            fail_msg: std::sync::Mutex::new(None),
             renders: AtomicU32::new(0),
         }))
     }
@@ -65,6 +80,7 @@ impl FaultProbe {
         Self(Arc::new(FaultInner {
             name,
             fail: AtomicBool::new(true),
+            fail_msg: std::sync::Mutex::new(None),
             renders: AtomicU32::new(0),
         }))
     }
@@ -92,7 +108,14 @@ impl RenderLane for FaultProbe {
     ) -> Result<RenderedAudio, AdapterErr> {
         self.0.renders.fetch_add(1, Ordering::SeqCst);
         if self.0.fail.load(Ordering::SeqCst) {
-            return Err(AdapterErr(format!("{}: lane down (drill injection)", self.0.name)));
+            let msg = self
+                .0
+                .fail_msg
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+                .unwrap_or_else(|| format!("{}: lane down (drill injection)", self.0.name));
+            return Err(AdapterErr(msg));
         }
         Ok(RenderedAudio {
             bytes: wav_blob(),
@@ -142,25 +165,32 @@ impl PlaySink for RecSink {
 }
 
 fn breaker_big() -> BreakerConfig {
-    BreakerConfig { capacity: 100, refill_per_min: 100, cooldown_ms: 60_000 }
+    BreakerConfig {
+        capacity: 100,
+        refill_per_min: 100,
+        cooldown_ms: 60_000,
+    }
 }
 
 /// A unique ledger directory per drill (cleaned up best-effort).
 fn drill_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir()
-        .join(format!("caddis-rf-drill-{}-{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!("caddis-rf-drill-{}-{}", std::process::id(), tag));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("drill dir");
     dir
 }
 
 fn start_svc(dir: &std::path::Path, lanes: Vec<FaultProbe>) -> SayService {
-    let dyn_lanes: Vec<Box<dyn RenderLane + Send>> =
-        lanes.into_iter().map(|l| Box::new(l) as Box<dyn RenderLane + Send>).collect();
+    let dyn_lanes: Vec<Box<dyn RenderLane + Send>> = lanes
+        .into_iter()
+        .map(|l| Box::new(l) as Box<dyn RenderLane + Send>)
+        .collect();
     SayService::start(
         OrganConfig::default(),
         dyn_lanes,
-        Box::new(RecSink { plays: AtomicU32::new(0) }),
+        Box::new(RecSink {
+            plays: AtomicU32::new(0),
+        }),
         Some(dir.join("drops.jsonl")),
         breaker_big(),
         None,
@@ -173,7 +203,10 @@ fn wait_for(what: &str, svc: &SayService, mut cond: impl FnMut(&SayService) -> b
     let deadline = Instant::now() + Duration::from_secs(10);
     while !cond(svc) {
         if Instant::now() > deadline {
-            panic!("drill stalled waiting for {what}; counts = {:?}", svc.counts());
+            panic!(
+                "drill stalled waiting for {what}; counts = {:?}",
+                svc.counts()
+            );
         }
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -214,7 +247,12 @@ fn drill_1_leonas_down_honest_drop() {
     let piper = FaultProbe::healthy("piper");
     let svc = start_svc(&dir, vec![leonas.clone(), ona.clone(), piper.clone()]);
 
-    say_queued(&svc, "sergeant", "Vienas du trys drill vienas", SpeechPath::GeneralSpeech);
+    say_queued(
+        &svc,
+        "sergeant",
+        "Vienas du trys drill vienas",
+        SpeechPath::GeneralSpeech,
+    );
     wait_for("leonas-down drop", &svc, |s| s.counts().dropped >= 1);
 
     let c = svc.counts();
@@ -224,7 +262,10 @@ fn drill_1_leonas_down_honest_drop() {
     assert_eq!(leonas.renders(), 1, "Leonas lane tried exactly once");
     assert_eq!(ona.renders(), 0, "no wrong-voice Ona render");
     assert_eq!(piper.renders(), 0, "no wrong-language piper render");
-    assert!(ledger_rows_with(&dir, "render_error") >= 1, "ledger row recorded");
+    assert!(
+        ledger_rows_with(&dir, "render_error") >= 1,
+        "ledger row recorded"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -241,19 +282,37 @@ fn drill_4_generator_death_queue_survives() {
     let svc = start_svc(&dir, vec![piper.clone(), leonas.clone(), ona.clone()]);
 
     // Utterance 1 — piper healthy, speaks.
-    say_queued(&svc, "sergeant", "drill four first words", SpeechPath::GeneralSpeech);
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill four first words",
+        SpeechPath::GeneralSpeech,
+    );
     wait_for("first speech", &svc, |s| s.counts().spoken >= 1);
 
     // The generator dies mid-queue.
     piper.set_fail(true);
 
     // Utterance 2 — same generator: honest drop + ledger row.
-    say_queued(&svc, "sergeant", "drill four second words", SpeechPath::GeneralSpeech);
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill four second words",
+        SpeechPath::GeneralSpeech,
+    );
     wait_for("post-death drop", &svc, |s| s.counts().dropped >= 1);
-    assert!(ledger_rows_with(&dir, "render_error") >= 1, "ledger row recorded");
+    assert!(
+        ledger_rows_with(&dir, "render_error") >= 1,
+        "ledger row recorded"
+    );
 
     // Utterance 3 — a surviving lane still speaks: the queue is not poisoned.
-    say_queued(&svc, "sergeant", "drill keturi po mirties", SpeechPath::GeneralSpeech);
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill keturi po mirties",
+        SpeechPath::GeneralSpeech,
+    );
     wait_for("surviving-lane speech", &svc, |s| s.counts().spoken >= 2);
 
     let c = svc.counts();
@@ -275,9 +334,19 @@ fn drill_5_dual_lt_cascade() {
     let svc = start_svc(&dir, vec![leonas.clone(), ona.clone(), piper.clone()]);
 
     // General path — sergeant LT (Leonas).
-    say_queued(&svc, "sergeant", "drill penki bendrasis kelias", SpeechPath::GeneralSpeech);
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill penki bendrasis kelias",
+        SpeechPath::GeneralSpeech,
+    );
     // Gated confirm path — kamane LT (Ona): integrity path, honest drop.
-    say_queued(&svc, "kamane", "drill patvirtinimo langas", SpeechPath::GatedConfirm);
+    say_queued(
+        &svc,
+        "kamane",
+        "drill patvirtinimo langas",
+        SpeechPath::GatedConfirm,
+    );
 
     wait_for("both LT drops", &svc, |s| s.counts().dropped >= 2);
 
@@ -285,7 +354,131 @@ fn drill_5_dual_lt_cascade() {
     assert_eq!(c.spoken, 0, "no wrong-voice / wrong-language fallback");
     assert_eq!(c.dropped, 2, "both paths dropped");
     assert!(c.earcons_played >= 2, "fail chime on both drops");
-    assert!(ledger_rows_with(&dir, "render_error") >= 2, "both ledger rows recorded");
+    assert!(
+        ledger_rows_with(&dir, "render_error") >= 2,
+        "both ledger rows recorded"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Drill 2 — VRAM contention (spawn-failure shape): the offline
+/// generator cannot start while the GPU is held (child spawn fails).
+/// The utterance drops honestly (ledger row + bee.fail chime), the
+/// breaker does NOT trip (render error, not a rate anomaly), and the
+/// moment contention clears the SAME lane speaks again — recovery
+/// without restarting anything.
+#[test]
+fn drill_2_vram_contention_recovery() {
+    let dir = drill_dir("vram-contention");
+    let piper = FaultProbe::healthy("piper");
+    let leonas = FaultProbe::healthy("leonas");
+    let ona = FaultProbe::healthy("ona");
+    let svc = start_svc(&dir, vec![piper.clone(), leonas.clone(), ona.clone()]);
+
+    // Utterance 1 — healthy, speaks (EN → piper).
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill two healthy words",
+        SpeechPath::GeneralSpeech,
+    );
+    wait_for("pre-contention speech", &svc, |s| s.counts().spoken >= 1);
+
+    // The STT horn takes the GPU: spawn fails (VRAM contention shape).
+    piper.fail_with("piper: spawn failed: os error 0 (vram contention drill)");
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill two contention words",
+        SpeechPath::GeneralSpeech,
+    );
+    wait_for("contention drop", &svc, |s| s.counts().dropped >= 1);
+
+    let mid = svc.counts();
+    assert_eq!(mid.spoken, 1);
+    assert_eq!(mid.dropped, 1);
+    assert!(
+        mid.earcons_played >= 1,
+        "bee.fail chime on the spawn failure"
+    );
+    assert!(
+        ledger_rows_with(&dir, "render_error") >= 1,
+        "ledger row recorded"
+    );
+    assert_eq!(
+        ledger_rows_with(&dir, "ga3"),
+        0,
+        "breaker never trips on a spawn failure"
+    );
+
+    // Contention clears — the SAME lane recovers on the next utterance.
+    piper.set_fail(false);
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill two recovered words",
+        SpeechPath::GeneralSpeech,
+    );
+    wait_for("post-contention recovery", &svc, |s| s.counts().spoken >= 2);
+
+    let c = svc.counts();
+    assert_eq!(c.spoken, 2, "same lane spoke before and after contention");
+    assert_eq!(c.dropped, 1, "no additional drops during recovery");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Drill 6 — slow-lane deadline exceed: the LT lane stalls past the
+/// R-D single-attempt budget. The render verdict is the deadline
+/// error itself (no wrong-voice fallback, no sibling detour), the
+/// drop lands with the bee.fail warning chime + ledger row, and the
+/// queue moves ON — the next utterance speaks (no head-of-line block
+/// behind the stalled lane).
+#[test]
+fn drill_6_deadline_exceed_chimes_and_queue_moves_on() {
+    let dir = drill_dir("deadline-exceed");
+    let leonas = FaultProbe::healthy("leonas");
+    let ona = FaultProbe::healthy("ona");
+    let piper = FaultProbe::healthy("piper");
+    let svc = start_svc(&dir, vec![leonas.clone(), ona.clone(), piper.clone()]);
+
+    // The LT lane stalls past its budget (LT text → leonas).
+    leonas.fail_with("r-d deadline exceeded (2500 ms) on attempt 1");
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill šeši lėta linija",
+        SpeechPath::GeneralSpeech,
+    );
+    wait_for("deadline drop", &svc, |s| s.counts().dropped >= 1);
+
+    let mid = svc.counts();
+    assert_eq!(mid.spoken, 0, "deadline verdict — no wrong-voice render");
+    assert!(
+        mid.earcons_played >= 1,
+        "bee.fail warning chime on deadline exceed"
+    );
+    assert!(
+        ledger_rows_with(&dir, "render_error") >= 1,
+        "ledger row recorded"
+    );
+    assert_eq!(ona.renders(), 0, "no fallback through the sibling LT lane");
+    assert_eq!(piper.renders(), 0, "no wrong-language fallback");
+
+    // The lane answers within budget again — the queue moved on.
+    leonas.set_fail(false);
+    say_queued(
+        &svc,
+        "sergeant",
+        "drill šeši atsakė vėl",
+        SpeechPath::GeneralSpeech,
+    );
+    wait_for("post-deadline speech", &svc, |s| s.counts().spoken >= 1);
+
+    let c = svc.counts();
+    assert_eq!(c.spoken, 1);
+    assert_eq!(c.dropped, 1);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

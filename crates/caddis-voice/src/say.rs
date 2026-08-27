@@ -180,9 +180,23 @@ impl Dispatcher {
         ledger: &mut DropLedger,
         sink: &mut dyn PlaySink,
     ) -> SayOutcome {
-        // 1. Cache first — no token, no render.
+        // 1. Cache first — no token, no render. A corrupted entry
+        //    (bit rot, torn store) must never reach the sink: validate
+        //    the hit against its own format; a bad hit is treated as a
+        //    miss — re-render, repair the entry, record the anomaly.
         if let Some(hit) = self.cache.get(key) {
-            return self.play(item, &hit.bytes, true, now_s_of(now_ms), ledger, sink);
+            let valid = match hit.format {
+                crate::adapter::AudioFormat::Wav => {
+                    crate::adapter::validate_wav(&hit.bytes).is_ok()
+                }
+                crate::adapter::AudioFormat::Mp3 => {
+                    crate::adapter::validate_mp3(&hit.bytes).is_ok()
+                }
+            };
+            if valid {
+                return self.play(item, &hit.bytes, true, now_s_of(now_ms), ledger, sink);
+            }
+            ledger.record(item, "cache_corrupt", now_s_of(now_ms));
         }
         // 2. GA3 gates the lane — per GENERATOR (the voice's own bucket).
         if let Err(tripped) = self.breaker.try_acquire(&voice.generator, now_ms) {
@@ -299,7 +313,7 @@ mod tests {
                 return Err(AdapterErr("stub lane down".into()));
             }
             Ok(RenderedAudio {
-                bytes: vec![1, 2, 3, 4],
+                bytes: test_wav(),
                 format: crate::adapter::AudioFormat::Wav,
                 generator: self.name.into(),
                 voice: "en_US-ryan".into(),
@@ -327,6 +341,32 @@ mod tests {
             generator: "piper".into(),
             lang: Lang::En,
         }
+    }
+
+    /// Minimal VALID WAV (GA2 shape: RIFF + PCM 16-bit mono, 0.1 s) —
+    /// the fake lane's output must pass the same validation real
+    /// adapters are held to, or the cache-hit guard would reject
+    /// every hit (≥ 50 ms duration is a GA2 hard rule).
+    fn test_wav() -> Vec<u8> {
+        const RATE: u32 = 16_000;
+        const SAMPLES: u32 = 1_600; // 0.1 s
+        let data_len = SAMPLES * 2;
+        let mut b = Vec::with_capacity(44 + data_len as usize);
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + data_len).to_le_bytes()); // riff size
+        b.extend_from_slice(b"WAVE");
+        b.extend_from_slice(b"fmt ");
+        b.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+        b.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        b.extend_from_slice(&1u16.to_le_bytes()); // mono
+        b.extend_from_slice(&RATE.to_le_bytes()); // rate
+        b.extend_from_slice(&(RATE * 2).to_le_bytes()); // byte rate
+        b.extend_from_slice(&2u16.to_le_bytes()); // block align
+        b.extend_from_slice(&16u16.to_le_bytes()); // bits
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&data_len.to_le_bytes());
+        b.extend(std::iter::repeat_n(0u8, data_len as usize));
+        b
     }
 
     #[test]
@@ -372,6 +412,93 @@ mod tests {
         );
         let st = d.cache_stats();
         assert_eq!((st.hits, st.misses, st.stores), (1, 1, 1));
+    }
+
+    /// R-F drill 3 (slice 2): cache-corruption injection. A corrupted
+    /// WAV cache hit must NEVER reach the sink — rejected as invalid,
+    /// re-rendered, the entry repaired, the anomaly ledgered (lossless
+    /// row: nothing was lost, it re-rendered).
+    #[test]
+    fn cache_corruption_is_rejected_and_repaired() {
+        let (lane, renders) = FakeLane::piper(false);
+        let mut sink = FakeSink {
+            fail: false,
+            plays: std::cell::Cell::new(0),
+        };
+        let mut clock = IdleClock::new();
+        let mut ledger = DropLedger::new(None);
+        let mut d = Dispatcher::new(vec![Box::new(lane)], "v1");
+        let v = voice();
+
+        // First speak: rendered, stored.
+        assert_eq!(
+            d.speak(
+                &item("rot"),
+                &v,
+                1.0,
+                10.0,
+                10_000,
+                &mut clock,
+                &mut ledger,
+                &mut sink
+            ),
+            SayOutcome::Spoke { cache_hit: false }
+        );
+
+        // Corrupt the stored entry in place (bit-rot shape: garbage
+        // where the RIFF/pcm header must be).
+        let key = d.key(&item("rot"), &v, 1.0);
+        let mut rot = d.cache.get(&key).expect("entry stored");
+        rot.bytes = b"RIFF--bit-rot--not-a-wav-body".to_vec();
+        d.cache.put(&key, rot);
+
+        // Corrupted hit: REJECTED → re-render → repair → Spoke.
+        assert_eq!(
+            d.speak(
+                &item("rot"),
+                &v,
+                1.0,
+                20.0,
+                20_000,
+                &mut clock,
+                &mut ledger,
+                &mut sink
+            ),
+            SayOutcome::Spoke { cache_hit: false }
+        );
+        assert_eq!(
+            renders.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "corrupt hit must re-render, not play garbage"
+        );
+        assert_eq!(sink.plays.get(), 2);
+
+        // The anomaly is ledgered as cache_corrupt.
+        assert_eq!(
+            ledger.health().by_reason.get("cache_corrupt"),
+            Some(&1),
+            "cache_corrupt row expected"
+        );
+
+        // Repaired entry serves a clean hit again.
+        assert_eq!(
+            d.speak(
+                &item("rot"),
+                &v,
+                1.0,
+                30.0,
+                30_000,
+                &mut clock,
+                &mut ledger,
+                &mut sink
+            ),
+            SayOutcome::Spoke { cache_hit: true }
+        );
+        assert_eq!(
+            renders.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "repaired hit must not re-render"
+        );
     }
 
     fn item(text: &str) -> SayItem {

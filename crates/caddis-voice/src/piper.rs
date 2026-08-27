@@ -402,6 +402,42 @@ mod tests {
         let _ = std::fs::remove_file(canned);
     }
 
+    /// R-F drill 2 (slice 2): VRAM-contention spawn failure. The piper
+    /// child cannot start (missing exe = the CreateProcess failure a
+    /// VRAM-starved spawn produces): a CLEAN AdapterErr, no panic, no
+    /// orphaned temp files — and the adapter layer recovers at once
+    /// once the contention clears (a working argv renders fine; the
+    /// adapter keeps no poisoned state).
+    #[test]
+    fn spawn_failure_is_clean_and_recovers() {
+        let a = PiperAdapter::new(
+            PiperPaths {
+                exe: "Z:\\definitely\\not\\there\\piper-missing.exe".into(),
+                model: "unused".into(),
+                model_config: None,
+            },
+            1500,
+        )
+        .with_stub_argv(
+            vec![
+                "Z:\\definitely\\not\\there\\piper-missing.exe".into(),
+                "--no-such-flag".into(),
+            ],
+            8_000,
+        );
+        let e = a.render(&voice(), "spawn fail", 1.0).unwrap_err();
+        assert!(
+            e.0.starts_with("piper: spawn failed"),
+            "unexpected err: {e}"
+        );
+        // Recovery: contention clears, the exe is back, the same
+        // render path succeeds immediately.
+        let (ok, canned) = stub_adapter("spawn-recover");
+        let r = ok.render(&voice(), "recovered", 1.0).unwrap();
+        validate_wav(&r.bytes).unwrap();
+        let _ = std::fs::remove_file(canned);
+    }
+
     #[test]
     fn non_wav_output_rejected() {
         let junk = std::env::temp_dir().join("caddis-piper-test-junk.bin");

@@ -14,7 +14,7 @@
 //! `length_scale` is piper's knob — the edge lane shapes speech only
 //! through prosody, so it is deliberately ignored.
 
-use crate::adapter::{AdapterErr, RenderedAudio};
+use crate::adapter::{sanitize_text, AdapterErr, RenderedAudio};
 use crate::edgetts::{dial_url, hex_id32, sec_ms_gec, synthesize, Prosody, SessionOpts, WsStream};
 use crate::registry::{GeneratorSpec, VoiceSpec};
 use crate::say::RenderLane;
@@ -80,6 +80,12 @@ impl RenderLane for EdgeTtsLane {
         text: &str,
         _length_scale: f64,
     ) -> Result<RenderedAudio, AdapterErr> {
+        // GA guard BEFORE the dial: the handshake itself is egress —
+        // oversized / secret-shaped / markup text must be refused
+        // before a socket is ever opened (R-F drill 7: never reaches
+        // egress). The second pass inside `synthesize` stays: belt and
+        // braces, and other callers of the protocol half too.
+        let text = sanitize_text(text)?.text;
         let started = Instant::now();
         let seed = format!(
             "{}-{}",
@@ -94,7 +100,7 @@ impl RenderLane for EdgeTtsLane {
         let budget = self.deadline_ms.max(1);
         let mut ws = WsClient::connect(&self.gen, &url, budget, budget)
             .map_err(|e| AdapterErr(format!("edge-tts: dial: {e}")))?;
-        let audio = self.render_on(&mut ws, voice, text, seed)?;
+        let audio = self.render_on(&mut ws, voice, &text, seed)?;
         // The wire is MP3 (the endpoint's only speech dialect); decode
         // to the organ's WAV before the render leaves the lane — the
         // dispatcher, cache and play child never see compressed audio.
@@ -232,5 +238,20 @@ mod tests {
             .render_on(&mut ws, &voice(), "tekstas", "leonas-0".into())
             .unwrap_err();
         assert!(e.0.contains("transport"), "unexpected err: {e}");
+    }
+    /// R-F drill 7 (slice 2): injection reject — oversized and
+    /// secret-shaped text NEVER reaches egress. The refusal fires
+    /// BEFORE the dial: no socket, no handshake, no mp3 decoder
+    /// child — the error is the sanitize verdict itself, not a
+    /// network outcome.
+    #[test]
+    fn bad_text_is_refused_before_dial() {
+        let lane = EdgeTtsLane::new(gen(), 2_500, String::new());
+        let secret = "hold sk-ant-api03-AAABBBCCCDDDEEEFFF000111";
+        let e = lane.render(&voice(), secret, 1.0).unwrap_err();
+        assert!(e.0.starts_with("text:"), "pre-dial refusal expected: {e}");
+        let oversized = "ž".repeat(crate::adapter::MAX_TEXT_CHARS + 1);
+        let e = lane.render(&voice(), &oversized, 1.0).unwrap_err();
+        assert!(e.0.starts_with("text:"), "pre-dial refusal expected: {e}");
     }
 }
