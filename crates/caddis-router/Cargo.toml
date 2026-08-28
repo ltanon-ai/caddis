@@ -1,0 +1,16 @@
+[package]
+name = "caddis-router"
+version = "0.1.0"
+edition = "2021"
+description = "ROUTING ORGAN P1 (sergeant unit caddis-router-organ, 2026-08-26): pure task->lane routing — profile-from-card + lane filter + cheapest-above-floor. No dispatch, no I/O, no LLM; emits decision rows for the EXISTING validated dispatch paths."
+# Origin: OMP sergeant BUILD-QUEUE caddis-router-organ. Design =
+#   state/briefs/r2-routing-design-brief.md, council rulings F1-F7
+#   (r2-routing-design-council, 2026-08-25T22:57Z, 2/4 lanes, both full).
+#   P1 implements ONLY the converged slice; QQ1-3 (verified-fail semantics,
+#   decay recovery, published cost metric) are quorum-gated and NOT built here.
+# Operator rulings: O1 (CADDIS grows the router), O2 (card-native, escalate+redo,
+#   nothing harmed, NO droid lanes), O3 (most suitable, then cheapest,
+#   free/local first). No-LLM-in-routing ruling 2026-07-26: deterministic only.
+
+[dependencies]
+caddis-card = { path = "../caddis-card" }
