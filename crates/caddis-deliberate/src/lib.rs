@@ -67,6 +67,15 @@
 //! every answered leg lands a `class: session` row (open before the
 //! first leg, usage per answered seat, close with the verdict-digest
 //! link — the model-visibility feed's one mechanism).
+//! P4 slice 3 = [`seed`]: the F13 SIGNED SEED ARTIFACT + verify-gate.
+//! Export signs the home's stream (HMAC-SHA256 over a born-once
+//! `seed.key` minted beside it, the caddis-router warden law vendored);
+//! verify is the supply-chain gate (strict shape + stream digest + rows
+//! + fingerprint + signature, findings name the broken law); restore
+//! CONSTRUCTS a home on any machine ONLY after the gate is clean —
+//! tampered seed = refused with nothing written, a diverged target is
+//! never clobbered. Honest boundary: symmetric attestation, the key
+//! travels with the owner (`--key`), never inside the artifact.
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
 //!   never touches a ledger. It classifies DATA and constructs values; the
 //!   P3 executor is a later slice, in another module, under warden gates.
@@ -105,6 +114,7 @@ pub mod json;
 pub mod protocol;
 pub mod quorum;
 pub mod registry;
+pub mod seed;
 pub mod sessions;
 pub mod sha256;
 pub mod ttl;
