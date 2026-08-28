@@ -9,6 +9,7 @@ fn provider(id: &str) -> Card {
         lane_type: crate::LaneType::Http,
         base_url: format!("https://{id}.example/v1"),
         auth_path: String::new(),
+        probe_path: String::new(),
         caps: 1,
         source: "models.json#deadbeef".into(),
     })
@@ -106,6 +107,48 @@ fn missing_field_is_malformed() {
             assert!(msg.contains("auth_path"), "got: {msg}");
         }
     }
+}
+
+#[test]
+fn probe_path_law() {
+    // Absent field = the honest blank: pre-extension rows keep parsing
+    // (back-compat law — the stream is append-only and old rows persist).
+    let legacy = "{\"class\":\"provider\",\"id\":\"x\",\"lane_type\":\"http\",\
+                  \"base_url\":\"https://h/v1beta/openai\",\"auth_path\":\"\",\
+                  \"caps\":1,\"source\":\"s\"}";
+    let cards = parse_stream(legacy).expect("legacy row parses");
+    match &cards[0] {
+        Card::Provider(p) => assert_eq!(p.probe_path, ""),
+        _ => panic!("provider row expected"),
+    }
+
+    // Absolute override parses and round-trips deterministically.
+    let gem = match provider("gemini") {
+        Card::Provider(mut pc) => {
+            pc.base_url = "https://generativelanguage.googleapis.com/v1beta/openai".into();
+            pc.probe_path = "/v1beta/models".into();
+            pc
+        }
+        _ => panic!("provider card expected"),
+    };
+    let text = render_seed(&[Card::Provider(gem.clone())]);
+    assert_eq!(
+        parse_stream(&text).unwrap(),
+        vec![Card::Provider(gem.clone())]
+    );
+
+    // Relative path refused (absolute-path law).
+    let bad = encode_card(&provider("g"))
+        .replace(",\"probe_path\":\"\"", ",\"probe_path\":\"v1beta/models\"");
+    let err = parse_stream(&bad).unwrap_err();
+    assert!(err.to_string().contains("probe_path"), "{err}");
+
+    // Non-string refused.
+    let bad2 = encode_card(&provider("g")).replace(",\"probe_path\":\"\"", ",\"probe_path\":7");
+    assert!(
+        parse_stream(&bad2).is_err(),
+        "non-string probe_path must be refused"
+    );
 }
 
 #[test]

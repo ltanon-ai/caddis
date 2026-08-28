@@ -82,7 +82,7 @@ fn status_class_table() {
     for (code, reason) in table {
         let line = format!("{code} {reason}");
         let (url, _rx) = spawn_once(move |sock| respond(sock, &line));
-        let out = probe(&url, "", &fast_cfg());
+        let out = probe(&url, "", "", &fast_cfg());
         assert_eq!(
             out.status,
             Some(*code),
@@ -105,7 +105,12 @@ fn request_shape_and_auth_law() {
     {
         let (url, rx) = spawn_once(|sock| respond(sock, "200 OK"));
         let port = port_of(&url);
-        let out = probe(&format!("{url}/v1"), keyfile.to_str().unwrap(), &fast_cfg());
+        let out = probe(
+            &format!("{url}/v1"),
+            "",
+            keyfile.to_str().unwrap(),
+            &fast_cfg(),
+        );
         assert_eq!(out.status, Some(200));
         let req = rx
             .recv_timeout(Duration::from_secs(2))
@@ -125,7 +130,7 @@ fn request_shape_and_auth_law() {
     // Without auth: NO Authorization line at all.
     {
         let (url, rx) = spawn_once(|sock| respond(sock, "200 OK"));
-        let out = probe(&url, "   ", &fast_cfg());
+        let out = probe(&url, "", "   ", &fast_cfg());
         assert_eq!(out.status, Some(200));
         let req = rx
             .recv_timeout(Duration::from_secs(2))
@@ -143,13 +148,13 @@ fn request_shape_and_auth_law() {
 fn auth_file_defects_are_local_not_lane_verdicts() {
     let (url, _rx) = spawn_once(|sock| respond(sock, "200 OK"));
     // Missing file: transient class, honest reason, no status.
-    let out = probe(&url, "Z:/definitely/not/here.key", &fast_cfg());
+    let out = probe(&url, "", "Z:/definitely/not/here.key", &fast_cfg());
     assert_eq!(out.status, None);
     let reason = out.error.unwrap();
     assert!(reason.contains("auth file unreadable"), "reason: {reason}");
     let empty = std::env::temp_dir().join("caddis-prober-test-empty-key");
     std::fs::write(&empty, "").unwrap();
-    let out = probe(&url, empty.to_str().unwrap(), &fast_cfg());
+    let out = probe(&url, "", empty.to_str().unwrap(), &fast_cfg());
     assert!(out.error.unwrap().contains("is empty"));
     let _ = std::fs::remove_file(&empty);
 }
@@ -159,7 +164,7 @@ fn transport_failures() {
     // Server closes the connection before answering.
     {
         let (url, _rx) = spawn_once(drop);
-        let out = probe(&url, "", &fast_cfg());
+        let out = probe(&url, "", "", &fast_cfg());
         assert_eq!(out.status, None);
         let reason = out.error.unwrap();
         assert!(
@@ -175,7 +180,7 @@ fn transport_failures() {
             connect_timeout: Duration::from_secs(2),
             total_timeout: Duration::from_millis(800),
         };
-        let out = probe(&url, "", &cfg);
+        let out = probe(&url, "", "", &cfg);
         let dt = t0.elapsed();
         assert_eq!(out.status, None);
         // The deadline BOUNDS are the law (wording is OS-specific).
@@ -190,7 +195,7 @@ fn transport_failures() {
             let _ = sock.write_all(b"GARBAGE\r\nContent-Length: 0\r\n\r\n");
             let _ = sock.flush();
         });
-        let out = probe(&url, "", &fast_cfg());
+        let out = probe(&url, "", "", &fast_cfg());
         assert_eq!(out.status, None);
         assert!(out.error.unwrap().contains("malformed status line"));
     }
@@ -208,7 +213,7 @@ fn slow_trickle_still_answers() {
             thread::sleep(Duration::from_millis(5));
         }
     });
-    let out = probe(&url, "", &fast_cfg());
+    let out = probe(&url, "", "", &fast_cfg());
     assert_eq!(out.status, Some(429));
 }
 
@@ -225,7 +230,7 @@ fn head_cap_bounds_garbage_stream() {
         thread::sleep(Duration::from_secs(5));
     });
     let t0 = std::time::Instant::now();
-    let out = probe(&url, "", &fast_cfg());
+    let out = probe(&url, "", "", &fast_cfg());
     assert_eq!(out.status, None);
     assert!(t0.elapsed() < Duration::from_secs(3));
     let reason = out.error.unwrap();
@@ -244,10 +249,41 @@ fn url_law() {
         ("ftp://api.example.com", "unsupported scheme"),
         ("https://user:pass@api.example.com", "userinfo"),
     ] {
-        let out = probe(bad, "", &cfg);
+        let out = probe(bad, "", "", &cfg);
         assert_eq!(out.status, None, "{bad}");
         assert!(out.error.unwrap().contains(needle), "{bad}");
     }
+}
+
+#[test]
+fn probe_path_override_replaces_base_path() {
+    // gemini law: the chat mount (`…/v1beta/openai`) serves no
+    // `GET /models`; an ABSOLUTE probe_path replaces the base PATH while
+    // host/scheme/auth still ride the base_url.
+    let (url, rx) = spawn_once(|sock| respond(sock, "200 OK"));
+    let base = format!("{url}/v1beta/openai");
+    let port = port_of(&url);
+    let out = probe(&base, "/v1beta/models", "", &fast_cfg());
+    assert_eq!(out.status, Some(200));
+    let req = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("request captured");
+    let text = String::from_utf8(req).expect("utf8 request");
+    assert!(
+        text.starts_with("GET /v1beta/models HTTP/1.1\r\n"),
+        "override replaces (never appends to) the base path: {text}"
+    );
+    assert!(
+        text.contains(&format!("Host: 127.0.0.1:{port}\r\n")),
+        "host law"
+    );
+
+    // Relative override: refused BEFORE dialing — visible reason, no status.
+    let (url2, _rx2) = spawn_once(|sock| respond(sock, "200 OK"));
+    let out = probe(&url2, "v1beta/models", "", &fast_cfg());
+    assert_eq!(out.status, None);
+    let reason = out.error.unwrap();
+    assert!(reason.contains("absolute"), "reason: {reason}");
 }
 
 #[test]

@@ -17,6 +17,7 @@ fn provider(id: &str, base_url: &str, auth_path: &str) -> Card {
         lane_type: LaneType::Http,
         base_url: base_url.into(),
         auth_path: auth_path.into(),
+        probe_path: String::new(),
         caps: 1,
         source: "test".into(),
     })
@@ -75,7 +76,7 @@ fn router(responses: BTreeMap<&str, prober::ProbeOutcome>) -> impl ProbeFn {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect();
-    move |base_url: &str, _auth: &str, _cfg: &prober::ProbeCfg| {
+    move |base_url: &str, _probe_path: &str, _auth: &str, _cfg: &prober::ProbeCfg| {
         m.get(base_url)
             .cloned()
             .unwrap_or_else(|| refused("no route"))
@@ -202,16 +203,16 @@ fn unprobeable_times3_flips_state_once() {
     let f = router(BTreeMap::from([("https://lane.example", answered(401))]));
     // Rotations 1 and 2: no card, no alert.
     for i in 1..=2 {
-        let rep = rotate(&home, NOW + i * 100, &RotateCfg::default(), |u, a, c| {
-            f(u, a, c)
+        let rep = rotate(&home, NOW + i * 100, &RotateCfg::default(), |u, p, a, c| {
+            f(u, p, a, c)
         })
         .expect("rotate ok");
         assert_eq!(rep.cards_appended, 0, "rotation {i}");
         assert_eq!(rep.alerts.len(), 0);
     }
     // Rotation 3: the transition — one card, ONE alert.
-    let rep = rotate(&home, NOW + 300, &RotateCfg::default(), |u, a, c| {
-        f(u, a, c)
+    let rep = rotate(&home, NOW + 300, &RotateCfg::default(), |u, p, a, c| {
+        f(u, p, a, c)
     })
     .expect("rotate ok");
     assert_eq!(rep.cards_appended, 1);
@@ -223,8 +224,8 @@ fn unprobeable_times3_flips_state_once() {
         crate::SeatState::Unprobeable
     );
     // Rotation 4: still unprobeable — NO second alert, no duplicate card.
-    let rep = rotate(&home, NOW + 10_000, &RotateCfg::default(), |u, a, c| {
-        f(u, a, c)
+    let rep = rotate(&home, NOW + 10_000, &RotateCfg::default(), |u, p, a, c| {
+        f(u, p, a, c)
     })
     .expect("rotate ok");
     assert_eq!(rep.alerts.len(), 0, "alert is per TRANSITION");
@@ -237,15 +238,15 @@ fn streak_resets_on_any_observed_result() {
     let unauth401 = answered(401);
     // Two unprobeable rotations...
     for i in 1..=2 {
-        let _ = rotate(&home, NOW + i * 100, &RotateCfg::default(), |u, a, c| {
-            let _ = (u, a, c);
+        let _ = rotate(&home, NOW + i * 100, &RotateCfg::default(), |u, p, a, c| {
+            let _ = (u, p, a, c);
             unauth401.clone()
         })
         .expect("rotate ok");
     }
     // ...a transient break in between...
-    let _ = rotate(&home, NOW + 300, &RotateCfg::default(), |u, a, c| {
-        let _ = (u, a, c);
+    let _ = rotate(&home, NOW + 300, &RotateCfg::default(), |u, p, a, c| {
+        let _ = (u, p, a, c);
         refused("boom")
     })
     .expect("rotate ok");
@@ -255,8 +256,8 @@ fn streak_resets_on_any_observed_result() {
         "transient breaks the chain"
     );
     // ...then unprobeable again: streak restarts at 1, no flip at "3 total".
-    let rep = rotate(&home, NOW + 500, &RotateCfg::default(), |u, a, c| {
-        let _ = (u, a, c);
+    let rep = rotate(&home, NOW + 500, &RotateCfg::default(), |u, p, a, c| {
+        let _ = (u, p, a, c);
         unauth401.clone()
     })
     .expect("rotate ok");
@@ -274,8 +275,8 @@ fn auth_landing_lifts_unprobeable_next_rotation() {
         unprobeable_after: 1,
         ..RotateCfg::default()
     };
-    let rep = rotate(&home, NOW, &cfg1, |u, a, c| {
-        let _ = (u, a, c);
+    let rep = rotate(&home, NOW, &cfg1, |u, p, a, c| {
+        let _ = (u, p, a, c);
         answered(401)
     })
     .expect("rotate ok");
@@ -283,8 +284,8 @@ fn auth_landing_lifts_unprobeable_next_rotation() {
     // Next rotation (past the unprobeable cadence) answers 200: the seat
     // lifts to Live automatically.
     let lift_at = NOW + RotateCfg::default().cadence.unprobeable_retry_every_s + 1;
-    let rep = rotate(&home, lift_at, &RotateCfg::default(), |u, a, c| {
-        let _ = (u, a, c);
+    let rep = rotate(&home, lift_at, &RotateCfg::default(), |u, p, a, c| {
+        let _ = (u, p, a, c);
         answered(200)
     })
     .expect("rotate ok");
@@ -307,7 +308,7 @@ fn blank_base_url_never_dials_and_counts_unprobeable() {
         unprobeable_after: 1,
         ..RotateCfg::default()
     };
-    let rep = rotate(&home, NOW, &cfg, move |_u, _a, _c| {
+    let rep = rotate(&home, NOW, &cfg, move |_u, _p, _a, _c| {
         calls2.fetch_add(1, Ordering::SeqCst);
         answered(200)
     })
@@ -333,7 +334,7 @@ fn sweep_lands_ttl_transitions() {
         provider("prov", "https://lane.example", ""),
         seat("prov/m1", "prov", crate::SeatState::Live, NOW - 10 * 3600),
     ]);
-    let rep = rotate(&home, NOW, &RotateCfg::default(), |_u, _a, _c| {
+    let rep = rotate(&home, NOW, &RotateCfg::default(), |_u, _p, _a, _c| {
         panic!("no probe expected")
     })
     .expect("rotate ok");
@@ -352,7 +353,7 @@ fn nothing_due_is_quiet() {
         provider("prov", "https://lane.example", ""),
         seat("prov/m1", "prov", crate::SeatState::Live, NOW - 60),
     ]);
-    match rotate(&home, NOW, &RotateCfg::default(), |_u, _a, _c| {
+    match rotate(&home, NOW, &RotateCfg::default(), |_u, _p, _a, _c| {
         answered(200)
     }) {
         Err(RotateErr::NothingDue(rep)) => {
@@ -372,7 +373,7 @@ fn young_lock_is_defect_stale_lock_is_stolen() {
         format!("{{\"pid\":1,\"started_epoch_s\":{}}}\n", NOW - 10),
     )
     .unwrap();
-    match rotate(&home, NOW, &RotateCfg::default(), |_u, _a, _c| {
+    match rotate(&home, NOW, &RotateCfg::default(), |_u, _p, _a, _c| {
         answered(200)
     }) {
         Err(RotateErr::Defect(m)) => assert!(m.contains("held"), "{m}"),
@@ -387,8 +388,8 @@ fn young_lock_is_defect_stale_lock_is_stolen() {
         ),
     )
     .unwrap();
-    let rep = rotate(&home, NOW, &RotateCfg::default(), |u, a, c| {
-        router(BTreeMap::from([("https://lane.example", answered(200))]))(u, a, c)
+    let rep = rotate(&home, NOW, &RotateCfg::default(), |u, p, a, c| {
+        router(BTreeMap::from([("https://lane.example", answered(200))]))(u, p, a, c)
     })
     .expect("rotate ok past stale lock");
     assert!(rep.lock_stolen);
@@ -400,7 +401,7 @@ fn young_lock_is_defect_stale_lock_is_stolen() {
 fn malformed_rotation_state_is_defect() {
     let home = default_home_single("https://lane.example");
     std::fs::write(state_path(&home), "{ not json").unwrap();
-    match rotate(&home, NOW, &RotateCfg::default(), |_u, _a, _c| {
+    match rotate(&home, NOW, &RotateCfg::default(), |_u, _p, _a, _c| {
         answered(200)
     }) {
         Err(RotateErr::Defect(m)) => assert!(m.contains("rotation-state"), "{m}"),
@@ -454,12 +455,36 @@ fn map_status_table_unit() {
 #[test]
 fn rotation_log_line_lands() {
     let home = default_home_single("https://lane.example");
-    let _ = rotate(&home, NOW, &RotateCfg::default(), |u, a, c| {
-        router(BTreeMap::from([("https://lane.example", answered(200))]))(u, a, c)
+    let _ = rotate(&home, NOW, &RotateCfg::default(), |u, p, a, c| {
+        router(BTreeMap::from([("https://lane.example", answered(200))]))(u, p, a, c)
     })
     .expect("rotate ok");
     let log = std::fs::read_to_string(log_path(&home)).expect("log exists");
     let v = crate::json::parse(log.trim()).expect("log line is JSON");
     assert_eq!(v.get("verb").and_then(|x| x.as_str()), Some("rotate"));
     assert_eq!(v.get("live").and_then(|x| x.as_f64()), Some(1.0));
+}
+
+#[test]
+fn probe_path_flows_from_card_to_transport() {
+    // The provider card's probe_path override reaches the transport
+    // verbatim (base_url unchanged) — the gemini law end-to-end.
+    let prov = match provider("prov", "https://lane.example/v1beta/openai", "") {
+        Card::Provider(mut pc) => {
+            pc.probe_path = "/v1beta/models".into();
+            Card::Provider(pc)
+        }
+        _ => panic!("provider card expected"),
+    };
+    let home = home_with(&[prov, seat("prov/m1", "prov", crate::SeatState::Probing, 0)]);
+    let rep = rotate(&home, NOW, &RotateCfg::default(), |u, p, _a, _c| {
+        assert_eq!(
+            u, "https://lane.example/v1beta/openai",
+            "base_url unchanged"
+        );
+        assert_eq!(p, "/v1beta/models", "override flows through");
+        answered(200)
+    })
+    .expect("rotate ok");
+    assert_eq!(rep.live, 1, "override-probed seat lifts Live");
 }

@@ -11,6 +11,7 @@ fn prov(id: &str, caps: u32) -> Card {
         lane_type: crate::LaneType::Http,
         base_url: format!("https://{id}.example/v1"),
         auth_path: String::new(),
+        probe_path: String::new(),
         caps,
         source: "models.json#deadbeef".into(),
     })

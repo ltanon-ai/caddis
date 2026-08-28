@@ -124,6 +124,7 @@ fn registry_with(providers: &[(&str, u32)], seats: &[(&str, &str)]) -> Registry 
                         lane_type: LaneType::Http,
                         base_url: String::new(),
                         auth_path: String::new(),
+                        probe_path: String::new(),
                         caps: *caps,
                         source: "test".into(),
                     },

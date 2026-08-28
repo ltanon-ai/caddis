@@ -74,20 +74,35 @@ impl ProbeOutcome {
 }
 
 /// Send ONE capability-listing probe. `base_url` is the provider card's
-/// URL ("https://api.example.com/v1", trailing slash tolerated); the probe
-/// path is `/models`. `auth_path` empty ⇒ probe UNAUTHENTICATED (the
+/// URL ("https://api.example.com/v1", trailing slash tolerated). The
+/// probe path: `probe_path` empty ⇒ the default law `{base_url}/models`;
+/// set ⇒ an ABSOLUTE path (leading `/`) that REPLACES the base path —
+/// host/scheme/TLS/auth still ride `base_url` (gemini law: chat mount
+/// `…/v1beta/openai` serves no `GET /models`; the native `/v1beta/models`
+/// does). `auth_path` empty ⇒ probe UNAUTHENTICATED (the
 /// 401/403-without-auth ⇒ UNPROBEABLE law reads it in rotate.rs).
-pub fn probe(base_url: &str, auth_path: &str, cfg: &ProbeCfg) -> ProbeOutcome {
+pub fn probe(base_url: &str, probe_path: &str, auth_path: &str, cfg: &ProbeCfg) -> ProbeOutcome {
     let deadline = Instant::now() + cfg.total_timeout;
     let url = match parse_url(base_url) {
         Ok(u) => u,
         Err(e) => return ProbeOutcome::failed(e),
     };
-    let path = format!("{}/models", url.path.trim_end_matches('/'));
-    let path = if path.starts_with("//") {
-        format!("/{}", path.trim_start_matches('/'))
+    let pp = probe_path.trim();
+    let path = if pp.is_empty() {
+        let p = format!("{}/models", url.path.trim_end_matches('/'));
+        if p.starts_with("//") {
+            format!("/{}", p.trim_start_matches('/'))
+        } else {
+            p
+        }
+    } else if pp.starts_with('/') {
+        pp.to_string()
     } else {
-        path
+        // The card parser already refuses this; the prober re-checks so
+        // no caller can smuggle a relative path into the request line.
+        return ProbeOutcome::failed(
+            "probe_path must be empty or an absolute path (leading '/')".into(),
+        );
     };
     let bearer = if auth_path.trim().is_empty() {
         None

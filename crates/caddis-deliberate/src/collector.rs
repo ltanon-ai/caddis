@@ -154,6 +154,10 @@ pub fn collect(text: &str) -> Result<CollectReport, String> {
             lane_type,
             base_url,
             auth_path,
+            // The pi catalog carries no listing-path concept — the honest
+            // blank keeps the default `{base_url}/models` law (an operator
+            // ruling sets it via upsert-provider).
+            probe_path: String::new(),
             // Ruling 7 table (ollama/ollama-cloud = 1), else the F4
             // serialized default — transcribed fact, not taste.
             caps: crate::caps::ruled_caps(pid),

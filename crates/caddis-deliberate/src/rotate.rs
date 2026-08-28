@@ -203,9 +203,9 @@ impl fmt::Display for RotateErr {
 
 impl std::error::Error for RotateErr {}
 
-/// The injected transport: (base_url, auth_path, cfg) → outcome.
-pub trait ProbeFn: Fn(&str, &str, &ProbeCfg) -> prober::ProbeOutcome + Sync {}
-impl<T: Fn(&str, &str, &ProbeCfg) -> prober::ProbeOutcome + Sync> ProbeFn for T {}
+/// The injected transport: (base_url, probe_path, auth_path, cfg) → outcome.
+pub trait ProbeFn: Fn(&str, &str, &str, &ProbeCfg) -> prober::ProbeOutcome + Sync {}
+impl<T: Fn(&str, &str, &str, &ProbeCfg) -> prober::ProbeOutcome + Sync> ProbeFn for T {}
 
 /// Home file names.
 pub fn stream_path(home: &Path) -> PathBuf {
@@ -567,6 +567,7 @@ where
             let mut handles = Vec::new();
             for (seat, provider) in wave {
                 let base_url = provider.base_url.clone();
+                let probe_path = provider.probe_path.clone();
                 let auth_path = provider.auth_path.clone();
                 let pcfg = cfg.probe;
                 handles.push(s.spawn(move || {
@@ -581,7 +582,10 @@ where
                             },
                         )
                     } else {
-                        (seat.id.clone(), probe_fn(&base_url, &auth_path, &pcfg))
+                        (
+                            seat.id.clone(),
+                            probe_fn(&base_url, &probe_path, &auth_path, &pcfg),
+                        )
                     }
                 }));
             }

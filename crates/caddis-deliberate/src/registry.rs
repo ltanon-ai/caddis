@@ -135,6 +135,14 @@ pub struct ProviderCard {
     /// VAULT PATH only — never a credential value. Empty = auth lives in
     /// the source file, un-copied (the collector's honest blank).
     pub auth_path: String,
+    /// Capability-listing path override. Empty = the default law
+    /// `GET {base_url}/models`. Set = an ABSOLUTE path (leading `/`)
+    /// that REPLACES the base path — host/scheme/TLS/auth still ride
+    /// `base_url`. Exists for providers whose chat mount differs from
+    /// their listing route (gemini: base `…/v1beta/openai` serves no
+    /// `GET /models`; the native `/v1beta/models` does — curl-proven
+    /// 2026-08-28: compat 404 / native 403-unauth / chat 400).
+    pub probe_path: String,
     /// Max CONCURRENT dispatches across all this provider's seats
     /// (Ruling 7). ollama/ollama-cloud rule 1 with hard ceiling 2;
     /// others seed the F4 serialized default 1. The law + planner live
@@ -231,6 +239,8 @@ pub fn encode_card(card: &Card) -> String {
             json_str(&p.base_url, &mut o);
             o.push_str(",\"auth_path\":");
             json_str(&p.auth_path, &mut o);
+            o.push_str(",\"probe_path\":");
+            json_str(&p.probe_path, &mut o);
             o.push_str(",\"caps\":");
             o.push_str(&p.caps.to_string());
             o.push_str(",\"source\":");
@@ -388,6 +398,20 @@ fn str_field(obj: &[(String, Value)], key: &str, line_no: usize) -> Result<Strin
     }
 }
 
+/// Optional string: absent ⇒ "" (the honest blank); present-but-not-a-
+/// string is still malformed. For additive card fields whose absence
+/// must keep pre-extension rows parsing (parse law).
+fn opt_str_field(obj: &[(String, Value)], key: &str, line_no: usize) -> Result<String, StreamErr> {
+    match obj.iter().find(|(k, _)| k == key) {
+        None => Ok(String::new()),
+        Some((_, Value::Str(s))) => Ok(s.clone()),
+        Some(_) => Err(StreamErr::Malformed {
+            line: line_no,
+            msg: format!("field \"{key}\" must be a string"),
+        }),
+    }
+}
+
 fn u32_field(obj: &[(String, Value)], key: &str, line_no: usize) -> Result<u32, StreamErr> {
     num_field(obj, key, line_no).and_then(|n| {
         if n.fract() != 0.0 || n < 0.0 || n > u32::MAX as f64 {
@@ -450,6 +474,7 @@ const PROVIDER_FIELDS: &[&str] = &[
     "lane_type",
     "base_url",
     "auth_path",
+    "probe_path",
     "caps",
     "source",
 ];
@@ -482,14 +507,21 @@ fn exact_fields(obj: &[(String, Value)], want: &[&str], line_no: usize) -> Resul
     }
     Ok(())
 }
-
 fn parse_provider(obj: &[(String, Value)], line_no: usize) -> Result<Card, StreamErr> {
     exact_fields(obj, PROVIDER_FIELDS, line_no)?;
+    let probe_path = opt_str_field(obj, "probe_path", line_no)?;
+    if !probe_path.is_empty() && !probe_path.starts_with('/') {
+        return Err(StreamErr::Malformed {
+            line: line_no,
+            msg: "field \"probe_path\" must be empty or an absolute path (leading '/')".into(),
+        });
+    }
     Ok(Card::Provider(ProviderCard {
         id: non_empty(obj, "id", line_no)?,
         lane_type: lane_type_field(obj, line_no)?,
         base_url: str_field(obj, "base_url", line_no)?,
         auth_path: str_field(obj, "auth_path", line_no)?,
+        probe_path,
         caps: u32_field(obj, "caps", line_no)?,
         source: non_empty(obj, "source", line_no)?,
     }))
