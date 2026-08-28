@@ -70,8 +70,8 @@
 //! P4 slice 3 = [`seed`]: the F13 SIGNED SEED ARTIFACT + verify-gate.
 //! Export signs the home's stream (HMAC-SHA256 over a born-once
 //! `seed.key` minted beside it, the caddis-router warden law vendored);
-//! verify is the supply-chain gate (strict shape + stream digest + rows
-//! + fingerprint + signature, findings name the broken law); restore
+//! verify is the supply-chain gate (strict shape, stream digest, rows
+//! count, fingerprint, signature — findings name the broken law); restore
 //! CONSTRUCTS a home on any machine ONLY after the gate is clean —
 //! tampered seed = refused with nothing written, a diverged target is
 //! never clobbered. Honest boundary: symmetric attestation, the key

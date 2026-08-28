@@ -103,7 +103,11 @@ impl EditOp {
         }
     }
 
-    fn from_parts(op_word: &str, card: Card) -> Result<Self, String> {
+    /// The inverse of [`EditOp::op_word`] + [`EditOp::to_card`]: rebuild the
+    /// operation from a wire word and its card. PUB since P4 s4a — the CLI
+    /// `edits propose` parses `--op <word>` + `--card <line>` into exactly
+    /// this pair, and the op-word×class law lives in ONE place (parse law).
+    pub fn from_parts(op_word: &str, card: Card) -> Result<Self, String> {
         match (op_word, card) {
             ("upsert-seat", Card::Seat(s)) => Ok(Self::UpsertSeat(s)),
             ("upsert-provider", Card::Provider(p)) => Ok(Self::UpsertProvider(p)),

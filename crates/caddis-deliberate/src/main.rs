@@ -17,6 +17,14 @@
 //! `restore` — CONSTRUCT a home from a seed, ONLY after verify is clean
 //!           (tampered seed = refused, nothing written; a diverged
 //!           target is never clobbered).
+//! `edits` — the warden-gated registry edit path (P4 s4a): `status` (the
+//!           honest journal census), `propose --op --card` (a durable
+//!           pending row; the stream is NEVER touched), `confirm --id`
+//!           (THE WARDEN GATE: an active card in the ledger for the
+//!           confirming actor, else a refusal — nothing written), `refuse
+//!           --id` (the operator's NO, journaled). Stdout is pure JSON
+//!           (the P4 world-bridge surface); exit 1 = refusal (nothing
+//!           written), exit 2 = defect/usage (edits.rs taxonomy).
 //!
 //! Defaults follow the estate home law (caddis-warden identity.rs
 //! precedent): catalog `~/.pi/agent/models.json`, home
@@ -25,6 +33,8 @@
 //! to "." so the failure is VISIBLE in the path, never silent.
 
 use caddis_deliberate::collector::{seed_once, SeedOutcome};
+use caddis_deliberate::edits::{self, EditErr, EditOp};
+use caddis_deliberate::json::{self, Value};
 use caddis_deliberate::registry;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -82,6 +92,7 @@ fn main() -> ExitCode {
         Some("export") => cmd_export(&args[1..]),
         Some("verify") => cmd_verify(&args[1..]),
         Some("restore") => cmd_restore(&args[1..]),
+        Some("edits") => cmd_edits(&args[1..]),
         _ => {
             usage();
             ExitCode::from(2)
@@ -159,6 +170,302 @@ fn cmd_view(args: &[String]) -> ExitCode {
             eprintln!("caddis-deliberate view: {}: {e}", stream.display());
             ExitCode::FAILURE
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// edits — the warden-gated registry edit path (P4 s4a)
+// ---------------------------------------------------------------------------
+
+/// Everything the `edits` verbs need. Paths derive from `--home <dir>`
+/// (default the organ home); the warden ledger is ESTATE-level and defaults
+/// to `~/.caddis/warden-ledger.jsonl` regardless of `--home` (a sandbox home
+/// still gates against the real ledger unless `--warden` says otherwise).
+/// Identity law (edits.rs F2): `--actor`/`--actor-kind` arrive from the
+/// CALLING TRANSPORT — default "terminal", the same self-naming convention
+/// as the router author CLI; the organ never invents identity.
+struct EditsArgs {
+    stream: PathBuf,
+    view: PathBuf,
+    journal: PathBuf,
+    warden: PathBuf,
+    actor: String,
+    actor_kind: String,
+    op_word: Option<String>,
+    card: Option<String>,
+    id: Option<String>,
+}
+
+fn take_str(args: &[String], i: usize, flag: &str) -> Result<String, String> {
+    args.get(i)
+        .cloned()
+        .ok_or_else(|| format!("{flag} needs a value"))
+}
+
+fn parse_edits_args(args: &[String]) -> Result<EditsArgs, String> {
+    let mut dir = default_home_dir();
+    let mut warden = home().join(".caddis").join("warden-ledger.jsonl");
+    let (mut actor, mut actor_kind) = ("terminal".to_string(), "terminal".to_string());
+    let (mut op_word, mut card, mut id) = (None, None, None);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--home" => {
+                i += 1;
+                dir = take_value(args, i, "--home")?;
+            }
+            "--warden" => {
+                i += 1;
+                warden = take_value(args, i, "--warden")?;
+            }
+            "--actor" => {
+                i += 1;
+                actor = take_str(args, i, "--actor")?;
+            }
+            "--actor-kind" => {
+                i += 1;
+                actor_kind = take_str(args, i, "--actor-kind")?;
+            }
+            "--op" => {
+                i += 1;
+                op_word = Some(take_str(args, i, "--op")?);
+            }
+            "--card" => {
+                i += 1;
+                card = Some(take_str(args, i, "--card")?);
+            }
+            "--id" => {
+                i += 1;
+                id = Some(take_str(args, i, "--id")?);
+            }
+            other => return Err(format!("unknown argument {other:?}")),
+        }
+        i += 1;
+    }
+    Ok(EditsArgs {
+        stream: dir.join("seats.jsonl"),
+        view: dir.join("seats-view.json"),
+        journal: dir.join("edits.jsonl"),
+        warden,
+        actor,
+        actor_kind,
+        op_word,
+        card,
+        id,
+    })
+}
+
+fn jstr(s: &str) -> Value {
+    Value::Str(s.to_string())
+}
+
+fn jnum(n: u64) -> Value {
+    Value::Num(n as f64)
+}
+
+fn jobj(pairs: Vec<(&str, Value)>) -> Value {
+    Value::Obj(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+}
+
+/// Stdout law (view precedent): machine verbs print PURE JSON; every human
+/// word goes to stderr.
+fn print_json(v: &Value) {
+    println!("{}", json::to_string(v));
+}
+
+/// edits.rs taxonomy law: a REFUSAL is exit 1 (nothing was written — the
+/// honest stop), a Defect is exit 2 (fail closed). The JSON body carries
+/// the message so the world bridge can surface it without parsing stderr.
+fn edit_err_exit(verb: &str, e: EditErr) -> ExitCode {
+    let refusal = e.is_refusal();
+    print_json(&jobj(vec![
+        ("ok", Value::Bool(false)),
+        ("error", jstr(&e.to_string())),
+    ]));
+    eprintln!("caddis-deliberate edits {verb}: {e}");
+    ExitCode::from(if refusal { 1 } else { 2 })
+}
+
+fn edits_usage_exit(verb: &str, what: &str) -> ExitCode {
+    eprintln!("caddis-deliberate edits {verb}: {what}");
+    ExitCode::from(2)
+}
+
+fn cmd_edits(args: &[String]) -> ExitCode {
+    let Some(verb) = args.first().map(|s| s.as_str()) else {
+        return edits_usage_exit("edits", "missing verb (status|propose|confirm|refuse)");
+    };
+    match verb {
+        "status" => cmd_edits_status(&args[1..]),
+        "propose" => cmd_edits_propose(&args[1..]),
+        "confirm" => cmd_edits_confirm(&args[1..]),
+        "refuse" => cmd_edits_refuse(&args[1..]),
+        other => edits_usage_exit(
+            "edits",
+            &format!("unknown verb {other:?} (status|propose|confirm|refuse)"),
+        ),
+    }
+}
+
+/// The honest journal census — read-only, never fails: rc 0 even when the
+/// journal is absent (empty census, `exists:false`).
+fn cmd_edits_status(args: &[String]) -> ExitCode {
+    let a = match parse_edits_args(args) {
+        Ok(a) => a,
+        Err(e) => return edits_usage_exit("status", &e),
+    };
+    let st = edits::status(&a.journal);
+    let pending = st
+        .pending
+        .iter()
+        .map(|p| {
+            jobj(vec![
+                ("id", jstr(&p.id)),
+                ("seq", jnum(p.seq)),
+                ("op", jstr(p.op.op_word())),
+                ("card", jstr(&registry::encode_card(&p.op.to_card()))),
+                ("prior16", jstr(&p.prior16)),
+                ("actor", jstr(&p.actor)),
+                ("actor_kind", jstr(&p.actor_kind)),
+                ("state", jstr("pending")),
+                ("resolved_by", Value::Null),
+            ])
+        })
+        .collect();
+    print_json(&jobj(vec![
+        ("version", jstr("1")),
+        ("journal", jstr(&a.journal.display().to_string())),
+        ("exists", Value::Bool(a.journal.exists())),
+        ("max_seq", jnum(st.max_seq)),
+        ("pending", Value::Arr(pending)),
+        ("confirmed", jnum(st.confirmed as u64)),
+        ("refused", jnum(st.refused as u64)),
+        (
+            "unparseable",
+            Value::Arr(st.unparseable.iter().map(|l| jnum(*l as u64)).collect()),
+        ),
+    ]));
+    ExitCode::SUCCESS
+}
+
+/// PROPOSE an edit: `--op <upsert-seat|upsert-provider>` + `--card <line|@file>`.
+/// The card is parsed by the ONE card parser (registry::parse_stream —
+/// parse law), exactly one card; the op-word×class pair is checked by
+/// [`EditOp::from_parts`]. Refuses no-ops; NEVER touches the stream.
+fn cmd_edits_propose(args: &[String]) -> ExitCode {
+    let a = match parse_edits_args(args) {
+        Ok(a) => a,
+        Err(e) => return edits_usage_exit("propose", &e),
+    };
+    let Some(op_word) = a.op_word.as_deref() else {
+        return edits_usage_exit("propose", "--op <upsert-seat|upsert-provider> is required");
+    };
+    let Some(card_arg) = a.card.as_deref() else {
+        return edits_usage_exit("propose", "--card <encoded-card-line|@file> is required");
+    };
+    let card_text = match card_arg.strip_prefix('@') {
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) => return edits_usage_exit("propose", &format!("read {path}: {e}")),
+        },
+        None => card_arg.to_string(),
+    };
+    let cards = match registry::parse_stream(card_text.trim()) {
+        Ok(c) => c,
+        Err(e) => return edits_usage_exit("propose", &format!("--card does not parse: {e}")),
+    };
+    if cards.len() != 1 {
+        return edits_usage_exit(
+            "propose",
+            &format!("--card holds {} cards, exactly 1 required", cards.len()),
+        );
+    }
+    let op = match EditOp::from_parts(op_word, cards[0].clone()) {
+        Ok(op) => op,
+        Err(e) => return edits_usage_exit("propose", &e),
+    };
+    match edits::propose(&a.stream, &a.journal, op, &a.actor, &a.actor_kind) {
+        Ok(proposal_id) => {
+            print_json(&jobj(vec![
+                ("ok", Value::Bool(true)),
+                ("proposal_id", jstr(&proposal_id)),
+                ("op", jstr(op_word)),
+                ("actor", jstr(&a.actor)),
+                ("actor_kind", jstr(&a.actor_kind)),
+            ]));
+            eprintln!("proposed {proposal_id} ({op_word}) — pending operator confirm");
+            ExitCode::SUCCESS
+        }
+        Err(e) => edit_err_exit("propose", e),
+    }
+}
+
+/// OPERATOR-CONFIRM: THE WARDEN GATE reads the ledger `--warden` names
+/// (default the estate ledger). An ABSENT ledger is empty text — the honest
+/// GateClosed refusal, never an invented pass; an UNREADABLE one (io error)
+/// is a defect (fail closed: an answer that cannot be proven must not look
+/// like "no").
+fn cmd_edits_confirm(args: &[String]) -> ExitCode {
+    let a = match parse_edits_args(args) {
+        Ok(a) => a,
+        Err(e) => return edits_usage_exit("confirm", &e),
+    };
+    let Some(id) = a.id.as_deref() else {
+        return edits_usage_exit("confirm", "--id <proposal_id> is required");
+    };
+    let warden_text = match std::fs::read_to_string(&a.warden) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return edits_usage_exit("confirm", &format!("read {}: {e}", a.warden.display())),
+    };
+    match edits::confirm(
+        &a.stream,
+        &a.view,
+        &a.journal,
+        id,
+        &a.actor,
+        &a.actor_kind,
+        &warden_text,
+    ) {
+        Ok(out) => {
+            print_json(&jobj(vec![
+                ("ok", Value::Bool(true)),
+                ("proposal_id", jstr(&out.proposal_id)),
+                ("confirm_seq", jnum(out.confirm_seq)),
+                ("applied_key", jstr(&out.applied_key)),
+                ("warden_card", jstr(&out.warden_card)),
+            ]));
+            eprintln!(
+                "confirmed {} -> {} (warden card {})",
+                out.proposal_id, out.applied_key, out.warden_card
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => edit_err_exit("confirm", e),
+    }
+}
+
+/// REFUSE: the operator's explicit NO — journaled, so the pending queue
+/// stays honest (MV13 durable: resolved, not dropped).
+fn cmd_edits_refuse(args: &[String]) -> ExitCode {
+    let a = match parse_edits_args(args) {
+        Ok(a) => a,
+        Err(e) => return edits_usage_exit("refuse", &e),
+    };
+    let Some(id) = a.id.as_deref() else {
+        return edits_usage_exit("refuse", "--id <proposal_id> is required");
+    };
+    match edits::refuse(&a.journal, id, &a.actor, &a.actor_kind) {
+        Ok(refuse_seq) => {
+            print_json(&jobj(vec![
+                ("ok", Value::Bool(true)),
+                ("proposal_id", jstr(id)),
+                ("refuse_seq", jnum(refuse_seq)),
+            ]));
+            eprintln!("refused {id} (journal seq {refuse_seq})");
+            ExitCode::SUCCESS
+        }
+        Err(e) => edit_err_exit("refuse", e),
     }
 }
 
@@ -374,7 +681,19 @@ fn usage() {
          caddis-deliberate export [--home <dir>] [--out <artifact.json>]\n       \
          caddis-deliberate verify <artifact.json> [--home <dir> | --key <file>]\n       \
          caddis-deliberate restore <artifact.json> --to <dir> [--home <dir> | --key <file>]\n       \
-         defaults: catalog ~/.pi/agent/models.json, home ~/.caddis/deliberate\n       \
-         exit codes: 0 ok, 1 io error, 2 usage, 4 seed REFUSED (verify gate)"
+         caddis-deliberate edits status  [--home <dir>] [--warden <path>]\n       \
+         caddis-deliberate edits propose --op <upsert-seat|upsert-provider> --card <line|@file>\n       \
+                                [--actor <name>] [--actor-kind <word>] [--home <dir>]\n       \
+         caddis-deliberate edits confirm --id <eN> [--actor <name>] [--actor-kind <word>]\n       \
+                                [--warden <path>] [--home <dir>]\n       \
+         caddis-deliberate edits refuse  --id <eN> [--actor <name>] [--actor-kind <word>] [--home <dir>]\n       \
+         defaults: catalog ~/.pi/agent/models.json, home ~/.caddis/deliberate,\n       \
+         warden ledger ~/.caddis/warden-ledger.jsonl (the confirm gate)\n       \
+         exit codes: 0 ok, 1 io error or edits REFUSAL (nothing written), 2 usage/defect,\n       \
+         4 seed REFUSED (verify gate)"
     );
 }
+
+#[cfg(test)]
+#[path = "main_edits_tests.rs"]
+mod main_edits_tests;
