@@ -297,6 +297,8 @@ mod tests {
                 ParsedRow {
                     line: 1,
                     seq: 1,
+                    ts: "t".into(),
+                    sig: None,
                     row: Row::Outcome(OutcomeRow {
                         card_id: "C1".into(),
                         task_class: "chair".into(),
@@ -312,6 +314,8 @@ mod tests {
                 ParsedRow {
                     line: 2,
                     seq: 2,
+                    ts: "t".into(),
+                    sig: None,
                     row: Row::Outcome(OutcomeRow {
                         card_id: "C2".into(),
                         task_class: "chair".into(),

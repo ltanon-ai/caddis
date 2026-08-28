@@ -595,6 +595,91 @@ fn route_gated_refusal_persists_alert_no_row_exit_one() {
     fs::remove_dir_all(home).ok();
 }
 
+// --- warden e2e (R5) ------------------------------------------------------------
+
+#[test]
+fn warden_mint_signs_route_gated_rows_and_catches_tampering() {
+    let home = rg_home("w-sign", "chair");
+    // Mint once, activated at the CURRENT max seq: the 5 seed rows stay
+    // honestly unsigned, everything the organ appends from now is signed.
+    let (rc, out, err) = run(&["warden", "mint", "--home", home.to_str().unwrap()]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("activated_seq 5"), "{out}");
+    assert!(out.contains("fingerprint "), "{out}");
+    // A key is born once — the second mint refuses, never overwrites.
+    let (rc, _, err) = run(&["warden", "mint", "--home", home.to_str().unwrap()]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("refusing"), "{err}");
+
+    // route-gated success appends a SIGNED decision row (seq 6).
+    let (rc, out, err) = run(&[
+        "route-gated",
+        "--card",
+        home.join("card.md").to_str().unwrap(),
+        "--data",
+        "public",
+        "--alive",
+        "groq-free,gemini-mid",
+        "--home",
+        home.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(rc, 0, "{out}{err}");
+    let body = fs::read_to_string(home.join("ledger.jsonl")).unwrap();
+    let last = body.lines().last().unwrap();
+    assert!(last.contains("\"kind\":\"decision\""), "{last}");
+    assert!(last.contains("\"sig\":\""), "{last}");
+
+    // verify: 0 findings — 1 signed, 5 honestly-unsigned pre-activation.
+    let (rc, out, err) = run(&["verify", "--home", home.to_str().unwrap()]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("warden: key "), "{out}");
+    assert!(out.contains("sig: signed 1 unsigned 5"), "{out}");
+
+    // status agrees, machine form included.
+    let (rc, out, err) = run(&[
+        "warden",
+        "status",
+        "--home",
+        home.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("\"state\":\"key\""), "{out}");
+    assert!(out.contains("\"signed\":1"), "{out}");
+    assert!(out.contains("\"unsigned\":5"), "{out}");
+
+    // The R5 attack, end to end: hand-edit the signed decision row's card
+    // identity — the parsed values no longer match what was signed, verify
+    // exits 1 with sig-mismatch. (A whitespace-only edit is deliberately NOT
+    // this attack: the signature attests VALUES, not byte formatting.)
+    let forged = body.replace("CARD-7", "CARD-99");
+    fs::write(home.join("ledger.jsonl"), forged).unwrap();
+    let (rc, out, _) = run(&["verify", "--home", home.to_str().unwrap()]);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("sig-mismatch"), "{out}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn warden_status_absent_and_broken_key_shapes() {
+    let home = rg_home("w-absent", "chair");
+    let (rc, out, err) = run(&["warden", "status", "--home", home.to_str().unwrap()]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("no key"), "{out}");
+    // verify reports the unsigned era honestly and stays 0 findings.
+    let (rc, out, _) = run(&["verify", "--home", home.to_str().unwrap()]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("warden: no key"), "{out}");
+    assert!(out.contains("sig: signed 0 unsigned 5"), "{out}");
+    // A broken key file is LOUD: status exits 2 and says appends will refuse.
+    fs::write(home.join("warden.key"), "garbage\n").unwrap();
+    let (rc, _, err) = run(&["warden", "status", "--home", home.to_str().unwrap()]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("KEY FILE BROKEN"), "{err}");
+    fs::remove_dir_all(home).ok();
+}
+
 #[test]
 fn route_gated_unknown_argument_fails_closed() {
     let (rc, _, err) = run(&["route-gated", "--nonsense"]);

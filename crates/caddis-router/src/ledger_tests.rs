@@ -232,20 +232,20 @@ fn oversized_fields_elide_not_corrupt() {
 #[test]
 fn parser_rejects_nesting_and_garbage() {
     assert!(
-        parse_line("{\"seq\":1,\"ts\":\"t\",\"kind\":{\"a\":1}}").is_err(),
+        parse_full("{\"seq\":1,\"ts\":\"t\",\"kind\":{\"a\":1}}").is_err(),
         "nesting refused"
     );
-    assert!(parse_line("not json at all").is_err());
+    assert!(parse_full("not json at all").is_err());
     assert!(
-        parse_line("{\"seq\":1,\"ts\":\"t\",\"kind\":\"banana\"}").is_err(),
+        parse_full("{\"seq\":1,\"ts\":\"t\",\"kind\":\"banana\"}").is_err(),
         "unknown kind"
     );
     assert!(
-        parse_line("{\"seq\":0,\"ts\":\"t\",\"kind\":\"decision\"}").is_err(),
+        parse_full("{\"seq\":0,\"ts\":\"t\",\"kind\":\"decision\"}").is_err(),
         "seq starts at 1"
     );
     assert!(
-        parse_line("{\"seq\":1.5,\"ts\":\"t\",\"kind\":\"decision\"}").is_err(),
+        parse_full("{\"seq\":1.5,\"ts\":\"t\",\"kind\":\"decision\"}").is_err(),
         "fractional seq"
     );
 }
@@ -256,7 +256,7 @@ fn o2_droid_tier_is_unparseable_in_the_ledger_too() {
         "{\"seq\":1,\"ts\":\"t\",\"kind\":\"decision\",\"route_id\":\"r\",\"card_id\":\"c\",\
                 \"task_class\":\"t\",\"lane_id\":\"l\",\"tier\":\"droid\",\
                 \"cost_per_task_usd\":0,\"degraded\":false}";
-    let err = parse_line(line).unwrap_err();
+    let err = parse_full(line).unwrap_err();
     assert!(err.contains("droid"), "got: {err}");
 }
 

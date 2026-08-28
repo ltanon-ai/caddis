@@ -16,8 +16,11 @@
 //! QQ1a is a TYPE law here: `verify_outcome` is pass|fail from the task
 //! card's own RED-TEST (R3: deterministic checks only). A warden policy-deny
 //! is NOT an outcome — it never decays a lane — so it simply has no way to
-//! enter the stream. R5 (warden-signed identity) lands in P4; `model` is the
-//! transport-record identity as plain data until then.
+//! enter the stream. R5 LANDED (P4 slice 5, [`crate::warden`]): when a
+//! warden key lives beside the ledger, every append carries
+//! `sig = HMAC-SHA256(key, canonical row)` — `model` and its neighbours are
+//! now ATTESTED identity, not bare transport claims; [`crate::verify`]
+//! separates organ-written rows from hand-written ones.
 //!
 //! Append law (R6): lock (O_EXCL + token, fail-closed) -> read max seq ->
 //! seq = max+1 (model-voice lesson: NEVER the line count — a forked or
@@ -36,6 +39,7 @@ use std::time::Duration;
 use crate::lane::LaneTier;
 use crate::lock::{Lock, LockErr};
 use crate::route::RouteDecision;
+use crate::warden::WardenSlot;
 
 /// How long a writer waits for the ledger lock before failing closed.
 pub const LOCK_WAIT: Duration = Duration::from_secs(2);
@@ -45,7 +49,8 @@ pub const LOCK_WAIT: Duration = Duration::from_secs(2);
 /// returns).
 const ROW_CAP: usize = 4096;
 /// Escaped-byte cap per string field. Twelve fields at 256 plus the JSON
-/// skeleton keep every row under ROW_CAP BY CONSTRUCTION.
+/// skeleton AND the 73-byte `"sig"` member (R5) keep every row under ROW_CAP
+/// BY CONSTRUCTION.
 pub(crate) const FIELD_CAP: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +150,9 @@ pub enum LedgerErr {
     /// A row failed encode-time validation (e.g. non-finite cost — JSON has
     /// no NaN, and writing one would corrupt the stream for every reader).
     BadRow(&'static str),
+    /// R5: the warden key exists but will not parse — appends REFUSE rather
+    /// than silently strip attestation (fail closed, loud).
+    Warden(String),
 }
 
 // io::Error is not PartialEq: compare by KIND (same law as lock::LockErr).
@@ -154,6 +162,7 @@ impl PartialEq for LedgerErr {
             (LedgerErr::Io(a), LedgerErr::Io(b)) => a.kind() == b.kind(),
             (LedgerErr::LockBusy, LedgerErr::LockBusy) => true,
             (LedgerErr::BadRow(a), LedgerErr::BadRow(b)) => a == b,
+            (LedgerErr::Warden(a), LedgerErr::Warden(b)) => a == b,
             _ => false,
         }
     }
@@ -177,6 +186,7 @@ impl std::fmt::Display for LedgerErr {
         match self {
             LedgerErr::Io(e) => write!(f, "ledger io: {e}"),
             LedgerErr::LockBusy => write!(f, "ledger lock busy (R6 fail-closed)"),
+            LedgerErr::Warden(why) => write!(f, "warden key unusable: {why}"),
             LedgerErr::BadRow(why) => write!(f, "bad row: {why}"),
         }
     }
@@ -188,6 +198,12 @@ impl std::fmt::Display for LedgerErr {
 pub struct ParsedRow {
     pub line: u64,
     pub seq: u64,
+    /// The row's `ts` as written — kept for R5: the signature covers the
+    /// canonical re-encoding, which needs it back.
+    pub ts: String,
+    /// The row's `sig` member (R5): `None` = unsigned — pre-activation era
+    /// or injected; verify owns the difference.
+    pub sig: Option<String>,
     pub row: Row,
 }
 
@@ -209,13 +225,21 @@ impl Loaded {
 
 pub struct Ledger {
     path: PathBuf,
+    /// R5: the warden slot beside this ledger, loaded ONCE at construction —
+    /// the key file is mint-once machinery, not state that drifts mid-run.
+    warden: WardenSlot,
 }
 
 impl Ledger {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        Ledger {
-            path: path.as_ref().to_path_buf(),
-        }
+        let path = path.as_ref().to_path_buf();
+        let warden = WardenSlot::load(&path);
+        Ledger { path, warden }
+    }
+
+    /// R5: the signing state appends on this ledger run under.
+    pub fn warden(&self) -> &WardenSlot {
+        &self.warden
     }
 
     pub fn path(&self) -> &Path {
@@ -239,7 +263,7 @@ impl Ledger {
         // torn file must not re-fork the next append — model-voice seq lesson).
         let loaded = self.load_unlocked()?;
         let seq = loaded.max_seq() + 1;
-        let line = encode(seq, ts, row)?;
+        let line = encode(seq, ts, row, &self.warden)?;
         let mut f = OpenOptions::new()
             .create(true)
             .append(true)
@@ -278,10 +302,12 @@ pub fn parse_stream(text: &str) -> Loaded {
         if trimmed.is_empty() {
             continue;
         }
-        match parse_line(trimmed) {
-            Ok((seq, row)) => loaded.rows.push(ParsedRow {
+        match parse_full(trimmed) {
+            Ok((seq, ts, sig, row)) => loaded.rows.push(ParsedRow {
                 line: line_no,
                 seq,
+                ts,
+                sig,
                 row,
             }),
             Err(why) => loaded.bad.push((line_no, why)),
@@ -344,7 +370,32 @@ fn num(v: f64) -> String {
 /// bools, null, enum words). Quoting is decided HERE, structurally, never by
 /// sniffing the value string — a lane genuinely named `null` must encode as
 /// the STRING "null", not the JSON null.
-fn encode(seq: u64, ts: &str, row: &Row) -> Result<String, LedgerErr> {
+///
+/// R5: with a live warden key the row gains a trailing `"sig"` member —
+/// HMAC-SHA256 over the canonical encoding WITHOUT that member — inserted as
+/// the LAST member before the closing brace. The member is absent (never
+/// `null`) on unsigned rows: absence is the honest pre-activation shape.
+fn encode(seq: u64, ts: &str, row: &Row, warden: &WardenSlot) -> Result<String, LedgerErr> {
+    let body = encode_fields(seq, ts, row)?;
+    let sig = warden.sign(&body).map_err(LedgerErr::Warden)?;
+    let line = match sig {
+        Some(s) => format!("{},\"sig\":\"{}\"}}", &body[..body.len() - 1], s),
+        None => format!("{body}\n"),
+    };
+    debug_assert!(line.len() <= ROW_CAP, "row exceeds ROW_CAP by construction");
+    Ok(line)
+}
+
+/// The canonical, UNSIGNED encoding of a row (no trailing newline — framing
+/// is not content). This is the exact byte string R5 signs at append time and
+/// [`crate::verify`] recomputes to check a signature: value-faithful by
+/// construction, so a hand-reformatted-but-equal row still verifies while a
+/// hand-EDITED value never does.
+pub(crate) fn encode_canonical(seq: u64, ts: &str, row: &Row) -> Result<String, LedgerErr> {
+    encode_fields(seq, ts, row)
+}
+
+fn encode_fields(seq: u64, ts: &str, row: &Row) -> Result<String, LedgerErr> {
     let mut f: Vec<(&str, Tok)> = vec![
         ("seq", Tok::Raw(seq.to_string())),
         ("ts", Tok::Text(fit(ts))),
@@ -410,9 +461,7 @@ fn encode(seq: u64, ts: &str, row: &Row) -> Result<String, LedgerErr> {
         })
         .collect::<Vec<_>>()
         .join(",");
-    let line = format!("{{{}}}\n", body);
-    debug_assert!(line.len() <= ROW_CAP, "row exceeds ROW_CAP by construction");
-    Ok(line)
+    Ok(format!("{{{}}}", body))
 }
 
 enum Tok {
@@ -433,9 +482,21 @@ pub(crate) enum Val {
     Null,
 }
 
-pub(crate) fn parse_line(line: &str) -> Result<(u64, Row), String> {
+/// Parse a line into the row PLUS the R5 members verify needs to re-encode
+/// it canonically: the `ts` as written and the `sig` member. A `"sig": null`
+/// or a missing member is `None` (unsigned); a non-string sig is a parse
+/// error — the member belongs to the organ, not to prose.
+pub(crate) fn parse_full(line: &str) -> Result<(u64, String, Option<String>, Row), String> {
     let map = parse_object(line)?;
-    decode(&map)
+    let ts = as_str(get(&map, "ts")?, "ts")?.to_string();
+    let sig = match map.get("sig") {
+        None => None,
+        Some(Val::Null) => None,
+        Some(Val::Str(s)) => Some(s.clone()),
+        Some(_) => return Err("field 'sig' not string|null".into()),
+    };
+    let (seq, row) = decode(&map)?;
+    Ok((seq, ts, sig, row))
 }
 
 pub(crate) fn parse_object(line: &str) -> Result<BTreeMap<String, Val>, String> {

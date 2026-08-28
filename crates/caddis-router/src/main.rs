@@ -31,6 +31,7 @@ const USAGE: &str = "usage:
   caddis-router collect-tinyagi [--tinyagi <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
   caddis-router scan            [--ledger <path>|--home <dir>] [--alerts <path>] [--dry-run] [--json]
   caddis-router policy          [--policy <path>|--home <dir>] [--json]
+  caddis-router warden <status|mint> [--ledger <path>|--home <dir>] [--json]
   caddis-router route-gated   --card <path> --data <secret|pii|internal|public> (--alive <ids>|--assume-alive <ids>) [--lanes <path>|--home <dir>] [--policy <path>] [--ledger <path>] [--alerts <path>] [--json]";
 
 fn main() -> ExitCode {
@@ -43,6 +44,7 @@ fn main() -> ExitCode {
         "verify" => run_verify(&args[1..]),
         "scan" => run_scan_cmd(&args[1..]),
         "policy" => run_policy(&args[1..]),
+        "warden" => run_warden(&args[1..]),
         "collect-bees" => run_collect_bees(&args[1..]),
         "collect-tinyagi" => run_collect_tinyagi(&args[1..]),
         "route-gated" => run_route_gated(&args[1..]),
@@ -78,7 +80,12 @@ fn main() -> ExitCode {
             println!("        exit 1 = malformed file, routing must refuse — fail closed)");
             println!("    --policy <path>   this exact policy file (wins over --home)");
             println!("    --home <dir>      look for <dir>/policy.json (default ~/.caddis/router)");
-            println!("    --json            machine report on stdout");
+            println!("  warden: R5 warden-signed identity — mint the key, show its state");
+            println!("    status            key fingerprint, activated_seq, signed/unsigned rows");
+            println!("    mint              create warden.key beside the ledger, activated at the");
+            println!("                      CURRENT max seq (all existing rows stay honestly");
+            println!("                      unsigned); refuses to overwrite — a key is born once,");
+            println!("                      rotation is a deliberate operator card");
             println!("  route-gated: the SUBPROCESS consumption surface (P4 slice 4) —");
             println!("        route one task card and print the versioned decision JSON");
             println!("        ({{v:1,...}}); the CALLER dispatches (F1: this binary never does).");
@@ -189,6 +196,19 @@ fn print_human(ledger: &Path, exists: bool, rep: &caddis_router::VerifyReport) {
         rep.rows_ok,
         rep.findings.len()
     );
+    match &rep.warden {
+        caddis_router::WardenInfo::NoKey => {
+            println!("warden: no key — rows unsigned (activation: caddis-router warden mint)")
+        }
+        caddis_router::WardenInfo::Key {
+            fingerprint,
+            activated_seq,
+        } => println!("warden: key {fingerprint} activated_seq {activated_seq}"),
+        caddis_router::WardenInfo::Broken(why) => {
+            println!("warden: KEY FILE BROKEN — {why}")
+        }
+    }
+    println!("sig: signed {} unsigned {}", rep.signed_ok, rep.unsigned);
     for f in &rep.findings {
         println!("  line {}: {}: {}", f.line, f.code, f.detail);
     }
@@ -210,18 +230,159 @@ fn print_json(ledger: &Path, exists: bool, rep: &caddis_router::VerifyReport) {
             )
         })
         .collect();
+    let (warden_state, fingerprint, activated_seq) = match &rep.warden {
+        caddis_router::WardenInfo::NoKey => ("absent".to_string(), String::new(), 0),
+        caddis_router::WardenInfo::Key {
+            fingerprint,
+            activated_seq,
+        } => ("key".to_string(), fingerprint.clone(), *activated_seq),
+        caddis_router::WardenInfo::Broken(_) => ("broken".to_string(), String::new(), 0),
+    };
     println!(
-        "{{\"version\":\"{}\",\"ledger\":\"{}\",\"exists\":{},\"lines\":{},\"rows_ok\":{},\"rc\":{},\"findings\":[{}]}}",
+        "{{\"version\":\"{}\",\"ledger\":\"{}\",\"exists\":{},\"lines\":{},\"rows_ok\":{},\"signed_ok\":{},\"unsigned\":{},\"warden_state\":\"{}\",\"fingerprint\":\"{}\",\"activated_seq\":{},\"rc\":{},\"findings\":[{}]}}",
         VERSION,
         esc(&ledger.display().to_string()),
         exists,
         rep.lines,
         rep.rows_ok,
+        rep.signed_ok,
+        rep.unsigned,
+        warden_state,
+        esc(&fingerprint),
+        activated_seq,
         rep.rc().min(255),
         findings.join(",")
     );
 }
 
+// --- warden (R5) -------------------------------------------------------------
+
+/// `warden status` — the key's honest state + signature counts over the
+/// ledger (presence only; CHECKING is `verify`'s job). `warden mint` —
+/// create the key once, activated at the CURRENT max seq so the entire
+/// existing history stays honestly unsigned.
+fn run_warden(args: &[String]) -> ExitCode {
+    let mut ledger: Option<PathBuf> = None;
+    let mut json = false;
+    let mut verb: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "status" | "mint" => {
+                verb = Some(args[i].clone());
+                i += 1;
+            }
+            _ => match scan_common(args, &mut i) {
+                Ok(Flag::Ledger(p)) => ledger = Some(p),
+                Ok(Flag::Json) => json = true,
+                Err(other) => {
+                    eprintln!("caddis-router warden: unknown argument {other:?}");
+                    eprintln!("{USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
+        }
+    }
+    let lpath = ledger.unwrap_or_else(|| default_home().join("ledger.jsonl"));
+    let verb = verb.unwrap_or_else(|| "status".to_string());
+    let Some(dir) = lpath.parent().map(Path::to_path_buf) else {
+        eprintln!(
+            "caddis-router warden: ledger path has no directory: {}",
+            lpath.display()
+        );
+        return ExitCode::from(2);
+    };
+    if dir.as_os_str().is_empty() {
+        eprintln!("caddis-router warden: refusing to mint beside a bare filename");
+        return ExitCode::from(2);
+    }
+    if verb == "mint" {
+        // Fail closed BEFORE minting: an unreadable ledger must not be
+        // activated at a guessed seq.
+        let max_seq = match Ledger::new(&lpath).load() {
+            Ok(l) => l.max_seq(),
+            Err(e) => {
+                eprintln!(
+                    "caddis-router warden mint: cannot read {}: {e}",
+                    lpath.display()
+                );
+                return ExitCode::from(2);
+            }
+        };
+        return match caddis_router::mint(&dir, max_seq) {
+            Ok(k) => {
+                if json {
+                    println!(
+                        "{{\"v\":1,\"minted\":true,\"fingerprint\":\"{}\",\"activated_seq\":{}}}",
+                        k.fingerprint(),
+                        k.activated_seq()
+                    );
+                } else {
+                    println!(
+                        "warden key minted: {} (fingerprint {}, activated_seq {} — \
+                         all {} existing rows stay honestly unsigned)",
+                        dir.join("warden.key").display(),
+                        k.fingerprint(),
+                        k.activated_seq(),
+                        max_seq
+                    );
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("caddis-router warden mint: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    // status
+    let loaded = match Ledger::new(&lpath).load() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("caddis-router warden: cannot read {}: {e}", lpath.display());
+            return ExitCode::from(2);
+        }
+    };
+    let signed = loaded.rows.iter().filter(|p| p.sig.is_some()).count();
+    let unsigned = loaded.rows.len() - signed;
+    match caddis_router::WardenSlot::load(&lpath) {
+        caddis_router::WardenSlot::Absent => {
+            if json {
+                println!(
+                    "{{\"v\":1,\"state\":\"absent\",\"signed\":{signed},\"unsigned\":{unsigned}}}"
+                );
+            } else {
+                println!(
+                    "warden: no key beside {} — {signed} signed / {unsigned} unsigned rows",
+                    lpath.display()
+                );
+                println!("  activate: caddis-router warden mint");
+            }
+            ExitCode::SUCCESS
+        }
+        caddis_router::WardenSlot::Key(k) => {
+            if json {
+                println!(
+                    "{{\"v\":1,\"state\":\"key\",\"fingerprint\":\"{}\",\"activated_seq\":{},\"signed\":{signed},\"unsigned\":{unsigned}}}",
+                    k.fingerprint(),
+                    k.activated_seq()
+                );
+            } else {
+                println!(
+                    "warden: key {} activated_seq {} — {signed} signed / {unsigned} unsigned rows",
+                    k.fingerprint(),
+                    k.activated_seq()
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        caddis_router::WardenSlot::Broken(why) => {
+            eprintln!("caddis-router warden: KEY FILE BROKEN — {why}");
+            eprintln!("  appends will refuse until the key file is repaired or removed");
+            ExitCode::from(2)
+        }
+    }
+}
 // --- collect ---------------------------------------------------------------
 
 fn run_collect(args: &[String]) -> ExitCode {

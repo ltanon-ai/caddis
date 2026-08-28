@@ -62,7 +62,15 @@
 //! `route-gated` CLI: the SUBPROCESS consumption surface (versioned
 //! stdout JSON; exit 0 routed / 1 refused / 2 usage-or-defect; liveness
 //! via `--alive` or the NAMED `--assume-alive` assumption, Q3 — silence
-//! is never consent). R5 identity next; in-world room is P5.
+//! is never consent).
+//!
+//! P4 slice 5 / R5 (2026-08-28): [`warden`] — WARDEN-SIGNED ROW IDENTITY.
+//! A key minted beside the ledger (`caddis-router warden mint`, once, at
+//! `activated_seq` = current max seq) makes every organ append carry
+//! `sig = HMAC-SHA256(key, canonical row)` over a vendored std-only
+//! SHA-256 ([`sha256`]). Verify separates organ-written rows from
+//! hand-written ones; a corrupted key file fail-closes appends. In-world
+//! room is P5.
 
 pub mod alerts;
 pub mod collect;
@@ -76,8 +84,10 @@ pub mod policy_file;
 pub mod profile;
 pub mod registry;
 pub mod route;
+pub mod sha256;
 pub mod stats;
 pub mod verify;
+pub mod warden;
 
 pub use gate::{Gate, GateErr};
 
@@ -98,6 +108,7 @@ pub use profile::{profile_from_card, ProfileErr, TaskProfile};
 pub use registry::{load_registry, parse_registry, LaneEntry, LaneRegistry, RegistryErr};
 pub use route::{route, RouteDecision, RouteErr};
 pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, HYSTERESIS_FAILS, MIN_SAMPLES};
-pub use verify::{verify_path, Finding, VerifyReport};
+pub use verify::{verify_path, verify_with, Finding, VerifyReport, WardenInfo};
+pub use warden::{mint, WardenKey, WardenSlot};
 
-pub const VERSION: &str = "0.8.0";
+pub const VERSION: &str = "0.9.0";
