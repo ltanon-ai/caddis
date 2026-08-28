@@ -109,11 +109,12 @@ pub mod collector;
 pub mod council;
 pub mod disjoint;
 pub mod edits;
-pub mod executor;
 pub mod json;
+pub mod prober;
 pub mod protocol;
 pub mod quorum;
 pub mod registry;
+pub mod rotate;
 pub mod seed;
 pub mod sessions;
 pub mod sha256;
@@ -164,6 +165,13 @@ pub enum SeatState {
     Retired,
     Probing,
     Failed,
+    /// Q6 amendment (rotation council 2026-08-28, 3:0): a seat that came
+    /// back UNPROBEABLE (401/403 with NO configured auth, or an undialable
+    /// lane) for `unprobeable_after` consecutive rotations. Census-visible,
+    /// NOT Failed, never selectable — the migration-debt surface. Auth
+    /// landing through the edits path lifts it on the next rotation
+    /// automatically (a successful probe appends its normal state card).
+    Unprobeable,
 }
 
 impl SeatState {

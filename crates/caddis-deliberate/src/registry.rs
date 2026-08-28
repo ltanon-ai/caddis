@@ -103,6 +103,7 @@ fn parse_seat_state(s: &str) -> Option<crate::SeatState> {
         "retired" => Some(crate::SeatState::Retired),
         "probing" => Some(crate::SeatState::Probing),
         "failed" => Some(crate::SeatState::Failed),
+        "unprobeable" => Some(crate::SeatState::Unprobeable),
         _ => None,
     }
 }
@@ -115,6 +116,7 @@ fn seat_state_word(st: crate::SeatState) -> &'static str {
         crate::SeatState::Retired => "retired",
         crate::SeatState::Probing => "probing",
         crate::SeatState::Failed => "failed",
+        crate::SeatState::Unprobeable => "unprobeable",
     }
 }
 

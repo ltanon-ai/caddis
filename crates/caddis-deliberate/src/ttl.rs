@@ -50,12 +50,19 @@ pub struct Cadence {
     /// Failed: re-probe cadence. Never gives up (Rulings 5+8) — a
     /// renewable lane retries forever; there is no Failed→Retired arm.
     pub failed_retry_every_s: u64,
+    /// Unprobeable: re-probe cadence (Q6 amendment) — the seat stays in
+    /// the rotation so auth landing via the edits path lifts it on the
+    /// NEXT rotation automatically. Never Failed, never retired from
+    /// here; the alert already fired at the transition.
+    pub unprobeable_retry_every_s: u64,
 }
 
 impl Default for Cadence {
     /// Priors (DATA, re-ruleable): hourly liveness re-probes, a daily
     /// quota calendar, a 15-minute rate-limit cooldown, a 5-minute probe
     /// timeout, hourly retries. Mirrors the council toolkit's rhythms.
+    /// `unprobeable_retry_every_s` = hourly (Q6: lift checks ride the
+    /// rotation itself, so it must stay cheap — a $0 listing per check).
     fn default() -> Self {
         Cadence {
             live_probe_every_s: 3600,
@@ -63,6 +70,7 @@ impl Default for Cadence {
             rate_limited_cooldown_s: 900,
             probing_timeout_s: 300,
             failed_retry_every_s: 3600,
+            unprobeable_retry_every_s: 3600,
         }
     }
 }
@@ -130,6 +138,13 @@ pub fn step(card: &SeatCard, now_epoch_s: u64, cadence: &Cadence, renewable: boo
         }
         SeatState::Failed => {
             if elapsed >= cadence.failed_retry_every_s {
+                Step::ReprobeDue
+            } else {
+                Step::Keep
+            }
+        }
+        SeatState::Unprobeable => {
+            if elapsed >= cadence.unprobeable_retry_every_s {
                 Step::ReprobeDue
             } else {
                 Step::Keep

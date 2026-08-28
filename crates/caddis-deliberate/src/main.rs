@@ -35,7 +35,9 @@
 use caddis_deliberate::collector::{seed_once, SeedOutcome};
 use caddis_deliberate::edits::{self, EditErr, EditOp};
 use caddis_deliberate::json::{self, Value};
+use caddis_deliberate::prober;
 use caddis_deliberate::registry;
+use caddis_deliberate::rotate;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -93,6 +95,7 @@ fn main() -> ExitCode {
         Some("verify") => cmd_verify(&args[1..]),
         Some("restore") => cmd_restore(&args[1..]),
         Some("edits") => cmd_edits(&args[1..]),
+        Some("rotate") => cmd_rotate(&args[1..]),
         _ => {
             usage();
             ExitCode::from(2)
@@ -469,6 +472,61 @@ fn cmd_edits_refuse(args: &[String]) -> ExitCode {
     }
 }
 
+// ---------------------------------------------------------------------------
+// rotate — the rotation driver (r2-rotation-machinery slice A)
+// ---------------------------------------------------------------------------
+
+/// `rotate [--home <dir>]`: one rotation shot. Stdout = the PURE-JSON
+/// report (machine surface); human words to stderr. rc 0 ran · 1
+/// nothing-due · 2 defect (rotate.rs taxonomy).
+fn cmd_rotate(args: &[String]) -> ExitCode {
+    let mut dir = default_home_dir();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--home" => {
+                i += 1;
+                dir = match take_value(args, i, "--home") {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("caddis-deliberate rotate: {e}");
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            other => {
+                eprintln!("caddis-deliberate rotate: unknown argument {other:?}");
+                return ExitCode::from(2);
+            }
+        }
+        i += 1;
+    }
+    let cfg = match rotate::load_cfg(&dir) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("caddis-deliberate rotate: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    match rotate::rotate(&dir, now, &cfg, prober::probe) {
+        Ok(rep) => {
+            print_json(&rep.to_json());
+            ExitCode::SUCCESS
+        }
+        Err(rotate::RotateErr::NothingDue(rep)) => {
+            print_json(&rep.to_json());
+            ExitCode::from(1)
+        }
+        Err(rotate::RotateErr::Defect(m)) => {
+            eprintln!("caddis-deliberate rotate: {m}");
+            ExitCode::from(2)
+        }
+    }
+}
 /// Shared flags for the seed-artifact verbs: `--home <dir>` (default the
 /// organ home) or `--key <file>` (the carry-the-key path); anything else
 /// is a usage error, not a guess.
@@ -687,6 +745,7 @@ fn usage() {
          caddis-deliberate edits confirm --id <eN> [--actor <name>] [--actor-kind <word>]\n       \
                                 [--warden <path>] [--home <dir>]\n       \
          caddis-deliberate edits refuse  --id <eN> [--actor <name>] [--actor-kind <word>] [--home <dir>]\n       \
+         caddis-deliberate rotate [--home <dir>]  (one rotation: sweep + $0 /models probes; JSON report)\n       \
          defaults: catalog ~/.pi/agent/models.json, home ~/.caddis/deliberate,\n       \
          warden ledger ~/.caddis/warden-ledger.jsonl (the confirm gate)\n       \
          exit codes: 0 ok, 1 io error or edits REFUSAL (nothing written), 2 usage/defect,\n       \
