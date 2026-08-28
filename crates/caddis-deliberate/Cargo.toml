@@ -9,11 +9,17 @@ description = "DELIBERATION ORGAN (BUILD-QUEUE r2-organs-rewrite; plan state/bri
 #   P1 slice 1 = registry stream/view/collector (this); slices 2-3 (caps +
 #   TTL state machine, warden-gated propose->confirm edits) and P2-P6
 #   (protocols, dispatch, world, parallel run, cutover) follow as their own
-#   tick-sized slices. Organ law: zero runtime deps, sync, std only
-#   (caddis-voice/organs precedent); serde/serde_json are DEV-only until the
-#   wire format freezes. json.rs vendored from caddis-memory (fix law: all
-#   three copies).
+#   Organ law: std-only PRIMITIVES (vendored json/sha256, fix law all
+#   copies), registry (crates.io) deps banned outright, sync. P1 slice 3
+#   (F2) AMENDS the old "zero runtime deps" line: the warden gate needs
+#   the card-state law and a second copy of it would violate the
+#   one-parse-law (UNIFY) — so the ONE workspace path dep is
+#   caddis-warden, used READ-ONLY (card_state::active_for over ledger
+#   text the caller supplies; warden depends on nothing here, TCB stays
+#   acyclic — warden-manifest precedent). serde/serde_json stay DEV-only
+#   until the wire format freezes.
 [dependencies]
+caddis-warden = { path = "../caddis-warden" }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

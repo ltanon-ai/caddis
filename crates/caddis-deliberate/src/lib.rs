@@ -27,6 +27,14 @@
 //! requests into separate waves, and the F10 TTL state machine — the
 //! Expired quota-cooldown → Failed (renewable) / Retired (not), per-state
 //! re-probe cadence as DATA, renewable free lanes never auto-retire.
+//! P1 slice 3 = [`edits`]: the registry EDIT PATH — warden-gated
+//! propose→operator-confirm (F2). Durable pending proposals in an
+//! append-only journal (MV13), prior16 optimistic concurrency (router
+//! author law), no-op refusals, and THE WARDEN GATE: confirm requires an
+//! ACTIVE warden card for the confirming actor, derived READ-ONLY from
+//! the warden ledger through `caddis_warden::card_state` (the ONE
+//! card-state law; this crate's single workspace path dep). Crash order
+//! is STREAM FIRST, JOURNAL LAST — an orphan pending never double-applies.
 //!
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
 //!   never touches a ledger. It classifies DATA and constructs values; the
@@ -59,6 +67,7 @@
 pub mod caps;
 pub mod collector;
 pub mod disjoint;
+pub mod edits;
 pub mod json;
 pub mod protocol;
 pub mod registry;

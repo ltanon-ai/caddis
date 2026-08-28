@@ -18,6 +18,7 @@ version = "0.1.0"
 name = "caddis-deliberate"
 version = "0.1.0"
 dependencies = [
+ "caddis-warden",
  "serde",
  "serde_json",
 ]
