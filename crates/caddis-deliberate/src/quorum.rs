@@ -71,7 +71,7 @@ use crate::council::{
     Stakes,
 };
 use crate::disjoint::{select_quorum_pool, DisjointErr, QuorumPool};
-use crate::protocol::{PinMismatch, Protocol, ProtocolKind, ProvenanceRow, Verdict};
+use crate::protocol::{DispatchEntry, PinMismatch, Protocol, ProtocolKind, ProvenanceRow, Verdict};
 use crate::registry::Registry;
 use crate::{caps, sha256, Floors, Seat};
 
@@ -189,6 +189,10 @@ pub struct QuorumSession {
     pub stakes: Stakes,
     pub gate: GateReceipt,
     pub rerun_of: Option<String>,
+    /// Per-answered-leg dispatch audit (P0 seam — the executor fills it;
+    /// a convening is auditable from birth through execution, the
+    /// council law).
+    pub dispatch_log: Vec<DispatchEntry>,
 }
 
 /// Honest failure taxonomy (council CouncilErr law): `is_refusal()`
@@ -332,6 +336,7 @@ pub fn convene(
         stakes: council_session.stakes,
         gate: gate_receipt,
         rerun_of: None,
+        dispatch_log: Vec::new(),
     })
 }
 
@@ -901,6 +906,7 @@ pub fn pause_and_re_dispatch(
         task: session.task.clone(),
         pinned_protocol: new_pin,
         pool,
+        dispatch_log: Vec::new(),
         council_convening: session.council_convening.clone(),
         stakes: session.stakes,
         gate: gate_receipt,

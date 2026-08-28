@@ -760,3 +760,479 @@ fn blank_transport_model_is_refused_by_the_collect_law() {
     assert_eq!(rows.len(), 3);
     assert!(!rows.iter().any(|r| matches!(r, SessionRow::Close(_))));
 }
+
+// --- P3 slice 2: QUORUM execution through the executor ----------------------
+
+use crate::executor::run_quorum;
+use crate::quorum::{self, QuorumErr};
+
+/// A lane whose invoke PANICS — wiring defect class, distinct from a
+/// transport refusal (missing seat in a quorum run).
+struct PanicLane {
+    id: String,
+    lt: LaneType,
+}
+
+impl Lane for PanicLane {
+    fn lane_id(&self) -> &str {
+        &self.id
+    }
+    fn lane_type(&self) -> LaneType {
+        self.lt
+    }
+    fn invoke(&self, _task: &str) -> Result<LaneOutput, LaneErr> {
+        panic!("stub lane wiring is broken");
+    }
+}
+
+/// The council the quorum deliberates after: 4 seated seats (floors
+/// 4/2/1 via `Floors::default()`), all families distinct.
+fn council_for_quorum() -> council::CouncilSession {
+    let candidates = vec![
+        seat("groq/llama", "groq", LaneType::Http, 1),
+        seat("anthropic/claude", "anthropic", LaneType::Bridge, 1),
+        seat("zai/glm", "zai", LaneType::Cli, 1),
+        seat("nvidia/nem", "nvidia", LaneType::Http, 1),
+    ];
+    council::convene(
+        "c1",
+        "rule on the slice",
+        Stakes::Complex,
+        &card(1, Floors::default()),
+        &candidates,
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap()
+}
+
+/// Council candidates PLUS three disjoint free live seats — the quorum
+/// pool is the three disjoint ones (free-first, lane_id ties):
+/// cohere/c < gemini/g < mistral/m.
+fn quorum_candidates() -> Vec<crate::Seat> {
+    let mut c = vec![
+        seat("groq/llama", "groq", LaneType::Http, 1),
+        seat("anthropic/claude", "anthropic", LaneType::Bridge, 1),
+        seat("zai/glm", "zai", LaneType::Cli, 1),
+        seat("nvidia/nem", "nvidia", LaneType::Http, 1),
+    ];
+    c.push(seat("mistral/m", "mistral", LaneType::Http, 1));
+    c.push(seat("gemini/g", "gemini", LaneType::Http, 1));
+    c.push(seat("cohere/c", "cohere", LaneType::Http, 1));
+    c
+}
+
+fn quorum_registry() -> Registry {
+    registry_with_caps(
+        &[
+            ("mistral", 1, LaneType::Http),
+            ("gemini", 1, LaneType::Http),
+            ("cohere", 1, LaneType::Http),
+        ],
+        &[
+            ("mistral/m", "mistral", 1, LaneType::Http),
+            ("gemini/g", "gemini", 1, LaneType::Http),
+            ("cohere/c", "cohere", 1, LaneType::Http),
+        ],
+    )
+}
+
+fn convened_quorum() -> quorum::QuorumSession {
+    quorum::convene(
+        "q1",
+        &council_for_quorum(),
+        &quorum::protocol_v1(),
+        &quorum_candidates(),
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap()
+}
+
+/// Registry that SERIALIZES the pool into three waves: cohere/c and
+/// gemini/g share the capped `cohere` provider (caps 1) — the mid-run
+/// pin check must fire between waves.
+fn quorum_registry_serial() -> Registry {
+    registry_with_caps(
+        &[
+            ("cohere", 1, LaneType::Http),
+            ("gemini", 1, LaneType::Http),
+            ("mistral", 1, LaneType::Http),
+        ],
+        &[
+            ("cohere/c", "cohere", 1, LaneType::Http),
+            ("gemini/g", "cohere", 1, LaneType::Http),
+            ("mistral/m", "mistral", 1, LaneType::Http),
+        ],
+    )
+}
+
+fn pool_lane_ids(session: &quorum::QuorumSession) -> Vec<String> {
+    session
+        .pool
+        .seats
+        .iter()
+        .map(|s| s.lane_id.clone())
+        .collect()
+}
+
+#[test]
+fn quorum_runs_end_to_end_over_stub_lanes() {
+    let session = convened_quorum();
+    assert_eq!(
+        pool_lane_ids(&session),
+        vec!["cohere/c", "gemini/g", "mistral/m"]
+    );
+    let lanes = LaneSet::new()
+        .with(StubLane::stub("cohere/c", LaneType::Http, Position::Ship).into_lane())
+        .with(StubLane::stub("gemini/g", LaneType::Http, Position::Ship).into_lane())
+        .with(StubLane::stub("mistral/m", LaneType::Http, Position::DoNotShip).into_lane());
+    let path = tmp_stream("qe2e");
+    let _ = std::fs::remove_file(&path);
+    let v1 = quorum::protocol_v1();
+    let executed = run_quorum(
+        session,
+        move || v1.clone(),
+        &quorum_registry(),
+        &lanes,
+        &path,
+    )
+    .unwrap();
+
+    // Ruling: ship at 2/3 (strict majority of the FULL pool), never degraded.
+    assert!(!executed.verdict.degraded);
+    assert_eq!(executed.verdict.ruling, "ship");
+    assert_eq!(executed.ruling.position, Position::Ship);
+    assert_eq!(executed.ruling.agreeing.len(), 2);
+    assert_eq!(executed.ruling.pool_size, 3);
+    assert!(executed.votes.missing.is_empty());
+
+    // Provenance: TRANSPORT-served models, never the registered ones.
+    for p in &executed.verdict.provenance {
+        assert!(p.transport_served_model.ends_with("/transport-served"));
+        assert!(!p.transport_served_model.contains("registered"));
+    }
+
+    // Dispatch log: one entry per answered leg (the council law, pool body).
+    assert_eq!(executed.session.dispatch_log.len(), 3);
+    for e in &executed.session.dispatch_log {
+        assert_eq!(e.stage, "dispatch");
+    }
+
+    // Session cards: open(kind=quorum) + 3 usage + close.
+    let rows = read_rows(&path);
+    assert_eq!(rows.len(), 5);
+    match &rows[0] {
+        SessionRow::Open(o) => {
+            assert_eq!(o.kind, "quorum");
+            assert_eq!(o.conv, "q1");
+            assert_eq!(o.rerun_of, "");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(rows[3], SessionRow::Usage(_)));
+    assert!(matches!(rows[4], SessionRow::Close(_)));
+    let row = quorum::parse_ledger_row(&executed.ledger_row).unwrap();
+    assert_eq!(row.conv, "q1");
+    assert_eq!(row.ruled, "ship");
+    assert_eq!(row.missing, 0);
+    assert_eq!(row.floor, "2/3");
+    let close_digest = match &rows[4] {
+        SessionRow::Close(c) => c.verdict_digest.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(close_digest, row.verdict_digest);
+
+    // VERDICT.md artifact: ruling line, full pool answered.
+    assert!(executed.verdict_md.contains("verdict: ship\n"));
+    assert!(executed.verdict_md.contains("missing: none"));
+    assert!(executed.verdict_md.contains("council: c1"));
+}
+
+#[test]
+fn quorum_degraded_run_tolerates_one_missing_seat() {
+    let lanes = LaneSet::new()
+        .with(StubLane::stub("cohere/c", LaneType::Http, Position::Ship).into_lane())
+        .with(StubLane::stub("gemini/g", LaneType::Http, Position::Ship).into_lane())
+        .with(
+            StubLane::stub("mistral/m", LaneType::Http, Position::Ship)
+                .failing()
+                .into_lane(),
+        );
+    let path = tmp_stream("qdegraded");
+    let _ = std::fs::remove_file(&path);
+    let v1 = quorum::protocol_v1();
+    let executed = run_quorum(
+        convened_quorum(),
+        move || v1.clone(),
+        &quorum_registry(),
+        &lanes,
+        &path,
+    )
+    .unwrap();
+
+    // Degraded but DECIDED: the asterisk rides the ruling, the missing
+    // lane is named in every artifact, and the floor still holds (2/3).
+    assert!(executed.verdict.degraded);
+    assert_eq!(executed.verdict.ruling, "ship*");
+    assert_eq!(executed.votes.missing, vec!["mistral/m".to_string()]);
+    assert!(executed.verdict_md.contains("verdict: ship*\n"));
+    assert!(executed.verdict_md.contains("missing: mistral/m"));
+
+    // Usage rows: ANSWERED seats only (2), close still lands.
+    let rows = read_rows(&path);
+    assert_eq!(rows.len(), 4);
+    assert!(
+        rows.iter()
+            .filter(|r| matches!(r, SessionRow::Usage(_)))
+            .count()
+            == 2
+    );
+    assert!(matches!(rows[3], SessionRow::Close(_)));
+
+    let row = quorum::parse_ledger_row(&executed.ledger_row).unwrap();
+    assert_eq!(row.missing, 1);
+    assert!(row.degraded);
+}
+
+#[test]
+fn quorum_below_floor_refuses_fail_closed() {
+    let lanes = LaneSet::new()
+        .with(
+            StubLane::stub("cohere/c", LaneType::Http, Position::Ship)
+                .failing()
+                .into_lane(),
+        )
+        .with(
+            StubLane::stub("gemini/g", LaneType::Http, Position::Ship)
+                .failing()
+                .into_lane(),
+        )
+        .with(StubLane::stub("mistral/m", LaneType::Http, Position::Ship).into_lane());
+    let path = tmp_stream("qfloor");
+    let _ = std::fs::remove_file(&path);
+    let v1 = quorum::protocol_v1();
+    let err = run_quorum(
+        convened_quorum(),
+        move || v1.clone(),
+        &quorum_registry(),
+        &lanes,
+        &path,
+    )
+    .unwrap_err();
+    match err {
+        ExecErr::Quorum(QuorumErr::CollectIncomplete {
+            ref missing,
+            have,
+            floor,
+        }) => {
+            assert_eq!(
+                missing,
+                &vec!["cohere/c".to_string(), "gemini/g".to_string()]
+            );
+            assert_eq!(have, 1);
+            assert_eq!(floor, 2);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(err.is_refusal());
+
+    // Crash-honest partial: open + the one answered usage, NO close.
+    let rows = read_rows(&path);
+    assert_eq!(rows.len(), 2);
+    assert!(!rows.iter().any(|r| matches!(r, SessionRow::Close(_))));
+}
+
+#[test]
+fn quorum_panicked_lane_thread_is_a_defect_not_a_missing_seat() {
+    let lanes = LaneSet::new()
+        .with(StubLane::stub("cohere/c", LaneType::Http, Position::Ship).into_lane())
+        .with(StubLane::stub("gemini/g", LaneType::Http, Position::Ship).into_lane())
+        .with(Arc::new(PanicLane {
+            id: "mistral/m".to_string(),
+            lt: LaneType::Http,
+        }));
+    let path = tmp_stream("qpanic");
+    let _ = std::fs::remove_file(&path);
+    let v1 = quorum::protocol_v1();
+    let err = run_quorum(
+        convened_quorum(),
+        move || v1.clone(),
+        &quorum_registry(),
+        &lanes,
+        &path,
+    )
+    .unwrap_err();
+    match &err {
+        ExecErr::Defect(m) => assert!(m.contains("panicked")),
+        other => panic!("{other:?}"),
+    }
+    assert!(!err.is_refusal());
+}
+
+#[test]
+fn council_panicked_lane_thread_is_a_defect() {
+    // Pins the slice-1 doc law the code now enforces: a panicked lane
+    // thread is a Defect (wiring), never a LaneRefused.
+    let candidates = vec![
+        seat("groq/a", "groqa", LaneType::Http, 1),
+        seat("zai/b", "zaib", LaneType::Http, 1),
+    ];
+    let reg = registry_with_caps(
+        &[("groqa", 1, LaneType::Http), ("zaib", 1, LaneType::Http)],
+        &[
+            ("groq/a", "groqa", 1, LaneType::Http),
+            ("zai/b", "zaib", 1, LaneType::Http),
+        ],
+    );
+    let session = council::convene(
+        "c1",
+        "task",
+        Stakes::Small,
+        &card(1, small_floors()),
+        &candidates,
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap();
+    let lanes = LaneSet::new()
+        .with(StubLane::stub("groq/a", LaneType::Http, Position::Ship).into_lane())
+        .with(Arc::new(PanicLane {
+            id: "zai/b".to_string(),
+            lt: LaneType::Http,
+        }));
+    let path = tmp_stream("cpanic");
+    let _ = std::fs::remove_file(&path);
+    let v1 = card(1, small_floors());
+    let err = run_council(session, move || v1.clone(), &reg, &lanes, &path).unwrap_err();
+    match &err {
+        ExecErr::Defect(m) => assert!(m.contains("panicked")),
+        other => panic!("{other:?}"),
+    }
+    assert!(!err.is_refusal());
+}
+
+#[test]
+fn quorum_pin_move_returns_session_then_f11_redispatch_completes() {
+    let lanes = LaneSet::new()
+        .with(StubLane::stub("cohere/c", LaneType::Http, Position::Ship).into_lane())
+        .with(StubLane::stub("gemini/g", LaneType::Http, Position::Ship).into_lane())
+        .with(StubLane::stub("mistral/m", LaneType::Http, Position::Ship).into_lane());
+    let path = tmp_stream("qf11");
+    let _ = std::fs::remove_file(&path);
+
+    // v1 for the first pin check, v2 afterwards: the card moves mid-run
+    // (caps 1 → three serialized waves → the second check sees v2).
+    let v2 = {
+        let mut p = quorum::protocol_v1();
+        p.version = 2;
+        p
+    };
+    let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = seen.clone();
+    let protocol_reader = move || {
+        let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n == 0 {
+            quorum::protocol_v1()
+        } else {
+            v2.clone()
+        }
+    };
+    let err = run_quorum(
+        convened_quorum(),
+        protocol_reader,
+        &quorum_registry_serial(),
+        &lanes,
+        &path,
+    )
+    .unwrap_err();
+    let (moved_session, _mismatch) = match err {
+        ExecErr::PinMovedQuorum { session, mismatch } => (*session, mismatch),
+        other => panic!("{other:?}"),
+    };
+    // The paused run leaves an auditable hole: open + partial usage, no close.
+    let rows = read_rows(&path);
+    assert!(matches!(rows[0], SessionRow::Open(_)));
+    assert!(!rows.iter().any(|r| matches!(r, SessionRow::Close(_))));
+
+    // F11: pause → bump → re-dispatch under v2, then the run completes.
+    let council = council_for_quorum();
+    let paused = quorum::pause_and_re_dispatch(
+        moved_session,
+        &quorum::protocol_v1(),
+        &{
+            let mut p = quorum::protocol_v1();
+            p.version = 2;
+            p
+        },
+        &council,
+        &quorum_candidates(),
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap();
+    assert_eq!(paused.archived.id, "q1");
+    assert_eq!(paused.re_dispatched.id, "q1#r2");
+    let v2_static = {
+        let mut p = quorum::protocol_v1();
+        p.version = 2;
+        p
+    };
+    let executed = run_quorum(
+        paused.re_dispatched,
+        move || v2_static.clone(),
+        &quorum_registry(),
+        &lanes,
+        &path,
+    )
+    .unwrap();
+    let row = quorum::parse_ledger_row(&executed.ledger_row).unwrap();
+    assert_eq!(row.conv, "q1#r2");
+    assert_eq!(row.rerun_of, "q1");
+}
+
+#[test]
+fn quorum_pool_identity_crossing_is_a_defect() {
+    let lanes = LaneSet::new()
+        .with(StubLane::stub("cohere/c", LaneType::Http, Position::Ship).into_lane())
+        .with(StubLane::stub("gemini/g", LaneType::Http, Position::Ship).into_lane())
+        // Seated as Http in the pool, declared Bridge in the LaneSet.
+        .with(StubLane::stub("mistral/m", LaneType::Bridge, Position::Ship).into_lane());
+    let path = tmp_stream("qcross");
+    let _ = std::fs::remove_file(&path);
+    let v1 = quorum::protocol_v1();
+    let err = run_quorum(
+        convened_quorum(),
+        move || v1.clone(),
+        &quorum_registry(),
+        &lanes,
+        &path,
+    )
+    .unwrap_err();
+    match &err {
+        ExecErr::Defect(m) => assert!(m.contains("identity crossing")),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn quorum_pool_lane_missing_from_laneset_is_a_defect() {
+    let lanes = LaneSet::new()
+        .with(StubLane::stub("cohere/c", LaneType::Http, Position::Ship).into_lane())
+        .with(StubLane::stub("gemini/g", LaneType::Http, Position::Ship).into_lane());
+    let path = tmp_stream("qnolane");
+    let _ = std::fs::remove_file(&path);
+    let v1 = quorum::protocol_v1();
+    let err = run_quorum(
+        convened_quorum(),
+        move || v1.clone(),
+        &quorum_registry(),
+        &lanes,
+        &path,
+    )
+    .unwrap_err();
+    match &err {
+        ExecErr::Defect(m) => assert!(m.contains("no such lane")),
+        other => panic!("{other:?}"),
+    }
+}

@@ -45,6 +45,7 @@ use std::sync::Arc;
 
 use crate::council::{self, Bundled, CouncilErr, CouncilSession, DisagreementMap, Position, Reply};
 use crate::protocol::{DispatchEntry, PinMismatch, Protocol, Verdict};
+use crate::quorum::{self, QuorumErr, QuorumRuling, QuorumSession, Votes};
 use crate::registry::Registry;
 use crate::sessions::{SessionClose, SessionOpen, SessionRow, SessionUsage};
 use crate::sha256;
@@ -126,11 +127,22 @@ pub enum ExecErr {
         session: Box<CouncilSession>,
         mismatch: PinMismatch,
     },
+    /// F3 for the quorum body — same choreography ([`quorum::pause_and_re_dispatch`]),
+    /// the quorum session rides back boxed.
+    PinMovedQuorum {
+        session: Box<QuorumSession>,
+        mismatch: PinMismatch,
+    },
     /// A lane transport failed — the run refuses (no verdict on partial).
+    /// In a QUORUM run a transport failure is a MISSING seat instead
+    /// (tolerated while the floor holds) and never reaches this variant.
     LaneRefused { lane_id: String, reason: String },
     /// A council law refused inside the executor (dispatch plan refusal,
     /// collect defects, card problems).
     Council(CouncilErr),
+    /// A quorum law refused inside the executor (pool/collect/verdict —
+    /// e.g. answers below the decision floor).
+    Quorum(QuorumErr),
     /// Defect: missing lane, lane-type crossing, session-stream I/O,
     /// panicked lane thread.
     Defect(String),
@@ -139,8 +151,11 @@ pub enum ExecErr {
 impl ExecErr {
     pub fn is_refusal(&self) -> bool {
         match self {
-            ExecErr::PinMoved { .. } | ExecErr::LaneRefused { .. } => true,
+            ExecErr::PinMoved { .. }
+            | ExecErr::PinMovedQuorum { .. }
+            | ExecErr::LaneRefused { .. } => true,
             ExecErr::Council(c) => c.is_refusal(),
+            ExecErr::Quorum(q) => q.is_refusal(),
             ExecErr::Defect(_) => false,
         }
     }
@@ -150,10 +165,12 @@ impl fmt::Display for ExecErr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ExecErr::PinMoved { mismatch, .. } => write!(f, "{mismatch}"),
+            ExecErr::PinMovedQuorum { mismatch, .. } => write!(f, "{mismatch}"),
             ExecErr::LaneRefused { lane_id, reason } => {
                 write!(f, "lane '{lane_id}' did not answer: {reason}")
             }
             ExecErr::Council(c) => write!(f, "{c}"),
+            ExecErr::Quorum(q) => write!(f, "{q}"),
             ExecErr::Defect(m) => write!(f, "executor defect: {m}"),
         }
     }
@@ -167,6 +184,12 @@ impl From<CouncilErr> for ExecErr {
     }
 }
 
+impl From<QuorumErr> for ExecErr {
+    fn from(q: QuorumErr) -> Self {
+        ExecErr::Quorum(q)
+    }
+}
+
 /// One completed executor run: the session with its dispatch log filled,
 /// every council artifact, and every session-card line appended.
 #[derive(Debug, Clone, PartialEq)]
@@ -175,6 +198,21 @@ pub struct Executed {
     pub bundled: Bundled,
     pub map: DisagreementMap,
     pub verdict: Verdict,
+    pub ledger_row: String,
+    pub session_rows: Vec<String>,
+}
+
+/// One completed quorum executor run: the session with its dispatch log
+/// filled, the votes, the ruling, the VERDICT.md artifact, the ledger
+/// row, and every session-card line appended.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuorumExecuted {
+    pub session: QuorumSession,
+    pub votes: Votes,
+    pub map: DisagreementMap,
+    pub verdict: Verdict,
+    pub ruling: QuorumRuling,
+    pub verdict_md: String,
     pub ledger_row: String,
     pub session_rows: Vec<String>,
 }
@@ -283,6 +321,12 @@ pub fn run_council(
                         position: out.position,
                     });
                 }
+                Err(e) if e.panicked => {
+                    return Err(ExecErr::Defect(format!(
+                        "lane '{}' thread panicked mid-dispatch — wiring defect",
+                        e.lane_id
+                    )));
+                }
                 Err(e) => {
                     return Err(ExecErr::LaneRefused {
                         lane_id: e.lane_id,
@@ -318,10 +362,166 @@ pub fn run_council(
     })
 }
 
+/// Run a QUORUM session end-to-end through the same dispatch engine:
+/// pool waves → collect (missing-tolerated while the floor holds) →
+/// integrate → verdict (ruling + VERDICT.md) → ledger row, with R4
+/// session cards (`kind: "quorum"`) on the `sessions_stream` path.
+///
+/// Laws that differ from [`run_council`], every one from the quorum
+/// card — the executor adds none of its own:
+/// - **Degradation, not refusal**: a lane TRANSPORT failure is a
+///   MISSING seat — no usage row, no reply — tolerated exactly while
+///   [`quorum::decision_floor`] remains reachable; below it
+///   [`quorum::collect`] refuses ([`ExecErr::Quorum`] with
+///   `CollectIncomplete`). The verdict that lands degraded carries the
+///   asterisk + missing list in every artifact. A PANICKED lane thread
+///   is still a Defect — the tolerance is for silent transports, never
+///   for broken wiring.
+/// - **F3 for the pool body**: [`quorum::check_pin`] before every wave;
+///   `Moved` returns [`ExecErr::PinMovedQuorum`] carrying the session
+///   back for [`quorum::pause_and_re_dispatch`].
+pub fn run_quorum(
+    session: QuorumSession,
+    current_protocol: impl Fn() -> Protocol,
+    reg: &Registry,
+    lanes: &LaneSet,
+    sessions_stream: &Path,
+) -> Result<QuorumExecuted, ExecErr> {
+    // STAGE dispatch (planning — the ONE planner over the pool).
+    let waves = quorum::dispatch_plan(&session, reg)?;
+
+    // Identity: resolve every POOL seat against the LaneSet BEFORE any
+    // dispatch. The pool is the pinned identity truth.
+    for s in &session.pool.seats {
+        let lane = lanes.get(&s.lane_id).ok_or_else(|| {
+            ExecErr::Defect(format!(
+                "pool seats lane '{}' but the LaneSet carries no such lane",
+                s.lane_id
+            ))
+        })?;
+        if lane.lane_type() != s.lane_type {
+            return Err(ExecErr::Defect(format!(
+                "lane '{}' is a {:?} lane but the pool seated it as {:?} — identity crossing",
+                s.lane_id,
+                lane.lane_type(),
+                s.lane_type
+            )));
+        }
+    }
+
+    let mut session = session;
+    let mut session_rows: Vec<String> = Vec::new();
+    let mut replies: Vec<Reply> = Vec::new();
+    let payload_digest = sha256::hex(session.task.as_bytes());
+
+    for (wi, wave) in waves.iter().enumerate() {
+        // F3 before every wave — the quorum's own pin check, same law.
+        let proto = current_protocol();
+        if let council::PinOutcome::Moved(m) = quorum::check_pin(&session, &proto)? {
+            return Err(ExecErr::PinMovedQuorum {
+                session: Box::new(session),
+                mismatch: m,
+            });
+        }
+
+        // R4: the open row lands after the first pin proof, before the
+        // first leg — kind word `quorum`.
+        if wi == 0 {
+            let row = SessionRow::Open(SessionOpen {
+                conv: session.id.clone(),
+                kind: "quorum".to_string(),
+                pin: session.pinned_protocol.clone(),
+                stakes: session.stakes.as_str().to_string(),
+                rerun_of: session.rerun_of.clone().unwrap_or_default(),
+                actor: session.gate.actor.clone(),
+                warden_card: session.gate.warden_card.clone(),
+            });
+            append_session_row(sessions_stream, &row, &mut session_rows)?;
+        }
+
+        // One wave: legs run concurrently, the wave joins before the next.
+        let results = run_wave(&session.task, wave, lanes);
+
+        for (lane_id, res) in results {
+            match res {
+                Ok(out) => {
+                    let seat = session
+                        .pool
+                        .seats
+                        .iter()
+                        .find(|s| s.lane_id == lane_id)
+                        .expect("wave lanes come from the pool");
+                    let row = SessionRow::Usage(SessionUsage {
+                        conv: session.id.clone(),
+                        lane: lane_id.clone(),
+                        lane_type: seat.lane_type,
+                        provider: seat.provider.clone(),
+                        model: out.transport_served_model.clone(),
+                        cost_class: seat.cost_class,
+                        tokens_in: out.tokens_in,
+                        tokens_out: out.tokens_out,
+                    });
+                    append_session_row(sessions_stream, &row, &mut session_rows)?;
+                    session.dispatch_log.push(DispatchEntry {
+                        stage: "dispatch".to_string(),
+                        lane_id: lane_id.clone(),
+                        payload_digest: payload_digest.clone(),
+                    });
+                    replies.push(Reply {
+                        lane_id: lane_id.clone(),
+                        transport_served_model: out.transport_served_model,
+                        position: out.position,
+                    });
+                }
+                Err(e) if e.panicked => {
+                    return Err(ExecErr::Defect(format!(
+                        "lane '{}' thread panicked mid-dispatch — wiring defect",
+                        e.lane_id
+                    )));
+                }
+                // Missing seat: tolerated while the floor holds — the
+                // usage stream records the answered legs only, and
+                // collect below refuses when the floor is unreachable.
+                Err(_) => {}
+            }
+        }
+    }
+
+    // STAGES collect → integrate → verdict → ledger (the ONE laws).
+    let votes = quorum::collect(&session, &replies)?;
+    let map = quorum::integrate(&votes);
+    let (verdict, ruling) = quorum::verdict(&session, &votes, &map)?;
+    let verdict_md = quorum::verdict_md(&session, &verdict, &ruling, &map, &votes);
+    let ledger_row = quorum::ledger_row(&session, &verdict, &ruling, &map, &votes);
+    let digest = sha256::hex(council::canonical_verdict_bytes(&verdict, &map).as_bytes());
+    let close = SessionRow::Close(SessionClose {
+        conv: session.id.clone(),
+        verdict_digest: digest,
+        ship: map.holding(Position::Ship).len() as u64,
+        ship_with_changes: map.holding(Position::ShipWithChanges).len() as u64,
+        do_not_ship: map.holding(Position::DoNotShip).len() as u64,
+    });
+    append_session_row(sessions_stream, &close, &mut session_rows)?;
+
+    Ok(QuorumExecuted {
+        session,
+        votes,
+        map,
+        verdict,
+        ruling,
+        verdict_md,
+        ledger_row,
+        session_rows,
+    })
+}
+
 /// One wave-leg failure (internal; folded into [`ExecErr`] by the caller).
+/// `panicked` distinguishes a broken lane thread (Defect — wiring) from a
+/// transport refusal (`LaneErr`; missing seat in a quorum run).
 struct WaveErr {
     lane_id: String,
     reason: String,
+    panicked: bool,
 }
 
 /// Dispatch one wave: every leg on its own thread (F4 — concurrency
@@ -358,10 +558,12 @@ fn run_wave(
                 Some(inner) => inner.map_err(|e| WaveErr {
                     lane_id: e.lane_id,
                     reason: e.reason,
+                    panicked: false,
                 }),
                 None => Err(WaveErr {
                     lane_id: want.clone(),
                     reason: "lane thread panicked".to_string(),
+                    panicked: true,
                 }),
             };
             (id, out)
