@@ -71,8 +71,18 @@
 //! SHA-256 ([`sha256`]). Verify separates organ-written rows from
 //! hand-written ones; a corrupted key file fail-closes appends. In-world
 //! room is P5.
+//!
+//! P5 phase (a) (2026-08-28): [`author`] — the AUTHOR FAMILY. The
+//! operator-authored files (`lanes.jsonl`, `policy.json`) gain their ONE
+//! write path: propose (dry-run, verbatim candidate text) → confirm
+//! ([`author_commit`]), self-validation through the same loaders, immutable
+//! per-write `.bak` named by prior-content-hash, optimistic concurrency on
+//! sha256(current)[0..16], and an append-only `author.jsonl` journal with
+//! an additive `actor_kind` seam (quorum fold 5). Mint stays terminal-only
+//! (Q-A 2:1). World panel / server queue / bridge = phases (b)-(e).
 
 pub mod alerts;
+pub mod author;
 pub mod collect;
 pub mod escalation;
 pub mod gate;
@@ -89,6 +99,10 @@ pub mod stats;
 pub mod verify;
 pub mod warden;
 
+pub use author::{
+    author_commit, author_prepare, journal_load, AuthorErr, AuthorOp, AuthorPlan, Journal,
+    JournalRow,
+};
 pub use gate::{Gate, GateErr};
 
 pub use alerts::{
@@ -105,10 +119,12 @@ pub use ledger::{DecisionRow, Ledger, LedgerErr, Loaded, Outcome, OutcomeRow, Pa
 pub use policy::RoutePolicy;
 pub use policy_file::{encode_policy, load_policy, parse_policy, PolicyFileErr};
 pub use profile::{profile_from_card, ProfileErr, TaskProfile};
-pub use registry::{load_registry, parse_registry, LaneEntry, LaneRegistry, RegistryErr};
+pub use registry::{
+    encode_registry, load_registry, parse_registry, LaneEntry, LaneRegistry, RegistryErr,
+};
 pub use route::{route, RouteDecision, RouteErr};
 pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, HYSTERESIS_FAILS, MIN_SAMPLES};
 pub use verify::{verify_path, verify_with, Finding, VerifyReport, WardenInfo};
 pub use warden::{mint, WardenKey, WardenSlot};
 
-pub const VERSION: &str = "0.9.0";
+pub const VERSION: &str = "0.10.0";

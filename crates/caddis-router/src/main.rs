@@ -17,9 +17,9 @@
 
 use caddis_router::{
     alerts::Alerts, collect_bees, collect_councils, collect_tinyagi, encode_policy, gate::Gate,
-    load_policy, load_registry, profile_from_card, run_scan, verify_path, BeeReport, CapsReport,
-    CollectReport, DataClass, LaneRegistry, Ledger, Loaded, RegistryErr, RoutePolicy, ScanReport,
-    TinyagiReport, VERSION,
+    load_policy, load_registry, profile_from_card, run_scan, verify_path, AuthorOp, BeeReport,
+    CapsReport, CollectReport, DataClass, LaneRegistry, Ledger, Loaded, RegistryErr, RoutePolicy,
+    ScanReport, TinyagiReport, VERSION,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -32,6 +32,13 @@ const USAGE: &str = "usage:
   caddis-router scan            [--ledger <path>|--home <dir>] [--alerts <path>] [--dry-run] [--json]
   caddis-router policy          [--policy <path>|--home <dir>] [--json]
   caddis-router warden <status|mint> [--ledger <path>|--home <dir>] [--json]
+  caddis-router author <lanes-upsert --id <id> --family <f> --tier <t> --cost <usd>
+                     | lanes-remove --id <id>
+                     | policy-set --key <k> --value <v>
+                     | policy-unset --key <k>
+                     | journal>
+                    [--actor <name>] [--actor-kind <word>] [--expect-prior <hash16>] [--dry-run]
+                    [--lanes <path>|--policy <path>|--home <dir>] [--json]
   caddis-router route-gated   --card <path> --data <secret|pii|internal|public> (--alive <ids>|--assume-alive <ids>) [--lanes <path>|--home <dir>] [--policy <path>] [--ledger <path>] [--alerts <path>] [--json]";
 
 fn main() -> ExitCode {
@@ -48,6 +55,7 @@ fn main() -> ExitCode {
         "collect-bees" => run_collect_bees(&args[1..]),
         "collect-tinyagi" => run_collect_tinyagi(&args[1..]),
         "route-gated" => run_route_gated(&args[1..]),
+        "author" => run_author(&args[1..]),
         "collect" => run_collect(&args[1..]),
         "--version" => {
             println!("caddis-router {VERSION}");
@@ -86,6 +94,18 @@ fn main() -> ExitCode {
             println!("                      CURRENT max seq (all existing rows stay honestly");
             println!("                      unsigned); refuses to overwrite — a key is born once,");
             println!("                      rotation is a deliberate operator card");
+            println!("  author: P5 — the ONE write path for lanes.jsonl / policy.json");
+            println!("        (propose = --dry-run prints the verbatim candidate; confirm =");
+            println!("        same argv minus the flag; journal = the audit tail).");
+            println!("    lanes-upsert --id --family --tier --cost   add or re-rule a lane");
+            println!(
+                "    lanes-remove --id                          remove a lane (never the last)"
+            );
+            println!("    policy-set --key --value                   rule floor.*|ceiling.*|tier.*|min_samples");
+            println!("    policy-unset --key                         retract a ruling (never the last tier)");
+            println!("    --expect-prior <hash16>                    optimistic concurrency vs the dry-run's");
+            println!("        prior hash — a mismatch is a STALE proposal (exit 1), re-propose");
+            println!("    --actor/--actor-kind                       journal attribution (default terminal)");
             println!("  route-gated: the SUBPROCESS consumption surface (P4 slice 4) —");
             println!("        route one task card and print the versioned decision JSON");
             println!("        ({{v:1,...}}); the CALLER dispatches (F1: this binary never does).");
@@ -381,6 +401,373 @@ fn run_warden(args: &[String]) -> ExitCode {
             eprintln!("  appends will refuse until the key file is repaired or removed");
             ExitCode::from(2)
         }
+    }
+}
+
+// --- author (P5 phase a) ------------------------------------------------------
+
+/// The AUTHOR family: the ONE write path for the operator-ruled files
+/// (`lanes.jsonl`, `policy.json`). Propose = `--dry-run` (steps 1-6, the
+/// verbatim candidate text on stdout); confirm = the SAME argv minus the
+/// flag. Exit 0 = written (or dry-run verdict ok); 1 = honest refusal
+/// (stale `--expect-prior`, no-op, last lane, unset-absent — nothing
+/// written); 2 = usage/validation/environment defect. `journal` is the
+/// read-only audit tail. Mint stays TERMINAL-ONLY (quorum Q-A) — this
+/// surface never touches warden.key.
+fn run_author(args: &[String]) -> ExitCode {
+    let mut verb: Option<String> = None;
+    let mut id: Option<String> = None;
+    let mut family: Option<String> = None;
+    let mut tier_word: Option<String> = None;
+    let mut cost_word: Option<String> = None;
+    let mut key: Option<String> = None;
+    let mut value: Option<String> = None;
+    let mut actor = "terminal".to_string();
+    let mut actor_kind = "terminal".to_string();
+    let mut expect_prior: Option<String> = None;
+    let mut dry_run = false;
+    let mut json = false;
+    let mut lanes: Option<PathBuf> = None;
+    let mut policy: Option<PathBuf> = None;
+    let mut home: Option<PathBuf> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        match a {
+            "lanes-upsert" | "lanes-remove" | "policy-set" | "policy-unset" | "journal"
+                if verb.is_none() =>
+            {
+                verb = Some(a.to_string());
+                i += 1;
+            }
+            "--actor" if i + 1 < args.len() => {
+                actor = args[i + 1].clone();
+                i += 2;
+            }
+            "--actor-kind" if i + 1 < args.len() => {
+                actor_kind = args[i + 1].clone();
+                i += 2;
+            }
+            "--expect-prior" if i + 1 < args.len() => {
+                expect_prior = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--id" if i + 1 < args.len() => {
+                id = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--family" if i + 1 < args.len() => {
+                family = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--tier" if i + 1 < args.len() => {
+                tier_word = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--cost" if i + 1 < args.len() => {
+                cost_word = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--key" if i + 1 < args.len() => {
+                key = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--value" if i + 1 < args.len() => {
+                value = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--dry-run" => {
+                dry_run = true;
+                i += 1;
+            }
+            "--json" => {
+                json = true;
+                i += 1;
+            }
+            "--lanes" if i + 1 < args.len() => {
+                lanes = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--policy" if i + 1 < args.len() => {
+                policy = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--home" if i + 1 < args.len() => {
+                home = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            other => {
+                eprintln!("caddis-router author: unknown argument {other:?}");
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let Some(verb) = verb else {
+        eprintln!("caddis-router author: a verb is required (lanes-upsert|lanes-remove|policy-set|policy-unset|journal)");
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let home_dir = home.unwrap_or_else(default_home);
+
+    // journal: read-only audit tail.
+    if verb == "journal" {
+        let jpath = if let Some(l) = &lanes {
+            l.parent().unwrap_or(Path::new(".")).join("author.jsonl")
+        } else if let Some(p) = &policy {
+            p.parent().unwrap_or(Path::new(".")).join("author.jsonl")
+        } else {
+            home_dir.join("author.jsonl")
+        };
+        return print_author_journal(&jpath, json);
+    }
+
+    // Build the op + resolve the target.
+    let (op, target) = match verb.as_str() {
+        "lanes-upsert" => {
+            let (Some(id), Some(family), Some(tw), Some(cw)) =
+                (&id, &family, &tier_word, &cost_word)
+            else {
+                eprintln!("caddis-router author lanes-upsert: --id, --family, --tier, --cost are all required");
+                return ExitCode::from(2);
+            };
+            let tier = caddis_router::LaneTier::parse(tw).unwrap_or_else(|| {
+                eprintln!(
+                    "caddis-router author lanes-upsert: unknown tier {tw:?} (taxonomy: local|free|mid|premium; droid is refused — O2)"
+                );
+                std::process::exit(2);
+            });
+            let Ok(cost) = cw.parse::<f64>() else {
+                eprintln!(
+                    "caddis-router author lanes-upsert: --cost must be a finite number >= 0 (got {cw:?})"
+                );
+                return ExitCode::from(2);
+            };
+            if !cost.is_finite() || cost < 0.0 {
+                eprintln!(
+                    "caddis-router author lanes-upsert: --cost must be a finite number >= 0 (got {cost})"
+                );
+                return ExitCode::from(2);
+            }
+            let op = AuthorOp::LanesUpsert {
+                id: id.clone(),
+                family: family.clone(),
+                tier,
+                cost,
+            };
+            let target = lanes.unwrap_or_else(|| home_dir.join("lanes.jsonl"));
+            (op, target)
+        }
+        "lanes-remove" => {
+            let Some(id) = &id else {
+                eprintln!("caddis-router author lanes-remove: --id is required");
+                return ExitCode::from(2);
+            };
+            let op = AuthorOp::LanesRemove { id: id.clone() };
+            let target = lanes.unwrap_or_else(|| home_dir.join("lanes.jsonl"));
+            (op, target)
+        }
+        "policy-set" => {
+            let (Some(k), Some(v)) = (&key, &value) else {
+                eprintln!("caddis-router author policy-set: --key and --value are required");
+                return ExitCode::from(2);
+            };
+            let op = match AuthorOp::policy_set(k, v) {
+                Ok(op) => op,
+                Err(e) => {
+                    eprintln!("caddis-router author policy-set: {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            let target = policy.unwrap_or_else(|| home_dir.join("policy.json"));
+            (op, target)
+        }
+        "policy-unset" => {
+            let Some(k) = &key else {
+                eprintln!("caddis-router author policy-unset: --key is required");
+                return ExitCode::from(2);
+            };
+            let op = match AuthorOp::policy_unset(k) {
+                Ok(op) => op,
+                Err(e) => {
+                    eprintln!("caddis-router author policy-unset: {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            let target = policy.unwrap_or_else(|| home_dir.join("policy.json"));
+            (op, target)
+        }
+        other => {
+            eprintln!("caddis-router author: unknown verb {other:?}");
+            return ExitCode::from(2);
+        }
+    };
+
+    match caddis_router::author_prepare(op, &target, expect_prior.as_deref()) {
+        Err(e) => print_author_err(&e, json),
+        Ok(plan) => {
+            if dry_run {
+                let ph = plan
+                    .prior_hash
+                    .as_deref()
+                    .map(|h| &h[..16])
+                    .unwrap_or("absent");
+                if json {
+                    println!(
+                        "{{\"v\":1,\"op\":\"{}\",\"target\":\"{}\",\"summary\":\"{}\",\"dry_run\":true,\"written\":false,\"prior_hash\":{},\"next_hash\":\"{}\",\"bak\":{},\"journal_seq\":null,\"candidate\":\"{}\"}}",
+                        esc(plan.op.word()),
+                        esc(&target.display().to_string()),
+                        esc(&plan.summary),
+                        json_opt_str(plan.prior_hash.as_deref()),
+                        plan.next_hash,
+                        json_opt_str(plan.bak.as_deref()),
+                        esc(&plan.candidate),
+                    );
+                } else {
+                    println!(
+                        "author {}: WOULD WRITE {} (prior {ph}) — {}",
+                        plan.op.word(),
+                        target.display(),
+                        plan.summary
+                    );
+                    println!("--- candidate (verbatim; confirm = same argv minus --dry-run) ---");
+                    print!("{}", plan.candidate);
+                }
+                return ExitCode::SUCCESS;
+            }
+            match caddis_router::author_commit(&plan, &actor, &actor_kind) {
+                Ok(seq) => {
+                    let ph = plan
+                        .prior_hash
+                        .as_deref()
+                        .map(|h| &h[..16])
+                        .unwrap_or("absent");
+                    if json {
+                        println!(
+                            "{{\"v\":1,\"op\":\"{}\",\"target\":\"{}\",\"summary\":\"{}\",\"dry_run\":false,\"written\":true,\"prior_hash\":{},\"next_hash\":\"{}\",\"bak\":{},\"journal_seq\":{}}}",
+                            esc(plan.op.word()),
+                            esc(&target.display().to_string()),
+                            esc(&plan.summary),
+                            json_opt_str(plan.prior_hash.as_deref()),
+                            plan.next_hash,
+                            json_opt_str(plan.bak.as_deref()),
+                            seq,
+                        );
+                    } else {
+                        println!(
+                            "author {}: WROTE {} — {}",
+                            plan.op.word(),
+                            target.display(),
+                            plan.summary
+                        );
+                        println!(
+                            "  prior {ph} -> next {} | bak {} | journal seq {seq}",
+                            &plan.next_hash[..16],
+                            plan.bak.as_deref().unwrap_or("-"),
+                        );
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => print_author_err(&e, json),
+            }
+        }
+    }
+}
+
+fn print_author_err(e: &caddis_router::AuthorErr, json: bool) -> ExitCode {
+    let code = if e.is_refusal() { 1 } else { 2 };
+    let word = if e.is_refusal() { "REFUSED" } else { "DEFECT" };
+    if json {
+        println!(
+            "{{\"v\":1,\"refused\":{},\"reason\":\"{}\"}}",
+            e.is_refusal(),
+            esc(e.message())
+        );
+    } else {
+        eprintln!("caddis-router author: {word} — {}", e.message());
+    }
+    ExitCode::from(code)
+}
+
+fn print_author_journal(path: &Path, json: bool) -> ExitCode {
+    let j = caddis_router::journal_load(path);
+    if json {
+        let rows: Vec<String> = j
+            .rows
+            .iter()
+            .map(|r| {
+                format!(
+                    "{{\"seq\":{},\"ts\":\"{}\",\"actor\":\"{}\",\"actor_kind\":\"{}\",\"op\":\"{}\",\"target\":\"{}\",\"prior_hash\":{},\"next_hash\":\"{}\",\"bak\":{}}}",
+                    r.seq,
+                    esc(&r.ts),
+                    esc(&r.actor),
+                    esc(&r.actor_kind),
+                    esc(&r.op),
+                    esc(&r.target),
+                    json_opt_str(r.prior_hash.as_deref()),
+                    esc(&r.next_hash),
+                    json_opt_str(r.bak.as_deref()),
+                )
+            })
+            .collect();
+        let bad: Vec<String> = j
+            .bad
+            .iter()
+            .map(|(line, why)| format!("[{line},\"{}\"]", esc(why)))
+            .collect();
+        println!(
+            "{{\"v\":1,\"path\":\"{}\",\"rows\":[{}],\"bad\":[{}]}}",
+            esc(&path.display().to_string()),
+            rows.join(","),
+            bad.join(",")
+        );
+        return ExitCode::SUCCESS;
+    }
+    if j.rows.is_empty() && j.bad.is_empty() {
+        println!(
+            "author journal: {} — no rows yet (nothing has been authored)",
+            path.display()
+        );
+        return ExitCode::SUCCESS;
+    }
+    println!(
+        "author journal: {} — {} rows{}",
+        path.display(),
+        j.rows.len(),
+        if j.bad.is_empty() {
+            String::new()
+        } else {
+            format!(", {} MALFORMED line(s)", j.bad.len())
+        }
+    );
+    for r in j.rows.iter().rev().take(20).rev() {
+        let ph = r
+            .prior_hash
+            .as_deref()
+            .map(|h| &h[..16])
+            .unwrap_or("absent");
+        println!(
+            "  #{} {} {}/{} {} {} {}->{} bak={}",
+            r.seq,
+            r.ts,
+            r.actor,
+            r.actor_kind,
+            r.op,
+            r.target,
+            ph,
+            &r.next_hash[..16],
+            r.bak.as_deref().unwrap_or("-"),
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn json_opt_str(v: Option<&str>) -> String {
+    match v {
+        Some(s) => format!("\"{}\"", esc(s)),
+        None => "null".to_string(),
     }
 }
 // --- collect ---------------------------------------------------------------

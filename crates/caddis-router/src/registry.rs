@@ -196,6 +196,59 @@ impl LaneRegistry {
             })
             .collect()
     }
+
+    // --- P5 author surface (author.rs is the only caller) -------------------
+
+    /// P5: insert-or-replace by id — identity is the id, so a re-rule
+    /// replaces family/tier/cost wholesale. Returns `true` when an existing
+    /// entry was REPLACED, `false` when one was added.
+    pub fn upsert(&mut self, entry: LaneEntry) -> bool {
+        if let Some(slot) = self.lanes.iter_mut().find(|l| l.id == entry.id) {
+            *slot = entry;
+            return true;
+        }
+        self.lanes.push(entry);
+        self.lanes.sort_by(|a, b| a.id.cmp(&b.id));
+        false
+    }
+
+    /// P5: remove by id. Returns `false` when the id is absent — the author
+    /// turns that into a no-op refusal, never a silent success.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.lanes.len();
+        self.lanes.retain(|l| l.id != id);
+        before != self.lanes.len()
+    }
+
+    /// P5: assemble from entries (the author's mutation surface works on a
+    /// plain Vec between reads and writes). `None` when empty — a registry
+    /// that exists must name at least one lane (parse law), and the author
+    /// refuses to emit what no loader would accept.
+    pub fn from_entries(mut entries: Vec<LaneEntry>) -> Option<LaneRegistry> {
+        if entries.is_empty() {
+            return None;
+        }
+        entries.sort_by(|a, b| a.id.cmp(&b.id));
+        Some(LaneRegistry { lanes: entries })
+    }
+}
+
+/// P5: the deterministic wire form — one flat object per line, key order
+/// `id, family, tier, cost_per_task_usd`, lanes sorted by id. Round-trips
+/// through [`parse_registry`] exactly (the audit==obey law encode_policy
+/// set): what the author WRITES is the only shape the loader ACCEPTS.
+pub fn encode_registry(r: &LaneRegistry) -> String {
+    let mut out = String::new();
+    for e in r.entries() {
+        out.push_str(&format!(
+            "{{\"id\":\"{}\",\"family\":\"{}\",\"tier\":\"{}\",\"cost_per_task_usd\":{}}}\n",
+            crate::ledger::esc(&e.id),
+            crate::ledger::esc(&e.family),
+            e.tier.as_str(),
+            e.cost_per_task_usd
+        ));
+    }
+    out
 }
 
 #[cfg(test)]
