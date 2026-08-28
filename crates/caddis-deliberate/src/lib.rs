@@ -4,8 +4,12 @@
 //! quorum-r2-organs-rewrite/VERDICT.md, 2026-08-26, SHIP-WITH-CHANGES).
 //!
 //! P0 slice 1 = the PURE substrate only: [`Seat`], [`Panel`], [`Floors`]
-//! and [`construct_panel`]. Zero I/O, zero daemon knowledge, zero warden
-//! writes. Ruling provenance per piece:
+//! and [`construct_panel`]. P0 slice 2 = [`protocol`]: the versioned
+//! [`protocol::Protocol`] with its F3 PIN (sha256 over canonical bytes,
+//! [`protocol::Convening`] storing it at open time, `verify_pin`
+//! rejecting any later drift) and [`protocol::Verdict`] provenance
+//! (transport-served model, never self-report). Zero I/O, zero daemon
+//! knowledge, zero warden writes. Ruling provenance per piece:
 //!
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
 //!   never touches a ledger. It classifies DATA and constructs values; the
@@ -33,6 +37,9 @@
 //! [`CHINESE_FAMILIES`] is DATA: the table behind the monoculture floor
 //! (at least one seat from OUTSIDE the Chinese free-provider cluster). The
 //! operator may re-rule it; the floor's meaning never lives in control flow.
+
+pub mod protocol;
+pub mod sha256;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -198,6 +205,32 @@ impl Panel {
             .filter(|ps| !is_chinese_family(&ps.seat.family))
             .count()
     }
+
+    /// Validate the PANEL-level floors (distinct families first, then
+    /// non-Chinese — fixed refusal order, deterministic replay) on this
+    /// constructed panel. The same law [`construct_panel`] applies at
+    /// construction; exposed so a [`crate::protocol::Convening`] can
+    /// re-prove its seated panel against the floors of the protocol it
+    /// pins (slice 2) and slice-3 data-driven tests can drive it directly.
+    /// `panel_size` is deliberately NOT checked here: it is a
+    /// construction-time constraint (take exactly N), not a panel shape.
+    pub fn check_floors(&self, floors: &Floors) -> Result<(), PanelErr> {
+        let families = self.family_count();
+        if families < floors.min_families {
+            return Err(PanelErr::FamiliesFloor {
+                have: families,
+                want: floors.min_families,
+            });
+        }
+        let non_chinese = self.non_chinese_count();
+        if non_chinese < floors.min_non_chinese {
+            return Err(PanelErr::NonChineseFloor {
+                have: non_chinese,
+                want: floors.min_non_chinese,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Panel construction refusals. Fail-closed: every floor violation is a
@@ -291,20 +324,7 @@ pub fn construct_panel(candidates: &[Seat], floors: &Floors) -> Result<Panel, Pa
             })
             .collect(),
     };
-    let families = panel.family_count();
-    if families < floors.min_families {
-        return Err(PanelErr::FamiliesFloor {
-            have: families,
-            want: floors.min_families,
-        });
-    }
-    let non_chinese = panel.non_chinese_count();
-    if non_chinese < floors.min_non_chinese {
-        return Err(PanelErr::NonChineseFloor {
-            have: non_chinese,
-            want: floors.min_non_chinese,
-        });
-    }
+    panel.check_floors(floors)?;
     Ok(panel)
 }
 
