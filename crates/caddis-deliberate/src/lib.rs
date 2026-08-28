@@ -35,6 +35,15 @@
 //! the warden ledger through `caddis_warden::card_state` (the ONE
 //! card-state law; this crate's single workspace path dep). Crash order
 //! is STREAM FIRST, JOURNAL LAST — an orphan pending never double-applies.
+//! P2 slice 1 = [`council`]: the COUNCIL protocol card v1 — the seven
+//! canonical stages as DATA with mechanics per stage: F1 per-convening
+//! warden gate-card (the same read-only `active_for` law as [`edits`]),
+//! serialized dispatch PLANNING via [`caps::plan_batches`], fail-closed
+//! collect, integration as a disagreement MAP (never averaging), the
+//! verdict table, its flat exact-field ledger row, and the F11
+//! mid-flight-edit → pause → version-bump → re-dispatch choreography
+//! (archived original, never a hard abort). The F3 pin is [`protocol`]'s
+//! — reused, never a second pin.
 //!
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
 //!   never touches a ledger. It classifies DATA and constructs values; the
@@ -66,7 +75,7 @@
 
 pub mod caps;
 pub mod collector;
-pub mod disjoint;
+pub mod council;
 pub mod edits;
 pub mod json;
 pub mod protocol;
