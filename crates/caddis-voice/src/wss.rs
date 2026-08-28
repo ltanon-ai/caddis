@@ -453,7 +453,12 @@ mod tls {
                 ];
                 let in_desc = SecBufferDesc {
                     ul_version: SECBUFFER_VERSION,
-                    c_buffers: 3,
+                    // SECBUFFER_APPLICATION_PROTOCOLS is accepted by
+                    // schannel ONLY on the context-creating call:
+                    // re-sending ALPN on a later InitializeSecurityContext
+                    // yields SEC_E_INVALID_TOKEN. COPIES LAW: keep this
+                    // identical to prober.rs.
+                    c_buffers: if first { 3 } else { 2 },
                     p_buffers: in_bufs.as_mut_ptr(),
                 };
                 let mut out_buf = SecBuffer {
@@ -543,6 +548,24 @@ mod tls {
                         first = false;
                         // Pull the next server flight (bounded by the socket
                         // read timeout — a stalled peer fails, never hangs).
+                        let mut tmp = [0u8; 16 * 1024];
+                        let n = self
+                            .sock
+                            .read(&mut tmp)
+                            .map_err(|e| format!("tls: handshake read: {e}"))?;
+                        if n == 0 {
+                            return Err("tls: server closed mid-handshake".into());
+                        }
+                        pending.extend_from_slice(&tmp[..n]);
+                    }
+                    SEC_E_INCOMPLETE_MESSAGE => {
+                        // Partial server flight: schannel consumed NOTHING —
+                        // keep `pending` intact, append more socket bytes,
+                        // re-feed the SAME accumulated buffer (MSDN: the
+                        // token is incomplete, call again with more input).
+                        // COPIES LAW: this arm must exist in prober.rs and
+                        // here identically; treating it as fatal kills every
+                        // handshake whose cert chain crosses TCP segments.
                         let mut tmp = [0u8; 16 * 1024];
                         let n = self
                             .sock
@@ -758,10 +781,19 @@ mod tls {
             // some ciphertext and may leave a tail.
             let mut extra_off: Option<usize> = None;
             for b in &bufs[..desc.c_buffers as usize] {
-                if b.buffer_type == SECBUFFER_EXTRA && !b.pv_buffer.is_null() {
-                    let off = b.pv_buffer as usize - base as usize;
-                    if off <= self.cipher.len() {
-                        extra_off = Some(off);
+                if b.buffer_type == SECBUFFER_EXTRA {
+                    if !b.pv_buffer.is_null() {
+                        let off = b.pv_buffer as usize - base as usize;
+                        if off <= self.cipher.len() {
+                            extra_off = Some(off);
+                        }
+                    } else if b.cb_buffer as usize <= self.cipher.len() {
+                        // Pointerless EXTRA: schannel reports only the
+                        // unconsumed COUNT — the bytes are the buffer's
+                        // TAIL. Ignoring it cleared unconsumed records and
+                        // desynced DecryptMessage. COPIES LAW: identical
+                        // to prober.rs.
+                        extra_off = Some(self.cipher.len() - b.cb_buffer as usize);
                     }
                 }
             }
@@ -872,10 +904,23 @@ mod tls {
         }
         let base = pending.as_ptr() as usize;
         for b in unsafe { std::slice::from_raw_parts(desc.p_buffers, desc.c_buffers as usize) } {
-            if b.buffer_type == SECBUFFER_EXTRA && !b.pv_buffer.is_null() {
-                let off = b.pv_buffer as usize - base;
-                if off <= pending.len() {
-                    return Some(off);
+            if b.buffer_type == SECBUFFER_EXTRA {
+                if !b.pv_buffer.is_null() {
+                    let off = b.pv_buffer as usize - base;
+                    if off <= pending.len() {
+                        return Some(off);
+                    }
+                } else if b.cb_buffer as usize <= pending.len() {
+                    // Pointerless EXTRA (observed live against
+                    // generativelanguage.googleapis.com 2026-08-28:
+                    // EXTRA cb=2691 pv=NULL after a 2824-byte feed):
+                    // schannel reports only the unconsumed COUNT; the
+                    // bytes are the input TAIL. Requiring a pointer made
+                    // the caller CLEAR unconsumed flight bytes — every
+                    // split-flight host then died at re-feed with
+                    // SEC_E_INVALID_TOKEN. COPIES LAW: identical to
+                    // prober.rs.
+                    return Some(pending.len() - b.cb_buffer as usize);
                 }
             }
         }
