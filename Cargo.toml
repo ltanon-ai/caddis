@@ -9,6 +9,7 @@ members = [
     "crates/caddis-memory",
     "crates/caddis-voice",
     "crates/caddis-router",
+    "crates/caddis-deliberate",
     "crates/caddis",
 ]
 
