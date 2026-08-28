@@ -33,12 +33,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::escalation::{EscalationCtx, EscalationErr};
+use crate::lane::DataClass;
 use crate::ledger::{
     as_str, as_u64, esc, fit, get, now_iso, parse_object, Ledger, LedgerErr, Loaded, Outcome,
     ParsedRow, PromotionRow, Row, LOCK_WAIT,
 };
-use crate::escalation::{EscalationCtx, EscalationErr};
 use crate::lock::{Lock, LockErr};
+use crate::route::RouteErr;
 use crate::stats::HYSTERESIS_FAILS;
 
 /// Same single-`write_all` atomicity budget as the ledger row cap.
@@ -58,6 +60,9 @@ pub enum AlertKind {
     /// P3 fail-safe halt from [`crate::escalation`] — emitted by the P4
     /// dispatch adapters, never by the scan.
     EscalationStop,
+    /// P1/P4: [`crate::route::route`] refused (fail closed) — emitted by
+    /// the dispatch adapters on every routing halt, never by the crate.
+    RouteStop,
 }
 
 impl AlertKind {
@@ -66,6 +71,7 @@ impl AlertKind {
             AlertKind::Degraded => "degraded",
             AlertKind::Healed => "healed",
             AlertKind::EscalationStop => "escalation_stop",
+            AlertKind::RouteStop => "route_stop",
         }
     }
     fn parse(s: &str) -> Option<Self> {
@@ -73,6 +79,7 @@ impl AlertKind {
             "degraded" => Some(AlertKind::Degraded),
             "healed" => Some(AlertKind::Healed),
             "escalation_stop" => Some(AlertKind::EscalationStop),
+            "route_stop" => Some(AlertKind::RouteStop),
             _ => None,
         }
     }
@@ -114,6 +121,38 @@ impl Alert {
             lane_id: ctx.failed_lane_id.clone(),
             class: ctx.task_class.clone(),
             detail: detail.to_string(),
+        }
+    }
+
+    /// P4/F5: the route() halt surface as an alert — the derivation the
+    /// dispatch adapters persist when [`crate::route::route`] refuses. No
+    /// lane was chosen, so `lane_id` is empty; the data class lives in the
+    /// detail because it names WHICH filter closed. Every variant carries
+    /// its own honest reason; none is guessed.
+    pub fn from_route_stop(data_class: DataClass, task_class: &str, err: &RouteErr) -> Self {
+        let detail = match err {
+            RouteErr::NoAliveLane => "no lane alive — routing refused (fail closed)".to_string(),
+            RouteErr::NoPermittedLane => format!(
+                "F5: no permitted lane for data class {} — fail closed",
+                data_class.as_str()
+            ),
+            RouteErr::NoMeasuredLane => {
+                "F2: no permitted lane measured for the class (cold start) — refuse to guess"
+                    .to_string()
+            }
+            RouteErr::NoFloorForClass => {
+                "F6: class has no quality floor — thresholds are never guessed".to_string()
+            }
+            RouteErr::BelowFloorFailClosed => format!(
+                "R4: every measured lane below floor on {} — fail closed",
+                data_class.as_str()
+            ),
+        };
+        Alert {
+            kind: AlertKind::RouteStop,
+            lane_id: String::new(),
+            class: task_class.to_string(),
+            detail,
         }
     }
 }
@@ -460,17 +499,14 @@ pub fn plan_scan(loaded: &Loaded) -> ScanPlan {
             .or_default()
             .push(t);
     }
-    let keys: BTreeSet<&(String, String)> = recorded
-        .keys()
-        .chain(derived_groups.keys())
-        .collect();
+    let keys: BTreeSet<&(String, String)> = recorded.keys().chain(derived_groups.keys()).collect();
     let mut append: Vec<Transition> = Vec::new();
     let mut mismatch = 0u32;
     for k in keys {
         let rec: &[bool] = recorded.get(k).map(|v| v.as_slice()).unwrap_or(&[]);
         let der: &[&Transition] = derived_groups.get(k).map(|v| v.as_slice()).unwrap_or(&[]);
-        let prefix_ok = rec.len() <= der.len()
-            && rec.iter().zip(der.iter()).all(|(r, d)| *r == d.demoted);
+        let prefix_ok =
+            rec.len() <= der.len() && rec.iter().zip(der.iter()).all(|(r, d)| *r == d.demoted);
         if !prefix_ok {
             mismatch += 1;
             continue;
@@ -567,7 +603,10 @@ mod tests {
 
     #[test]
     fn demote_at_hysteresis_exactly_once() {
-        let l = loaded(&[out(1, "groq", "coding", false), out(2, "groq", "coding", false)]);
+        let l = loaded(&[
+            out(1, "groq", "coding", false),
+            out(2, "groq", "coding", false),
+        ]);
         let t = transitions(&l);
         assert_eq!(t.len(), 1);
         assert!(t[0].demoted);
@@ -685,7 +724,10 @@ mod tests {
         assert_eq!(p.report.marker_mismatch, 1);
         assert!(p.append.is_empty());
         // More recorded than derived is also a mismatch (orphan markers).
-        let l2 = loaded(&[prom(1, "groq", "coding", true), prom(2, "groq", "coding", false)]);
+        let l2 = loaded(&[
+            prom(1, "groq", "coding", true),
+            prom(2, "groq", "coding", false),
+        ]);
         let p2 = plan_scan(&l2);
         assert_eq!(p2.report.marker_mismatch, 1);
         assert!(p2.append.is_empty());
@@ -734,7 +776,10 @@ mod tests {
         assert!(!rep.dry_run);
         // Ledger gained the marker; alerts gained the degraded row.
         let l = led.load().unwrap();
-        assert!(matches!(l.rows.last().map(|p| &p.row), Some(Row::Promotion(_))));
+        assert!(matches!(
+            l.rows.last().map(|p| &p.row),
+            Some(Row::Promotion(_))
+        ));
         let a = alr.load().unwrap();
         assert_eq!(a.bad.len(), 0);
         assert_eq!(a.rows.len(), 1);
@@ -773,8 +818,16 @@ mod tests {
         let rep = run_scan(&led, &alr, true).unwrap();
         assert!(rep.dry_run);
         assert_eq!(rep.promotions_appended, 1, "dry run still reports intent");
-        assert!(led.load().unwrap().rows.iter().all(|p| !matches!(p.row, Row::Promotion(_))));
-        assert!(!alr.path().exists(), "dry run never creates the alert stream");
+        assert!(led
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .all(|p| !matches!(p.row, Row::Promotion(_))));
+        assert!(
+            !alr.path().exists(),
+            "dry run never creates the alert stream"
+        );
         fs::remove_dir_all(dir).ok();
     }
 
@@ -793,7 +846,8 @@ mod tests {
             kind: AlertKind::Healed,
             lane_id: "groq".into(),
             class: "review".into(),
-            detail: "promotion seq 7: trailing RED-TEST fails 0 — lane healed, one pass (QQ2)".into(),
+            detail: "promotion seq 7: trailing RED-TEST fails 0 — lane healed, one pass (QQ2)"
+                .into(),
         };
         let s1 = alr.append_ts(&a1, "t\"s\\", LOCK_WAIT).unwrap();
         let s2 = alr.append_ts(&a2, "t2", LOCK_WAIT).unwrap();
@@ -842,6 +896,52 @@ mod tests {
             assert!(!a.detail.is_empty());
             details.insert(a.detail);
         }
-        assert_eq!(details.len(), variants.len(), "every variant speaks its own reason");
+        assert_eq!(
+            details.len(),
+            variants.len(),
+            "every variant speaks its own reason"
+        );
+    }
+
+    #[test]
+    fn route_stop_alert_maps_every_variant() {
+        let variants = [
+            RouteErr::NoAliveLane,
+            RouteErr::NoPermittedLane,
+            RouteErr::NoMeasuredLane,
+            RouteErr::NoFloorForClass,
+            RouteErr::BelowFloorFailClosed,
+        ];
+        let mut details = std::collections::BTreeSet::new();
+        for v in &variants {
+            let a = Alert::from_route_stop(DataClass::Secret, "coding", v);
+            assert_eq!(a.kind, AlertKind::RouteStop);
+            assert_eq!(a.lane_id, "", "no lane was chosen");
+            assert_eq!(a.class, "coding");
+            assert!(!a.detail.is_empty());
+            details.insert(a.detail);
+        }
+        assert_eq!(
+            details.len(),
+            variants.len(),
+            "every variant speaks its own reason"
+        );
+        // The data class names WHICH filter closed (F5 coordinates).
+        assert!(
+            Alert::from_route_stop(DataClass::Secret, "coding", &RouteErr::NoPermittedLane)
+                .detail
+                .contains("secret")
+        );
+    }
+
+    #[test]
+    fn route_stop_kind_survives_the_wire() {
+        let a = Alert::from_route_stop(DataClass::Pii, "chair", &RouteErr::NoPermittedLane);
+        let line = encode_alert(41, "2026-08-28T07:00:00Z", &a);
+        let loaded = parse_alert_stream(&line);
+        assert!(loaded.bad.is_empty());
+        assert_eq!(loaded.rows.len(), 1);
+        assert_eq!(loaded.rows[0].alert, a);
+        assert_eq!(loaded.rows[0].seq, 41);
     }
 }

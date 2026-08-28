@@ -43,9 +43,14 @@
 //! same append law as the ledger) + the R2/R4 transition scan: persistent
 //! decay becomes a `promotion` ledger row and an operator alert, idempotent
 //! by prefix; [`Alert::from_escalation_stop`] is the surface the dispatch
-//! adapters will call on every P3 fail-safe halt. Still ahead: warden
-//! policy wiring + dispatch-path adapters + R5 identity (P4 remainder),
-//! in-world room (P5).
+//! adapters will call on every P3 fail-safe halt.
+//!
+//! P4 slice 2 (2026-08-28): [`policy_file`] — the WARDEN POLICY FILE as
+//! the ruling home (`policy.json`, flat keys, the file IS the whole
+//! policy: unruled pieces fail closed, never default-mixed; malformed =
+//! refuse to route) + [`Alert::from_route_stop`] as the halt surface the
+//! dispatch adapters persist on every route() refusal. Still ahead:
+//! dispatch-path adapters + R5 identity (P4 remainder), in-world room (P5).
 
 pub mod alerts;
 pub mod collect;
@@ -54,6 +59,7 @@ pub mod lane;
 pub mod ledger;
 pub mod lock;
 pub mod policy;
+pub mod policy_file;
 pub mod profile;
 pub mod route;
 pub mod stats;
@@ -71,9 +77,10 @@ pub use escalation::{escalate, Escalation, EscalationCtx, EscalationErr, MAX_HOP
 pub use lane::{Capability, DataClass, Lane, LaneTier};
 pub use ledger::{DecisionRow, Ledger, LedgerErr, Loaded, Outcome, OutcomeRow, ParsedRow, Row};
 pub use policy::RoutePolicy;
+pub use policy_file::{encode_policy, load_policy, parse_policy, PolicyFileErr};
 pub use profile::{ProfileErr, TaskProfile};
 pub use route::{route, RouteDecision, RouteErr};
 pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, HYSTERESIS_FAILS, MIN_SAMPLES};
 pub use verify::{verify_path, Finding, VerifyReport};
 
-pub const VERSION: &str = "0.5.0";
+pub const VERSION: &str = "0.6.0";

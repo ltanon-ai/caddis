@@ -49,6 +49,29 @@ pub enum DataClass {
     Internal,
     Public,
 }
+impl DataClass {
+    /// Wire parser (policy file, registry feeds). Unknown words are `None`
+    /// — the F5 vocabulary is CLOSED: four classes, nothing smuggles past.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "secret" => Some(DataClass::Secret),
+            "pii" => Some(DataClass::Pii),
+            "internal" => Some(DataClass::Internal),
+            "public" => Some(DataClass::Public),
+            _ => None,
+        }
+    }
+
+    /// Canonical wire form — inverse of [`DataClass::parse`].
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DataClass::Secret => "secret",
+            DataClass::Pii => "pii",
+            DataClass::Internal => "internal",
+            DataClass::Public => "public",
+        }
+    }
+}
 
 /// Measured capability of one lane for one task class (F2: the sample count
 /// gates cheap-pool entry at N >= 5). Quality is a 0..=1 verify-outcome
@@ -92,6 +115,21 @@ mod tests {
         assert_eq!(LaneTier::parse("Free"), Some(LaneTier::Free));
         assert_eq!(LaneTier::parse("mid"), Some(LaneTier::Mid));
         assert_eq!(LaneTier::parse("premium"), Some(LaneTier::Premium));
+    }
+    #[test]
+    fn dataclass_vocabulary_is_closed_and_round_trips() {
+        for dc in [
+            DataClass::Secret,
+            DataClass::Pii,
+            DataClass::Internal,
+            DataClass::Public,
+        ] {
+            assert_eq!(DataClass::parse(dc.as_str()), Some(dc));
+        }
+        assert_eq!(DataClass::parse(" Secret "), Some(DataClass::Secret));
+        assert_eq!(DataClass::parse("INTERNAL"), Some(DataClass::Internal));
+        assert!(DataClass::parse("top-secret").is_none());
+        assert!(DataClass::parse("").is_none());
     }
 
     #[test]

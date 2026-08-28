@@ -282,11 +282,20 @@ fn scan_dry_run_writes_nothing_and_home_override() {
         format!("{SCAN_FAIL_1}\n{SCAN_FAIL_2}\n"),
     )
     .unwrap();
-    let (rc, out, err) = run(&["scan", "--home", home.to_str().unwrap(), "--dry-run", "--json"]);
+    let (rc, out, err) = run(&[
+        "scan",
+        "--home",
+        home.to_str().unwrap(),
+        "--dry-run",
+        "--json",
+    ]);
     assert_eq!(rc, 0, "{err}");
     assert!(out.contains("\"promotions_appended\":1"), "{out}");
     assert!(out.contains("\"dry_run\":true"), "{out}");
-    assert!(!home.join("alerts.jsonl").exists(), "dry run writes no alerts");
+    assert!(
+        !home.join("alerts.jsonl").exists(),
+        "dry run writes no alerts"
+    );
     let body = fs::read_to_string(home.join("ledger.jsonl")).unwrap();
     assert_eq!(body.lines().count(), 2, "dry run appends no promotions");
     fs::remove_dir_all(home).ok();
@@ -295,6 +304,71 @@ fn scan_dry_run_writes_nothing_and_home_override() {
 #[test]
 fn scan_unknown_argument_fails_closed() {
     let (rc, _, err) = run(&["scan", "--nonsense"]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("unknown argument"), "{err}");
+}
+
+// --- policy e2e ----------------------------------------------------------------
+
+#[test]
+fn policy_defaults_when_no_file() {
+    let home = tmpdir("pol-defaults");
+    let (rc, out, err) = run(&["policy", "--home", home.to_str().unwrap()]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("builtin conservative defaults"), "{out}");
+    // The audit shows the EXACT wire form the loader consumes.
+    assert!(out.contains("\"floor.skeptic\":0.85"), "{out}");
+    assert!(out.contains("\"tier.secret\":\"local\""), "{out}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn policy_loads_authored_file_and_shows_its_whole_ruling() {
+    let file = write(
+        "pol-file",
+        "policy.json",
+        "{\"tier.secret\":\"local\",\"tier.internal\":\"local,free\",\"floor.skeptic\":0.9,\"ceiling.coding\":1.5,\"min_samples\":6}",
+    );
+    let (rc, out, err) = run(&["policy", "--policy", file.to_str().unwrap()]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("source: file"), "{out}");
+    assert!(out.contains("\"floor.skeptic\":0.9"), "{out}");
+    assert!(out.contains("\"ceiling.coding\":1.5"), "{out}");
+    assert!(out.contains("\"min_samples\":6"), "{out}");
+    // The file is the WHOLE policy: defaults must NOT leak into the audit.
+    assert!(!out.contains("\"floor.chair\""), "{out}");
+    assert!(!out.contains("\"tier.public\""), "{out}");
+    fs::remove_dir_all(file.parent().unwrap()).ok();
+}
+
+#[test]
+fn policy_malformed_file_is_one_finding_exit_one() {
+    let file = write("pol-bad", "policy.json", "{\"floors.skeptic\":0.9}");
+    let (rc, out, _) = run(&["policy", "--policy", file.to_str().unwrap()]);
+    assert_eq!(rc, 1, "exit = finding count");
+    assert!(out.contains("finding 1"), "{out}");
+    assert!(out.contains("unknown field"), "{out}");
+    assert!(out.contains("fail closed"), "{out}");
+    fs::remove_dir_all(file.parent().unwrap()).ok();
+}
+
+#[test]
+fn policy_json_report_parses_and_flags_absence() {
+    let home = tmpdir("pol-json");
+    let (rc, out, _) = run(&["policy", "--home", home.to_str().unwrap(), "--json"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.starts_with("{") && out.trim_end().ends_with("}"),
+        "{out}"
+    );
+    assert!(out.contains("\"present\":false"), "{out}");
+    assert!(out.contains("\"source\":\"defaults\""), "{out}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn policy_unknown_argument_fails_closed() {
+    let (rc, _, err) = run(&["policy", "--nonsense"]);
     assert_eq!(rc, 2);
     assert!(err.contains("unknown argument"), "{err}");
 }

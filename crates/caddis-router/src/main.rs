@@ -16,8 +16,9 @@
 //! `collect` appends telemetry rows only — it never dispatches anything.
 
 use caddis_router::{
-    alerts::Alerts, collect_bees, collect_councils, collect_tinyagi, run_scan, verify_path,
-    BeeReport, CollectReport, Ledger, ScanReport, TinyagiReport, VERSION,
+    alerts::Alerts, collect_bees, collect_councils, collect_tinyagi, encode_policy, load_policy,
+    run_scan, verify_path, BeeReport, CollectReport, Ledger, RoutePolicy, ScanReport,
+    TinyagiReport, VERSION,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -27,7 +28,8 @@ const USAGE: &str = "usage:
   caddis-router collect         [--councils <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
   caddis-router collect-bees    [--cards <path>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
   caddis-router collect-tinyagi [--tinyagi <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
-  caddis-router scan            [--ledger <path>|--home <dir>] [--alerts <path>] [--dry-run] [--json]";
+  caddis-router scan            [--ledger <path>|--home <dir>] [--alerts <path>] [--dry-run] [--json]
+  caddis-router policy          [--policy <path>|--home <dir>] [--json]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -38,6 +40,7 @@ fn main() -> ExitCode {
     match args[0].as_str() {
         "verify" => run_verify(&args[1..]),
         "scan" => run_scan_cmd(&args[1..]),
+        "policy" => run_policy(&args[1..]),
         "collect-bees" => run_collect_bees(&args[1..]),
         "collect-tinyagi" => run_collect_tinyagi(&args[1..]),
         "collect" => run_collect(&args[1..]),
@@ -64,8 +67,15 @@ fn main() -> ExitCode {
             println!("                      settings.json snapshots, provable edges only)");
             println!("    --dry-run         report what would land, append nothing");
             println!("  scan: promote persistent lane decay to ledger rows + alerts (R2/R4)");
-            println!("    --alerts <path>   alert stream (default: alerts.jsonl beside the ledger)");
+            println!(
+                "    --alerts <path>   alert stream (default: alerts.jsonl beside the ledger)"
+            );
             println!("    --dry-run         report what would land, append nothing");
+            println!("  policy: audit the ruling policy the router would obey (READ-ONLY;");
+            println!("        exit 1 = malformed file, routing must refuse — fail closed)");
+            println!("    --policy <path>   this exact policy file (wins over --home)");
+            println!("    --home <dir>      look for <dir>/policy.json (default ~/.caddis/router)");
+            println!("    --json            machine report on stdout");
             ExitCode::SUCCESS
         }
         other => {
@@ -495,7 +505,9 @@ fn run_scan_cmd(args: &[String]) -> ExitCode {
             }
             "--ledger" if i + 1 < args.len() => {
                 let p = PathBuf::from(&args[i + 1]);
-                alerts = alerts.clone().or_else(|| p.parent().map(|d| d.join("alerts.jsonl")));
+                alerts = alerts
+                    .clone()
+                    .or_else(|| p.parent().map(|d| d.join("alerts.jsonl")));
                 ledger = Some(p);
                 i += 2;
             }
@@ -575,6 +587,105 @@ fn print_scan_json(lpath: &Path, apath: &Path, rep: &ScanReport) {
         rep.promotions_appended,
         rep.alerts_appended,
         rep.marker_mismatch
+    );
+}
+
+// --- policy ------------------------------------------------------------------
+
+/// Audit the ruling the router would obey. NEVER writes the file — the
+/// policy is authored by the operator/warden path (P5 propose->confirm);
+/// the router only obeys, and this command shows exactly WHAT it would
+/// obey. Exit 0 = loadable ruling (file or builtin defaults); exit 1 =
+/// the file exists and is malformed (one finding — routing must refuse);
+/// exit 2 = usage.
+fn run_policy(args: &[String]) -> ExitCode {
+    let mut path: Option<PathBuf> = None;
+    let mut json = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => {
+                json = true;
+                i += 1;
+            }
+            "--policy" if i + 1 < args.len() => {
+                path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--home" if i + 1 < args.len() => {
+                path = Some(PathBuf::from(&args[i + 1]).join("policy.json"));
+                i += 2;
+            }
+            other => {
+                eprintln!("caddis-router policy: unknown argument {other:?}");
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let ppath = path.unwrap_or_else(|| default_home().join("policy.json"));
+    let present = ppath.exists();
+    match load_policy(&ppath) {
+        Ok(policy) => {
+            if json {
+                print_policy_json(&ppath, present, policy.as_ref());
+            } else {
+                print_policy_human(&ppath, present, policy.as_ref());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            let finding = match e {
+                caddis_router::PolicyFileErr::Read(m) => format!("cannot read: {m}"),
+                caddis_router::PolicyFileErr::Malformed(m) => m,
+            };
+            if json {
+                println!(
+                    "{{\"version\":\"{}\",\"policy_file\":\"{}\",\"present\":true,\"policy\":null,\"findings\":[\"{}\"]}}",
+                    VERSION,
+                    esc(&ppath.display().to_string()),
+                    esc(&finding)
+                );
+            } else {
+                println!("policy file: {}", ppath.display());
+                println!("finding 1: {finding}");
+                println!("routing must refuse — fail closed (never fall back to defaults)");
+            }
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn print_policy_human(ppath: &Path, present: bool, policy: Option<&RoutePolicy>) {
+    println!("policy file: {}", ppath.display());
+    if present {
+        println!("source: file (the whole policy — unruled pieces fail closed)");
+    } else {
+        println!("source: builtin conservative defaults (no policy file — F5 priors)");
+    }
+    let resolved = policy.cloned().unwrap_or_default();
+    // What the operator audits is what the router obeys: the exact wire
+    // form the loader consumes, not a parallel rendering.
+    println!("policy: {}", encode_policy(&resolved));
+    if resolved.floors().is_empty() {
+        println!("note: no floors ruled — every class fails NoFloorForClass");
+    }
+    if resolved.ceilings().is_empty() {
+        println!("note: no cost ceilings ruled — escalation stays closed (R1)");
+    }
+}
+
+fn print_policy_json(ppath: &Path, present: bool, policy: Option<&RoutePolicy>) {
+    let resolved = policy.cloned().unwrap_or_default();
+    println!(
+        "{{\"version\":\"{}\",\"policy_file\":\"{}\",\"present\":{},\"source\":\"{}\",\"policy\":{},\"floors\":{},\"ceilings\":{}}}",
+        VERSION,
+        esc(&ppath.display().to_string()),
+        present,
+        if present { "file" } else { "defaults" },
+        encode_policy(&resolved),
+        resolved.floors().len(),
+        resolved.ceilings().len()
     );
 }
 

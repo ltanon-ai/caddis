@@ -74,6 +74,26 @@ pub enum PolicyErr {
     /// empty allowlist is a construction defect, not a lock.
     EmptyAllow(DataClass),
 }
+impl std::fmt::Display for PolicyErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PolicyErr::BadFloor(class) => {
+                write!(f, "floor for class {class:?} outside (0..=1]")
+            }
+            PolicyErr::BadCeiling(class) => {
+                write!(
+                    f,
+                    "cost ceiling for class {class:?} not a positive dollar amount"
+                )
+            }
+            PolicyErr::EmptyAllow(dc) => write!(
+                f,
+                "data class {} has an empty tier allowlist (construction defect)",
+                dc.as_str()
+            ),
+        }
+    }
+}
 
 impl RoutePolicy {
     pub fn floor(&self, class: &str) -> Option<f64> {
@@ -141,6 +161,37 @@ impl RoutePolicy {
             }
         }
         Ok(())
+    }
+
+    /// P4: construct from parts (the policy-file loader's surface). Plain
+    /// data assembly; [`RoutePolicy::validate`] is the caller's next step.
+    pub fn from_parts(
+        floors: BTreeMap<String, f64>,
+        cost_ceilings: BTreeMap<String, f64>,
+        tier_allow: BTreeMap<DataClass, Vec<LaneTier>>,
+        min_samples: u32,
+    ) -> Self {
+        RoutePolicy {
+            floors,
+            cost_ceilings,
+            tier_allow,
+            min_samples,
+        }
+    }
+
+    /// P4: whole-map reads for the encoder/CLI — the policy file is the
+    /// WHOLE ruling, so its surface must see all of it, not one key at a
+    /// time.
+    pub fn floors(&self) -> &BTreeMap<String, f64> {
+        &self.floors
+    }
+
+    pub fn ceilings(&self) -> &BTreeMap<String, f64> {
+        &self.cost_ceilings
+    }
+
+    pub fn tier_allow(&self) -> &BTreeMap<DataClass, Vec<LaneTier>> {
+        &self.tier_allow
     }
 }
 
