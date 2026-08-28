@@ -233,6 +233,21 @@ fn load_syncs_missing_and_stale_view() {
 }
 
 #[test]
+fn stream_digest_matches_the_outside_toolchain() {
+    // THE sha256 of the bytes, computed by python hashlib (2026-08-28) and
+    // pinned here. `stream_digest` once double-hashed (hex(&sha256(..)) —
+    // `hex` is the complete one-shot helper, not an encoder); expectations
+    // derived from the same helpers could never see it. Any external
+    // verifier (world bridge, seed gate, scripting) MUST land on this
+    // exact value for these bytes.
+    let pin = "caddis-deliberate stream digest external-truth pin v1\n";
+    assert_eq!(
+        stream_digest(pin),
+        "4dbc7f49b96aac06b1fadada96e966c0019ba1e5f29bb5b60cb1c3f7f24ed0a2"
+    );
+}
+
+#[test]
 fn view_is_byte_deterministic_per_stream() {
     let cards = vec![
         provider("b"),

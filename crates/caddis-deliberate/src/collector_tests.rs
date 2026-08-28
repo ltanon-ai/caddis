@@ -235,10 +235,14 @@ fn provider_caps_seed_from_the_ruling7_table() {
 fn source_provenance_is_the_catalog_digest_not_a_clock() {
     let fx = fixture();
     let (bytes, _) = render_seed_from(&fx).unwrap();
-    let digest8 = &crate::sha256::hex(&crate::sha256::sha256(fx.as_bytes()))[..8];
+    // THE sha256 of the catalog bytes, computed by an OUTSIDE toolchain
+    // (python hashlib, 2026-08-28) and pinned — the double-hash defect
+    // (hex(&sha256(..))) could never be caught by expectations derived
+    // from the same helpers.
+    let digest8 = "daba1feb";
     assert!(
         bytes.contains(&format!("models.json#{digest8}\"")),
-        "provenance must be the deterministic catalog digest"
+        "provenance must be the single sha256 of the catalog bytes"
     );
     assert!(!bytes.contains("utc"), "no clocks in cards (idempotency)");
 }
@@ -337,5 +341,146 @@ fn openai_codex_base_url_is_an_honest_blank() {
         codex.lane_type,
         crate::LaneType::Http,
         "per-model api counts"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// P4 slice 1: seed_once — the one-time organ home bootstrap
+// ---------------------------------------------------------------------------
+
+use std::fs;
+
+fn seed_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("caddis-dlib-seed-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn view_digest_matches(stream: &std::path::Path, view: &std::path::Path) -> bool {
+    let text = fs::read_to_string(stream).unwrap();
+    let v = crate::json::parse(&fs::read_to_string(view).unwrap()).unwrap();
+    v.get("stream_sha256").and_then(|d| d.as_str())
+        == Some(crate::registry::stream_digest(&text).as_str())
+}
+
+#[test]
+fn seed_once_creates_home_and_proves_the_view() {
+    let dir = seed_dir("create");
+    let (stream, view) = (dir.join("seats.jsonl"), dir.join("seats-view.json"));
+    let out = seed_once(&fixture(), &stream, &view).expect("seed creates");
+    match out {
+        SeedOutcome::Created {
+            rows,
+            skipped,
+            view_synced,
+        } => {
+            assert!(rows > 0, "fixture yields cards");
+            assert_eq!(rows, 9, "4 providers + 5 seats (fixture fact)");
+            assert!(skipped >= 2, "ghost + no-ctx are reported skips");
+            assert!(view_synced, "first sync always writes the view");
+        }
+        other => panic!("expected Created, got {other:?}"),
+    }
+    assert!(
+        view_digest_matches(&stream, &view),
+        "F2: view digest == stream truth"
+    );
+}
+
+#[test]
+fn seed_once_is_idempotent_on_identical_bytes() {
+    let dir = seed_dir("idem");
+    let (stream, view) = (dir.join("seats.jsonl"), dir.join("seats-view.json"));
+    seed_once(&fixture(), &stream, &view).unwrap();
+    let before = fs::read_to_string(&stream).unwrap();
+    let out = seed_once(&fixture(), &stream, &view).expect("re-seed is not an error");
+    match out {
+        SeedOutcome::AlreadySeeded { rows, view_synced } => {
+            assert_eq!(rows, 9);
+            assert!(!view_synced, "identical bytes => view untouched");
+        }
+        other => panic!("expected AlreadySeeded, got {other:?}"),
+    }
+    assert_eq!(
+        fs::read_to_string(&stream).unwrap(),
+        before,
+        "stream never rewritten"
+    );
+}
+
+#[test]
+fn seed_once_refuses_to_clobber_a_diverged_stream() {
+    let dir = seed_dir("refuse");
+    let (stream, view) = (dir.join("seats.jsonl"), dir.join("seats-view.json"));
+    seed_once(&fixture(), &stream, &view).unwrap();
+    // The edit path appended a row: the stream moved on from the seed.
+    let mut evolved = fs::read_to_string(&stream).unwrap();
+    let first_seat = evolved
+        .lines()
+        .find(|l| l.contains("\"class\":\"seat\""))
+        .unwrap()
+        .to_string();
+    let bumped = first_seat.replace("\"state\":\"probing\"", "\"state\":\"live\"");
+    evolved.push_str(&bumped);
+    evolved.push('\n');
+    fs::write(&stream, &evolved).unwrap();
+
+    let err = seed_once(&fixture(), &stream, &view)
+        .expect_err("a diverged stream must never be re-seeded");
+    assert!(err.contains("refused"), "the refusal names its law: {err}");
+    assert_eq!(
+        fs::read_to_string(&stream).unwrap(),
+        evolved,
+        "diverged stream untouched"
+    );
+}
+
+#[test]
+fn seed_once_never_writes_on_malformed_catalog() {
+    let dir = seed_dir("malformed");
+    let (stream, view) = (dir.join("seats.jsonl"), dir.join("seats-view.json"));
+    assert!(seed_once("{\"providers\":", &stream, &view).is_err());
+    assert!(!stream.exists(), "no stream on a refused catalog");
+    assert!(!view.exists(), "no view on a refused catalog");
+}
+
+#[test]
+fn seed_once_two_fresh_homes_are_byte_identical() {
+    let a = seed_dir("det-a");
+    let b = seed_dir("det-b");
+    seed_once(
+        &fixture(),
+        &a.join("seats.jsonl"),
+        &a.join("seats-view.json"),
+    )
+    .unwrap();
+    seed_once(
+        &fixture(),
+        &b.join("seats.jsonl"),
+        &b.join("seats-view.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(a.join("seats.jsonl")).unwrap(),
+        fs::read_to_string(b.join("seats.jsonl")).unwrap(),
+        "deterministic bytes across homes"
+    );
+}
+
+#[test]
+fn seed_once_keeps_the_no_secrets_law_on_disk() {
+    let dir = seed_dir("secrets");
+    let (stream, view) = (dir.join("seats.jsonl"), dir.join("seats-view.json"));
+    seed_once(&fixture(), &stream, &view).unwrap();
+    let rendered = format!(
+        "{}{}",
+        fs::read_to_string(&stream).unwrap(),
+        fs::read_to_string(&view).unwrap()
+    );
+    assert!(!rendered.contains(&raw_key()), "raw key never reaches disk");
+    assert!(
+        rendered.contains("C:/Users/alice/vault/keys/zai.key"),
+        "vault PATH is carried"
     );
 }

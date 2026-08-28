@@ -588,8 +588,16 @@ impl Registry {
 
 /// Digest label for a stream's bytes (hex, full 64 chars — the view
 /// verifies against exactly this).
+///
+/// DEFECT FIX (P4 slice 1, 2026-08-28): this WAS
+/// `hex(&sha256(text))` — a DOUBLE hash, because [`sha256::hex`] is the
+/// complete one-shot helper, not a bytes→hex encoder. The F2 law says the
+/// view carries THE sha256 of the stream bytes; every external verifier
+/// (python tooling, the P4 world bridge, the seed verify-gate) computing
+/// plain sha256 over the stream must land on exactly this value. Pinned
+/// against an outside-toolchain vector in registry_tests.
 pub fn stream_digest(text: &str) -> String {
-    sha256::hex(&sha256::sha256(text.as_bytes()))
+    sha256::hex(text.as_bytes())
 }
 
 /// Registry I/O errors (load/append/resync).

@@ -70,10 +70,11 @@ fn is_pathlike(s: &str) -> bool {
         || t.contains('\\')
 }
 
-/// The deterministic provenance label for a catalog's bytes.
+/// The deterministic provenance label for a catalog's bytes: THE sha256 of
+/// the catalog (single hash — fixed 2026-08-28 with stream_digest; passing
+/// an already-computed digest into `sha256::hex` double-hashed it).
 fn source_label(text: &str) -> String {
-    let d = sha256::hex(&sha256::sha256(text.as_bytes()));
-    format!("models.json#{}", &d[..8])
+    format!("models.json#{}", &sha256::hex(text.as_bytes())[..8])
 }
 
 /// Parse the catalog and derive the seed cards. `text` is the raw
@@ -237,6 +238,88 @@ pub fn render_seed_from(text: &str) -> Result<(String, CollectReport), String> {
     let report = collect(text)?;
     let bytes = crate::registry::render_seed(&report.cards);
     Ok((bytes, report))
+}
+
+// ---------------------------------------------------------------------------
+// P4 slice 1: the one-time organ home bootstrap
+// ---------------------------------------------------------------------------
+
+use std::fs;
+use std::path::Path;
+
+/// What a [`seed_once`] call did. The stream is created EXACTLY ONCE per
+/// home; after that the append-only edit path owns every change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeedOutcome {
+    /// The home held no stream; the seed wrote it and proved the view.
+    Created {
+        rows: usize,
+        skipped: usize,
+        view_synced: bool,
+    },
+    /// The stream already exists and a fresh render of the SAME catalog is
+    /// byte-identical (the idempotency Done-When). Nothing was rewritten.
+    AlreadySeeded { rows: usize, view_synced: bool },
+}
+
+/// Seed the organ home ONCE from the desktop catalog (P4 slice 1).
+///
+/// Law: the collector is the ONE writer allowed to CREATE the initial
+/// stream; a home that already holds a stream is NEVER re-seeded. When a
+/// fresh render of `models_text` is byte-identical to the existing stream
+/// the call is an idempotent no-op (view still proven); when it differs
+/// the call REFUSES — from the seed moment the stream is the truth, and
+/// every change rides the warden-gated propose→confirm path (P1 slice 3),
+/// never a clobber.
+pub fn seed_once(
+    models_text: &str,
+    stream_path: &Path,
+    view_path: &Path,
+) -> Result<SeedOutcome, String> {
+    let (bytes, report) = render_seed_from(models_text)?;
+    let count_rows = |text: &str| text.lines().filter(|l| !l.trim().is_empty()).count();
+    match fs::read_to_string(stream_path) {
+        Ok(have) => {
+            if have != bytes {
+                return Err(format!(
+                    "refused: {} already holds a seeded stream ({} rows) that differs \
+                     from this catalog's render; the stream is the truth — changes ride \
+                     the warden-gated edit path, never a re-seed",
+                    stream_path.display(),
+                    count_rows(&have)
+                ));
+            }
+            let rows = count_rows(&have);
+            let (_, view_synced) = crate::registry::load_and_sync(stream_path, view_path)
+                .map_err(|e| format!("view sync after seed: {e}"))?;
+            Ok(SeedOutcome::AlreadySeeded { rows, view_synced })
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(dir) = stream_path.parent() {
+                fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+            }
+            // Creation is the ONE non-append write the stream ever gets:
+            // tmp sibling + rename, so a crash never leaves a half stream.
+            let mut tmp = stream_path.to_path_buf();
+            let mut name = stream_path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "seats.jsonl".into());
+            name.push_str(".tmp");
+            tmp.set_file_name(name);
+            fs::write(&tmp, &bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+            fs::rename(&tmp, stream_path)
+                .map_err(|e| format!("rename into {}: {e}", stream_path.display()))?;
+            let (_, view_synced) = crate::registry::load_and_sync(stream_path, view_path)
+                .map_err(|e| format!("view sync after seed: {e}"))?;
+            Ok(SeedOutcome::Created {
+                rows: report.cards.len(),
+                skipped: report.skipped.len(),
+                view_synced,
+            })
+        }
+        Err(e) => Err(format!("read {}: {e}", stream_path.display())),
+    }
 }
 
 #[cfg(test)]
