@@ -44,6 +44,17 @@
 //! mid-flight-edit → pause → version-bump → re-dispatch choreography
 //! (archived original, never a hard abort). The F3 pin is [`protocol`]'s
 //! — reused, never a second pin.
+//! P2 slice 2 = [`quorum`]: the QUORUM protocol card v1 — the ladder's
+//! deciding body. Pool selection IS [`disjoint::select_quorum_pool`]
+//! (F9 STRICT reuse — this slice also WIRES the P0-slice-3 `disjoint`
+//! module into the crate; it was authored but never registered, so its
+//! law and tests had never compiled). Floor 2/3 as the strict majority
+//! of the FULL pool, derived never constant; a missing seat is
+//! tolerated only while the floor holds — the ruling carries a literal
+//! `*`, `degraded = true`, and the missing lanes in the VERDICT.md
+//! artifact and the ledger row; below the floor or split = refusal. The
+//! gate, the pin, the clustering, and the verdict digest are the
+//! council card's ONE laws, reused — never second copies.
 //!
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
 //!   never touches a ledger. It classifies DATA and constructs values; the
@@ -76,9 +87,11 @@
 pub mod caps;
 pub mod collector;
 pub mod council;
+pub mod disjoint;
 pub mod edits;
 pub mod json;
 pub mod protocol;
+pub mod quorum;
 pub mod registry;
 pub mod sha256;
 pub mod ttl;

@@ -276,7 +276,9 @@ impl From<ConveningErr> for CouncilErr {
 /// The F1 gate — the exact law `edits::confirm` ships: derive the active
 /// card READ-ONLY from the caller-supplied ledger text; unreadable rows
 /// fail CLOSED as a Defect; no active card is a GateClosed refusal.
-fn gate(warden_ledger_text: &str, actor: &str) -> Result<GateReceipt, CouncilErr> {
+/// `pub(crate)`: the quorum card (P2 slice 2) reuses THIS ONE gate law —
+/// a second copy of the F1 gate is banned.
+pub(crate) fn gate(warden_ledger_text: &str, actor: &str) -> Result<GateReceipt, CouncilErr> {
     if actor.is_empty() {
         return Err(CouncilErr::Defect(
             "actor is transport-served and must be non-empty".into(),
