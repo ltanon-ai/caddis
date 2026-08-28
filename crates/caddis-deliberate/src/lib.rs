@@ -8,7 +8,10 @@
 //! [`protocol::Protocol`] with its F3 PIN (sha256 over canonical bytes,
 //! [`protocol::Convening`] storing it at open time, `verify_pin`
 //! rejecting any later drift) and [`protocol::Verdict`] provenance
-//! (transport-served model, never self-report). Zero I/O, zero daemon
+//! (transport-served model, never self-report). P0 slice 3 = [`disjoint`]:
+//! the F9 STRICT quorum-pool law — selection with the disjoint filter,
+//! the zero-overlap proof, the degraded-day honest refusal — with floors
+//! as DATA proven by a day table. Zero I/O, zero daemon
 //! knowledge, zero warden writes. Ruling provenance per piece:
 //!
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
@@ -38,6 +41,7 @@
 //! (at least one seat from OUTSIDE the Chinese free-provider cluster). The
 //! operator may re-rule it; the floor's meaning never lives in control flow.
 
+pub mod disjoint;
 pub mod protocol;
 pub mod sha256;
 
@@ -113,6 +117,16 @@ pub struct Seat {
     pub caps: u32,
     /// Last liveness probe, if any. DATA only — P0 never probes (F1).
     pub last_probe: Option<SystemTime>,
+}
+
+impl Seat {
+    /// The ONE selection order: free-first ([`CostClass::rank`]), ties
+    /// by `lane_id` (deterministic replay, F1). Shared by council panel
+    /// construction ([`construct_panel`]) and quorum-pool selection
+    /// ([`disjoint::select_quorum_pool`]) — two bodies, one law.
+    pub fn selection_key(&self) -> (u8, &str) {
+        (self.cost_class.rank(), self.lane_id.as_str())
+    }
 }
 
 /// DATA: families inside the Chinese free-provider cluster. The
@@ -215,22 +229,32 @@ impl Panel {
     /// `panel_size` is deliberately NOT checked here: it is a
     /// construction-time constraint (take exactly N), not a panel shape.
     pub fn check_floors(&self, floors: &Floors) -> Result<(), PanelErr> {
-        let families = self.family_count();
-        if families < floors.min_families {
-            return Err(PanelErr::FamiliesFloor {
-                have: families,
-                want: floors.min_families,
-            });
-        }
-        let non_chinese = self.non_chinese_count();
-        if non_chinese < floors.min_non_chinese {
-            return Err(PanelErr::NonChineseFloor {
-                have: non_chinese,
-                want: floors.min_non_chinese,
-            });
-        }
-        Ok(())
+        check_floor_laws(self.family_count(), self.non_chinese_count(), floors)
     }
+}
+
+/// The floors law over ANY seated collection — council panel or quorum
+/// pool: distinct families first, then non-Chinese (fixed refusal order,
+/// deterministic replay). One law, one error language; the counts come
+/// from the caller's counting methods.
+pub(crate) fn check_floor_laws(
+    families: usize,
+    non_chinese: usize,
+    floors: &Floors,
+) -> Result<(), PanelErr> {
+    if families < floors.min_families {
+        return Err(PanelErr::FamiliesFloor {
+            have: families,
+            want: floors.min_families,
+        });
+    }
+    if non_chinese < floors.min_non_chinese {
+        return Err(PanelErr::NonChineseFloor {
+            have: non_chinese,
+            want: floors.min_non_chinese,
+        });
+    }
+    Ok(())
 }
 
 /// Panel construction refusals. Fail-closed: every floor violation is a
@@ -308,12 +332,7 @@ pub fn construct_panel(candidates: &[Seat], floors: &Floors) -> Result<Panel, Pa
             need: floors.panel_size,
         });
     }
-    live.sort_by(|a, b| {
-        a.cost_class
-            .rank()
-            .cmp(&b.cost_class.rank())
-            .then_with(|| a.lane_id.cmp(&b.lane_id))
-    });
+    live.sort_by_key(|s| s.selection_key());
     let panel = Panel {
         seats: live[..floors.panel_size]
             .iter()
