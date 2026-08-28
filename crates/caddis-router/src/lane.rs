@@ -58,6 +58,11 @@ pub enum DataClass {
 pub struct Capability {
     pub quality: f64,
     pub samples: u32,
+    /// P3 decay wiring (QQ2/R9): trailing consecutive RED-TEST fails. At
+    /// [`crate::stats::HYSTERESIS_FAILS`] the lane is DECAYED — out of the
+    /// cheap-selection pool and never an escalation rung. One pass clears
+    /// it (auto-recovery); the floor still guards re-entry.
+    pub consecutive_failures: u32,
 }
 
 /// One dispatch lane as routing data. `alive` is the caller's liveness probe

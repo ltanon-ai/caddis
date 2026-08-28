@@ -30,10 +30,19 @@
 //! O_EXCL lock + fsync, fail-closed), [`stats`] EWMA/floors/cold-start,
 //! [`verify`] honest findings, [`collect`] the retroactive collector over
 //! the council-consult archive (slice 3a: bee-card source landed — the
-//! TinyAGI-history source follows). Still ahead: escalation state machine
-//! (P3), warden policy wiring (P4), in-world room (P5).
+//! TinyAGI-history source follows).
+//!
+//! P3 (2026-08-28): [`escalation`] state machine (O2/F4: RED-TEST fail ->
+//! smallest measured rung strictly above, REDO never resume, MAX_HOPS=3),
+//! R1 static per-class budget ceilings in [`policy`] (no ceiling = fail
+//! closed), QQ2/R9 decay+hysteresis wired through
+//! [`stats::HYSTERESIS_FAILS`] into [`route`] selection and escalation
+//! rungs (one pass heals; floor guards re-entry). Still ahead: warden
+//! policy wiring + dispatch-path adapters + R2 persistent-promotion rows
+//! (P4), in-world room (P5).
 
 pub mod collect;
+pub mod escalation;
 pub mod lane;
 pub mod ledger;
 pub mod lock;
@@ -47,12 +56,13 @@ pub use collect::{
     collect_bees, collect_councils, collect_tinyagi, BeeLane, BeeReport, CollectErr, CollectReport,
     SeatDispatch, TinyagiReport, TASK_CLASS_BEE, TASK_CLASS_CONSULT, TASK_CLASS_TINYAGI,
 };
+pub use escalation::{escalate, Escalation, EscalationCtx, EscalationErr, MAX_HOPS};
 pub use lane::{Capability, DataClass, Lane, LaneTier};
 pub use ledger::{DecisionRow, Ledger, LedgerErr, Loaded, Outcome, OutcomeRow, ParsedRow, Row};
 pub use policy::RoutePolicy;
 pub use profile::{ProfileErr, TaskProfile};
 pub use route::{route, RouteDecision, RouteErr};
-pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, MIN_SAMPLES};
+pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, HYSTERESIS_FAILS, MIN_SAMPLES};
 pub use verify::{verify_path, Finding, VerifyReport};
 
-pub const VERSION: &str = "0.3.0";
+pub const VERSION: &str = "0.4.0";

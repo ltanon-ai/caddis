@@ -21,13 +21,18 @@ pub struct RoutePolicy {
     /// floors are SELECTION thresholds). A class missing here fails closed —
     /// thresholds are never guessed.
     floors: BTreeMap<String, f64>,
+    /// R1 (quorum, overriding QQ1b): task class -> STATIC per-chain budget
+    /// ceiling in USD for escalation. NOT a multiple of a failing lane's
+    /// baseline (2x ~zero makes premium mathematically unreachable). EMPTY
+    /// by default: budgets are operator-set data, never guessed — a class
+    /// without a ceiling fails escalation CLOSED.
+    cost_ceilings: BTreeMap<String, f64>,
     /// data class -> tiers permitted to serve it (F5). Filter runs BEFORE
     /// cost selection; an empty result is fail-closed.
     tier_allow: BTreeMap<DataClass, Vec<LaneTier>>,
     /// F2 sample gate for cheap-pool entry.
     min_samples: u32,
 }
-
 impl Default for RoutePolicy {
     fn default() -> Self {
         let mut floors = BTreeMap::new();
@@ -51,6 +56,8 @@ impl Default for RoutePolicy {
         );
         RoutePolicy {
             floors,
+            // R1: no guessed budgets — empty until the operator sets one.
+            cost_ceilings: BTreeMap::new(),
             tier_allow,
             min_samples: DEFAULT_MIN_SAMPLES,
         }
@@ -61,6 +68,8 @@ impl Default for RoutePolicy {
 pub enum PolicyErr {
     /// Floor outside (0..=1] — malformed policy, never loaded, never routed.
     BadFloor(String),
+    /// R1: a cost ceiling that is not a finite positive dollar amount.
+    BadCeiling(String),
     /// A data class with an empty tier allowlist can only fail closed; an
     /// empty allowlist is a construction defect, not a lock.
     EmptyAllow(DataClass),
@@ -75,6 +84,20 @@ impl RoutePolicy {
     /// write path (P4/P5), not hidden here.
     pub fn set_floor(&mut self, class: &str, floor: f64) {
         self.floors.insert(class.to_string(), floor);
+    }
+
+    /// R1: the class's static per-chain escalation budget (USD). `None`
+    /// means NO CEILING RULED — escalation for the class fails closed
+    /// (budgets are never guessed; the operator sets them via the P5
+    /// propose->confirm surface).
+    pub fn ceiling(&self, class: &str) -> Option<f64> {
+        self.cost_ceilings.get(class).copied()
+    }
+
+    /// R1/F6-adjacent: ALL ceiling adjustments require operator sign-off —
+    /// enforced by the write path (P4/P5), not hidden here.
+    pub fn set_ceiling(&mut self, class: &str, usd: f64) {
+        self.cost_ceilings.insert(class.to_string(), usd);
     }
 
     pub fn permits(&self, data_class: DataClass, tier: LaneTier) -> bool {
@@ -103,6 +126,13 @@ impl RoutePolicy {
         for (class, floor) in &self.floors {
             if !floor.is_finite() || *floor <= 0.0 || *floor > 1.0 {
                 return Err(PolicyErr::BadFloor(class.clone()));
+            }
+        }
+        // R1: a ceiling must be a finite positive dollar amount — anything
+        // else is an unruled budget, and unruled budgets never route.
+        for (class, ceiling) in &self.cost_ceilings {
+            if !ceiling.is_finite() || *ceiling <= 0.0 {
+                return Err(PolicyErr::BadCeiling(class.clone()));
             }
         }
         for (data_class, tiers) in &self.tier_allow {
@@ -147,5 +177,19 @@ mod tests {
         p.set_floor("skeptic", 0.9);
         p.set_tiers(DataClass::Public, vec![]);
         assert_eq!(p.validate(), Err(PolicyErr::EmptyAllow(DataClass::Public)));
+    }
+
+    #[test]
+    fn ceilings_default_empty_and_validate_their_shape() {
+        let mut p = RoutePolicy::default();
+        assert_eq!(p.ceiling("chair"), None, "no guessed budgets by default");
+        p.set_ceiling("chair", 2.5);
+        assert_eq!(p.ceiling("chair"), Some(2.5));
+        assert!(p.validate().is_ok());
+
+        p.set_ceiling("chair", 0.0);
+        assert_eq!(p.validate(), Err(PolicyErr::BadCeiling("chair".into())));
+        p.set_ceiling("chair", f64::NAN);
+        assert_eq!(p.validate(), Err(PolicyErr::BadCeiling("chair".into())));
     }
 }

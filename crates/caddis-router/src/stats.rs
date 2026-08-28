@@ -26,6 +26,11 @@ use crate::ledger::{Loaded, Outcome, Row};
 pub const EWMA_ALPHA: f64 = 0.3;
 /// F2: minimum OWN successful samples before the cheap-selection pool.
 pub const MIN_SAMPLES: u32 = 5;
+/// P3 hysteresis (brief: "2-consecutive-failure decay"): a lane at this
+/// many trailing RED-TEST fails is DECAYED — [`crate::route`] drops it
+/// from the pool, [`crate::escalation`] never climbs onto it. QQ2: one
+/// pass clears the counter (auto-recovery, floor-protected re-entry).
+pub const HYSTERESIS_FAILS: u32 = 2;
 
 /// Measured capability of one lane for one class, folded from outcome rows.
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +177,7 @@ impl CapsReport {
                     Capability {
                         quality: c.ewma,
                         samples: c.samples,
+                        consecutive_failures: c.consecutive_failures,
                     },
                 )
             })

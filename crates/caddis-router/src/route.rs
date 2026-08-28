@@ -75,9 +75,14 @@ pub fn route(
     let measured: Vec<&Lane> = permitted
         .into_iter()
         .filter(|l| {
-            l.caps
-                .get(&profile.class)
-                .is_some_and(|c| c.samples >= policy.min_samples())
+            l.caps.get(&profile.class).is_some_and(|c| {
+                c.samples >= policy.min_samples()
+                    // P3 decay wiring (QQ2/R9): a lane at hysteresis
+                    // (HYSTERESIS_FAILS trailing fails) is DECAYED — out of
+                    // the cheap pool. One pass clears the counter; the
+                    // floor filter below still guards re-entry.
+                    && c.consecutive_failures < crate::stats::HYSTERESIS_FAILS
+            })
         })
         .collect();
     if measured.is_empty() {
@@ -136,7 +141,19 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn cap(quality: f64, samples: u32) -> Capability {
-        Capability { quality, samples }
+        Capability {
+            quality,
+            samples,
+            consecutive_failures: 0,
+        }
+    }
+
+    fn cap_decay(quality: f64, samples: u32, fails: u32) -> Capability {
+        Capability {
+            quality,
+            samples,
+            consecutive_failures: fails,
+        }
     }
 
     fn lane(id: &str, tier: LaneTier, cost: f64, quality: f64, samples: u32) -> Lane {
@@ -334,5 +351,115 @@ mod tests {
         .expect("degraded proceed on the ALIVE one");
         assert_eq!(r.lane_id, "alive-weak");
         assert!(r.degraded);
+    }
+
+    #[test]
+    fn hysteresis_decayed_lane_leaves_the_pool_even_above_floor() {
+        // P3 decay wiring: quality 0.95 CLEARS the chair floor (0.70), but
+        // 2 trailing RED-TEST fails = DECAYED — cheap cannot buy back in.
+        let mut decayed_cheap = lane("decayed-cheap", LaneTier::Free, 0.0001, 0.95, 9);
+        decayed_cheap
+            .caps
+            .insert("chair".to_string(), cap_decay(0.95, 9, 2));
+        let pricey_good = lane("pricey-good", LaneTier::Premium, 0.5, 0.95, 9);
+        let r = route(
+            &profile(),
+            DataClass::Public,
+            &[decayed_cheap, pricey_good.clone()],
+            &RoutePolicy::default(),
+        )
+        .expect("selects the healthy lane");
+        assert_eq!(r.lane_id, "pricey-good");
+        assert!(!r.degraded);
+
+        // One fail is NOT decay — hysteresis demands two consecutive.
+        let mut one_fail = lane("one-fail", LaneTier::Free, 0.0001, 0.95, 9);
+        one_fail
+            .caps
+            .insert("chair".to_string(), cap_decay(0.95, 9, 1));
+        let r2 = route(
+            &profile(),
+            DataClass::Public,
+            &[one_fail.clone(), pricey_good.clone()],
+            &RoutePolicy::default(),
+        )
+        .expect("one fail still selectable");
+        assert_eq!(r2.lane_id, "one-fail");
+    }
+
+    #[test]
+    fn decayed_lane_alone_degrades_or_fails_like_any_unmeasured_lane() {
+        let mut decayed = lane("decayed", LaneTier::Local, 0.0, 0.95, 9);
+        decayed
+            .caps
+            .insert("chair".to_string(), cap_decay(0.95, 9, 2));
+        // The ONLY measured lane is decayed -> the measured pool is empty:
+        // honest NoMeasuredLane (the P4 alert reads the caps report to say
+        // WHY — decay, not cold-start).
+        assert_eq!(
+            route(
+                &profile(),
+                DataClass::Public,
+                &[decayed],
+                &RoutePolicy::default()
+            ),
+            Err(RouteErr::NoMeasuredLane)
+        );
+    }
+
+    #[test]
+    fn one_pass_heals_the_fold_end_to_end() {
+        // QQ2 auto-recovery through the REAL fold: 4 passes, 2 fails
+        // (decayed, EWMA 0.49 < floor 0.70 anyway), then 2 passes heal the
+        // counter (0) AND the EWMA to 0.3 + 0.7*0.643 = 0.750 >= floor —
+        // the lane re-enters selection with the floor still guarding it.
+        let mut lines = Vec::new();
+        let mut seq = 0;
+        for pass in [true, true, true, true, false, false, true, true] {
+            seq += 1;
+            lines.push(format!(
+                "{{\"seq\":{seq},\"ts\":\"t\",\"kind\":\"outcome\",\"card_id\":\"c\",\
+                 \"task_class\":\"chair\",\"lane_id\":\"healer\",\"model\":\"m\",\
+                 \"cost_tokens\":1,\"cost_usd_est\":0.001,\"latency_ms\":10,\
+                 \"verify_outcome\":\"{}\",\"escalated_to\":null}}",
+                if pass { "pass" } else { "fail" }
+            ));
+        }
+        let loaded = crate::ledger::parse_stream(&lines.join("\n"));
+        let caps = crate::stats::CapsReport::from_rows(&loaded);
+        let mut lane = Lane {
+            id: "healer".to_string(),
+            family: "test".to_string(),
+            tier: LaneTier::Free,
+            alive: true,
+            cost_per_task_usd: 0.001,
+            caps: caps.p1_caps("healer"),
+        };
+        let healed = lane.caps.get("chair").expect("folded");
+        assert_eq!(healed.consecutive_failures, 0);
+        assert!(healed.quality >= 0.70, "ewma {} >= floor", healed.quality);
+        let r = route(
+            &profile(),
+            DataClass::Public,
+            std::slice::from_ref(&lane),
+            &RoutePolicy::default(),
+        )
+        .expect("healed lane selected");
+        assert_eq!(r.lane_id, "healer");
+        assert!(!r.degraded);
+
+        // And mid-decay (after exactly the 2 fails) the SAME lane is out.
+        let mid = crate::ledger::parse_stream(&lines[..6].join("\n"));
+        let mid_caps = crate::stats::CapsReport::from_rows(&mid);
+        lane.caps = mid_caps.p1_caps("healer");
+        assert_eq!(
+            route(
+                &profile(),
+                DataClass::Public,
+                std::slice::from_ref(&lane),
+                &RoutePolicy::default()
+            ),
+            Err(RouteErr::NoMeasuredLane)
+        );
     }
 }
