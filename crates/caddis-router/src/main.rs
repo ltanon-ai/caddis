@@ -16,15 +16,17 @@
 //! `collect` appends telemetry rows only — it never dispatches anything.
 
 use caddis_router::{
-    collect_bees, collect_councils, verify_path, BeeReport, CollectReport, Ledger, VERSION,
+    collect_bees, collect_councils, collect_tinyagi, verify_path, BeeReport, CollectReport, Ledger,
+    TinyagiReport, VERSION,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
-  caddis-router verify       [--ledger <path>] [--home <dir>] [--json]
-  caddis-router collect      [--councils <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
-  caddis-router collect-bees [--cards <path>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]";
+  caddis-router verify          [--ledger <path>] [--home <dir>] [--json]
+  caddis-router collect         [--councils <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
+  caddis-router collect-bees    [--cards <path>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
+  caddis-router collect-tinyagi [--tinyagi <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -35,6 +37,7 @@ fn main() -> ExitCode {
     match args[0].as_str() {
         "verify" => run_verify(&args[1..]),
         "collect-bees" => run_collect_bees(&args[1..]),
+        "collect-tinyagi" => run_collect_tinyagi(&args[1..]),
         "collect" => run_collect(&args[1..]),
         "--version" => {
             println!("caddis-router {VERSION}");
@@ -53,6 +56,10 @@ fn main() -> ExitCode {
                 "  collect-bees: replay bee cards (BEE-CARDS.json) as outcome rows (idempotent)"
             );
             println!("    --cards <path>    bee card file (default the sergeant state home)");
+            println!("    --dry-run         report what would land, append nothing");
+            println!("  collect-tinyagi: replay trajectory runs as outcome rows (idempotent)");
+            println!("    --tinyagi <dir>   tinyagi home (default ~/.tinyagi; brackets from");
+            println!("                      settings.json snapshots, provable edges only)");
             println!("    --dry-run         report what would land, append nothing");
             ExitCode::SUCCESS
         }
@@ -354,6 +361,115 @@ fn print_collect_bees_json(cards: &Path, lpath: &Path, rep: &BeeReport) {
         rep.skipped_not_done,
         rep.skipped_no_id,
         rep.skipped_no_lane,
+        rep.skipped_already
+    );
+}
+
+// --- collect-tinyagi --------------------------------------------------------
+
+fn run_collect_tinyagi(args: &[String]) -> ExitCode {
+    let mut ledger: Option<PathBuf> = None;
+    let mut tinyagi: Option<PathBuf> = None;
+    let mut json = false;
+    let mut dry = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--tinyagi" if i + 1 < args.len() => {
+                tinyagi = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--dry-run" => {
+                dry = true;
+                i += 1;
+            }
+            _ => match scan_common(args, &mut i) {
+                Ok(Flag::Ledger(p)) => ledger = Some(p),
+                Ok(Flag::Json) => json = true,
+                Err(other) => {
+                    eprintln!("caddis-router collect-tinyagi: unknown argument {other:?}");
+                    eprintln!("{USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
+        }
+    }
+    let tinyagi = tinyagi.unwrap_or_else(|| {
+        std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".tinyagi")
+    });
+    let lpath = ledger.unwrap_or_else(|| default_home().join("ledger.jsonl"));
+    match collect_tinyagi(&tinyagi, &Ledger::new(&lpath), dry) {
+        Ok(rep) => {
+            if json {
+                print_collect_tinyagi_json(&tinyagi, &lpath, &rep);
+            } else {
+                print_collect_tinyagi_human(&tinyagi, &lpath, &rep);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("caddis-router: collect-tinyagi {}: {e}", tinyagi.display());
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn print_collect_tinyagi_human(tinyagi: &Path, lpath: &Path, rep: &TinyagiReport) {
+    println!("tinyagi home: {}", tinyagi.display());
+    println!("ledger: {}", lpath.display());
+    println!(
+        "snapshots: {} ({} with roster) provable brackets: {}{}",
+        rep.snapshots_seen,
+        rep.snapshots_roster,
+        rep.brackets_provable,
+        if rep.dry_run {
+            " [dry-run: nothing written]"
+        } else {
+            ""
+        }
+    );
+    println!(
+        "records: {} runs + {} failed -> rows: {} ({} pass, {} fail)",
+        rep.runs_seen, rep.failed_seen, rep.rows, rep.passes, rep.fails
+    );
+    println!(
+        "skipped: {} no-id, {} no-agent, {} no-bracket, {} empty-roster bracket (dark zone), {} no-lane, {} no-outcome, {} bad-line, {} already",
+        rep.skipped_no_id,
+        rep.skipped_no_agent,
+        rep.skipped_no_bracket,
+        rep.skipped_empty_roster,
+        rep.skipped_no_lane,
+        rep.skipped_no_outcome,
+        rep.skipped_bad_line,
+        rep.skipped_already
+    );
+}
+
+fn print_collect_tinyagi_json(tinyagi: &Path, lpath: &Path, rep: &TinyagiReport) {
+    println!(
+        "{{\"version\":\"{}\",\"tinyagi\":\"{}\",\"ledger\":\"{}\",\"dry_run\":{},\"snapshots_seen\":{},\"snapshots_roster\":{},\"brackets_provable\":{},\"runs_seen\":{},\"failed_seen\":{},\"rows\":{},\"passes\":{},\"fails\":{},\"skipped\":{{\"no_id\":{},\"no_agent\":{},\"no_bracket\":{},\"empty_roster\":{},\"no_lane\":{},\"no_outcome\":{},\"bad_line\":{},\"already\":{}}}}}",
+        VERSION,
+        esc(&tinyagi.display().to_string()),
+        esc(&lpath.display().to_string()),
+        rep.dry_run,
+        rep.snapshots_seen,
+        rep.snapshots_roster,
+        rep.brackets_provable,
+        rep.runs_seen,
+        rep.failed_seen,
+        rep.rows,
+        rep.passes,
+        rep.fails,
+        rep.skipped_no_id,
+        rep.skipped_no_agent,
+        rep.skipped_no_bracket,
+        rep.skipped_empty_roster,
+        rep.skipped_no_lane,
+        rep.skipped_no_outcome,
+        rep.skipped_bad_line,
         rep.skipped_already
     );
 }

@@ -425,6 +425,339 @@ pub fn collect_bees(
 }
 
 // ---------------------------------------------------------------------------
+// TinyAGI-history source (P2 remainder slice 3b) — runs.jsonl/failed.jsonl
+// replay under PROVABLE roster brackets
+// ---------------------------------------------------------------------------
+
+/// Task class for TinyAGI trajectory runs (api/telegram dispatches).
+pub const TASK_CLASS_TINYAGI: &str = "tinyagi-run";
+
+/// One `settings.json`-family snapshot: the roster it carries, the mtime
+/// anchoring its validity window, and whether it is the LIVE
+/// `settings.json` (whose window runs from its mtime to +inf).
+#[derive(Debug)]
+struct Snapshot {
+    mtime_ms: i64,
+    /// agent -> (provider, model), verbatim. Empty = no usable roster —
+    /// the file still marks a CHANGE POINT (restore fragment, test
+    /// fixture) and breaks the bracket chain after it.
+    roster: BTreeMap<String, (String, String)>,
+    is_current: bool,
+}
+
+/// A roster validity window `(start_ms, end_ms]` (end = i64::MAX for the
+/// live settings). `start_ms = None` = left edge NOT provable: the
+/// previous snapshot carried no roster, so when this content went live is
+/// unobservable. Records in an unprovable window are counted skips — the
+/// transport-identity law forbids reconstructing the lane by inference.
+#[derive(Debug)]
+struct Bracket {
+    start_ms: Option<i64>,
+    end_ms: i64,
+    roster: BTreeMap<String, (String, String)>,
+}
+
+/// Honest counts for one tinyagi collect run (model-voice convention).
+#[derive(Debug, Default, PartialEq)]
+pub struct TinyagiReport {
+    /// Snapshot files examined (`settings.json` + `settings.json.*`).
+    pub snapshots_seen: u32,
+    /// Snapshots with a usable roster (non-empty agent->model map).
+    pub snapshots_roster: u32,
+    /// Brackets with a provable start edge.
+    pub brackets_provable: u32,
+    /// Records examined from `runs.jsonl`.
+    pub runs_seen: u32,
+    /// Records examined from `failed.jsonl`.
+    pub failed_seen: u32,
+    /// Outcome rows appended (under `dry_run`: that WOULD be appended).
+    pub rows: u32,
+    pub passes: u32,
+    pub fails: u32,
+    /// Record skipped: no usable `id` string.
+    pub skipped_no_id: u32,
+    /// Record skipped: no `agent` string (no lane candidate at all).
+    pub skipped_no_agent: u32,
+    /// Record skipped: no `created` timestamp, or the timestamp falls in
+    /// no bracket at all (a chain gap between snapshots).
+    pub skipped_no_bracket: u32,
+    /// Record skipped: its bracket exists but carries NO roster (the
+    /// dark-zone window of a non-roster snapshot — e.g. the real
+    /// 2026-06-23..07-21 restore window).
+    pub skipped_empty_roster: u32,
+    /// Record skipped: bracket roster exists but the agent is not in it
+    /// (seat not configured at that time).
+    pub skipped_no_lane: u32,
+    /// Record skipped: no decidable outcome (meta missing, or neither a
+    /// recorded failure nor a non-empty response).
+    pub skipped_no_outcome: u32,
+    /// Line skipped: not a JSON object (torn write).
+    pub skipped_bad_line: u32,
+    /// Row skipped: (card_id, lane_id) already an outcome row.
+    pub skipped_already: u32,
+    pub dry_run: bool,
+}
+
+/// Parse a settings-family text into an agent roster. Any structural
+/// failure degrades to an empty map — never an error.
+fn parse_roster(text: &str) -> BTreeMap<String, (String, String)> {
+    let mut out = BTreeMap::new();
+    let Ok(top) = split_members(text) else {
+        return out;
+    };
+    let Some((_, agents_raw)) = top.iter().find(|(k, _)| k == "agents") else {
+        return out;
+    };
+    let Ok(agents) = split_members(agents_raw.trim()) else {
+        return out;
+    };
+    for (agent, vtext) in agents {
+        if let Some(leaf) = leaf_members(&vtext) {
+            if let (Some(p), Some(m)) = (str_val(&leaf, "provider"), str_val(&leaf, "model")) {
+                if !p.is_empty() && !m.is_empty() {
+                    out.insert(agent, (p, m));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// mtime of a file as epoch milliseconds. Unreadable metadata sorts the
+/// snapshot first with an empty window — inert, never fatal.
+fn mtime_ms(p: &Path) -> i64 {
+    fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(i64::MIN)
+}
+
+/// Build validity windows from mtime-ordered snapshots. Convention (the
+/// transport semantics of the settings backups): a `settings.json.*`
+/// backup captures the state live immediately BEFORE its mtime; the live
+/// `settings.json` went live AT its mtime. A backup's window start is
+/// provable only when the PREVIOUS snapshot carries a full roster — a
+/// non-roster snapshot marks an unobservable change and voids the next
+/// window's start edge (None). Content is never diffed or guessed.
+fn build_brackets(mut snaps: Vec<Snapshot>) -> Vec<Bracket> {
+    snaps.sort_by_key(|s| s.mtime_ms);
+    let mut out = Vec::with_capacity(snaps.len());
+    for (i, s) in snaps.iter().enumerate() {
+        let (start_ms, end_ms) = if s.is_current {
+            (Some(s.mtime_ms), i64::MAX)
+        } else if i == 0 {
+            (Some(i64::MIN), s.mtime_ms)
+        } else {
+            let prev = &snaps[i - 1];
+            (
+                (!prev.roster.is_empty()).then_some(prev.mtime_ms),
+                s.mtime_ms,
+            )
+        };
+        out.push(Bracket {
+            start_ms,
+            end_ms,
+            roster: s.roster.clone(),
+        });
+    }
+    out
+}
+
+/// The unique bracket whose provable window contains `ts`, if any.
+fn bracket_for(brackets: &[Bracket], ts: i64) -> Option<&Bracket> {
+    brackets
+        .iter()
+        .find(|b| b.start_ms.is_some_and(|s| s < ts) && ts <= b.end_ms)
+}
+
+/// Replay one trajectory line (runs.jsonl / failed.jsonl share the
+/// record shape) into an outcome row, or count the honest skip.
+fn replay_traj_line(
+    line: &str,
+    brackets: &[Bracket],
+    seen: &BTreeSet<(String, String)>,
+    rep: &mut TinyagiReport,
+) -> Option<Row> {
+    let Ok(fields) = split_members(line) else {
+        rep.skipped_bad_line += 1;
+        return None;
+    };
+    let id = str_val(&fields, "id").unwrap_or_default();
+    if id.is_empty() {
+        rep.skipped_no_id += 1;
+        return None;
+    }
+    let agent = str_val(&fields, "agent").unwrap_or_default();
+    if agent.is_empty() {
+        rep.skipped_no_agent += 1;
+        return None;
+    }
+    // `created` is an epoch-ms number; absent = never bracketable.
+    let ts = match num_val(&fields, "created") {
+        Some(t) => t,
+        None => {
+            rep.skipped_no_bracket += 1;
+            return None;
+        }
+    };
+    let br = match bracket_for(brackets, ts) {
+        Some(b) => b,
+        None => {
+            rep.skipped_no_bracket += 1;
+            return None;
+        }
+    };
+    if br.roster.is_empty() {
+        rep.skipped_empty_roster += 1;
+        return None;
+    }
+    let (provider, model) = match br.roster.get(&agent) {
+        Some(pm) => pm,
+        None => {
+            rep.skipped_no_lane += 1;
+            return None;
+        }
+    };
+    // Outcome contract: a recorded failure is a Fail; a success needs a
+    // non-empty response to prove the run produced anything. Anything
+    // else (no meta, empty response without a failure flag) carries no
+    // quality signal — counted, never guessed.
+    let meta = fields
+        .iter()
+        .find(|(k, _)| k == "meta")
+        .and_then(|(_, v)| leaf_members(v));
+    let outcome = match (
+        meta.as_ref().and_then(|m| bool_val(m, "isFailure")),
+        meta.as_ref().and_then(|m| num_val(m, "responseLength")),
+    ) {
+        (Some(true), _) => Outcome::Fail,
+        (Some(false), Some(rl)) if rl > 0 => Outcome::Pass,
+        _ => {
+            rep.skipped_no_outcome += 1;
+            return None;
+        }
+    };
+    let card_id = format!("tinyagi-run/{id}");
+    let lane_id = format!("{provider}/{model}");
+    if seen.contains(&(card_id.clone(), lane_id.clone())) {
+        rep.skipped_already += 1;
+        return None;
+    }
+    Some(Row::Outcome(OutcomeRow {
+        card_id,
+        task_class: TASK_CLASS_TINYAGI.to_string(),
+        lane_id,
+        model: model.clone(),
+        // Not recorded in the trajectory trail — never "free".
+        cost_tokens: 0,
+        cost_usd_est: 0.0,
+        latency_ms: 0,
+        outcome,
+        escalated_to: None,
+    }))
+}
+
+/// Replay the TinyAGI trajectory trail (`~/.tinyagi/trajectories`) as
+/// outcome rows into `ledger`, resolving each record's lane from the
+/// PROVABLE roster bracket covering its timestamp.
+///
+/// Laws encoded (the slice-2/3a identity law applied to trajectories):
+/// - **Identity from transport-written fields only** — `agent`, `created`,
+///   and the settings-snapshot chain. `runs.jsonl` records carry NO model
+///   field, so the lane comes from point-in-time roster brackets; a
+///   bracket exists only where consecutive snapshots prove it. Dark-zone
+///   records (the real home: every 2026-06-23..08-08 record, bracketed
+///   only by a test-fixture restore snapshot) are COUNTED skips — never
+///   mapped by era-inference from agent names.
+/// - **Outcome = the record's own contract**: `meta.isFailure` true =
+///   Fail; false with `responseLength > 0` = Pass; anything else carries
+///   no signal and skips.
+/// - **runs.jsonl and failed.jsonl share the engine**: a failed record
+///   with full identity and a provable bracket is a legitimate Fail row;
+///   the real failed trail is mostly agent-less and says so in counts.
+/// - **Zero-cost honesty:** the trail records no tokens/usd/latency.
+/// - **Idempotency:** (card_id, lane_id) already present -> skip.
+pub fn collect_tinyagi(
+    tinyagi_home: &Path,
+    ledger: &Ledger,
+    dry_run: bool,
+) -> Result<TinyagiReport, CollectErr> {
+    let mut rep = TinyagiReport {
+        dry_run,
+        ..TinyagiReport::default()
+    };
+
+    let seen: BTreeSet<(String, String)> = ledger
+        .load()?
+        .rows
+        .iter()
+        .filter_map(|pr| match &pr.row {
+            Row::Outcome(o) => Some((o.card_id.clone(), o.lane_id.clone())),
+            _ => None,
+        })
+        .collect();
+
+    // Roster snapshots: settings.json (live) + settings.json.* (backups).
+    let mut snaps: Vec<Snapshot> = Vec::new();
+    for entry in fs::read_dir(tinyagi_home)? {
+        let entry = entry?;
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if !(name == "settings.json" || name.starts_with("settings.json.")) {
+            continue;
+        }
+        let path = entry.path();
+        let roster = fs::read_to_string(&path)
+            .map(|text| parse_roster(&text))
+            .unwrap_or_default();
+        snaps.push(Snapshot {
+            mtime_ms: mtime_ms(&path),
+            roster,
+            is_current: name == "settings.json",
+        });
+    }
+    rep.snapshots_seen = snaps.len() as u32;
+    rep.snapshots_roster = snaps.iter().filter(|s| !s.roster.is_empty()).count() as u32;
+    let brackets = build_brackets(snaps);
+    rep.brackets_provable = brackets.iter().filter(|b| b.start_ms.is_some()).count() as u32;
+
+    for file in ["runs.jsonl", "failed.jsonl"] {
+        let text = match fs::read_to_string(tinyagi_home.join("trajectories").join(file)) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        let mut seen_here = 0u32;
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            seen_here += 1;
+            if let Some(row) = replay_traj_line(line, &brackets, &seen, &mut rep) {
+                if !dry_run {
+                    ledger.append(&row)?;
+                }
+                rep.rows += 1;
+                match &row {
+                    Row::Outcome(o) => match o.outcome {
+                        Outcome::Pass => rep.passes += 1,
+                        Outcome::Fail => rep.fails += 1,
+                    },
+                    _ => unreachable!("replay_traj_line only yields outcome rows"),
+                }
+            }
+        }
+        match file {
+            "runs.jsonl" => rep.runs_seen = seen_here,
+            _ => rep.failed_seen = seen_here,
+        }
+    }
+    Ok(rep)
+}
+// ---------------------------------------------------------------------------
 // Trail parsers — one nesting level, the only shape MANIFEST/VERDICTS have
 // ---------------------------------------------------------------------------
 
@@ -480,6 +813,26 @@ fn leaf_members(vtext: &str) -> Option<Vec<(String, String)>> {
     } else {
         None
     }
+}
+
+/// Decode one member's raw value as a JSON bool literal, if it is one.
+fn bool_val(members: &[(String, String)], key: &str) -> Option<bool> {
+    match members.iter().find(|(k, _)| k == key)?.1.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Decode one member's raw value as an i64 number, if it is one.
+fn num_val(members: &[(String, String)], key: &str) -> Option<i64> {
+    members
+        .iter()
+        .find(|(k, _)| k == key)?
+        .1
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// Decode one member's raw value as a JSON string literal, if it is one.

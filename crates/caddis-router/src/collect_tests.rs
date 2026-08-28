@@ -459,3 +459,267 @@ fn bee_missing_or_malformed_file_is_a_hard_error() {
     fs::write(&notarr, "{\"cards\": 3}").unwrap();
     assert!(collect_bees(&notarr, &ledger, false).is_err());
 }
+
+// --- tinyagi trajectory collector (P2R-S3b) ----------------------------------
+
+/// Base timestamp for bracket tests (epoch ms).
+const TA_T1: i64 = 1_750_000_000_000;
+const TA_T2: i64 = TA_T1 + 10_000_000;
+const TA_T3: i64 = TA_T2 + 10_000_000;
+const TA_TCUR: i64 = TA_T3 + 10_000_000;
+
+fn tinyagi_home(tag: &str) -> PathBuf {
+    let d = tmp(tag).join("home");
+    fs::create_dir_all(d.join("trajectories")).unwrap();
+    d
+}
+
+fn set_mtime(p: &Path, ms: i64) {
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms as u64);
+    std::fs::File::options()
+        .write(true)
+        .open(p)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+}
+
+/// Write one settings-family snapshot with the given agents JSON body.
+fn snap(home: &Path, name: &str, agents: &str, mtime_ms: i64) {
+    let p = home.join(name);
+    fs::write(
+        &p,
+        format!("{{\"agents\":{agents},\"custom_providers\":{{}}}}"),
+    )
+    .unwrap();
+    set_mtime(&p, mtime_ms);
+}
+
+fn run_line(id: &str, agent: &str, created: i64, is_failure: bool, rl: i64) -> String {
+    format!(
+        "{{\"agent\":\"{agent}\",\"channel\":\"api\",\"created\":{created},\"id\":\"{id}\",\"meta\":{{\"isFailure\":{is_failure},\"responseLength\":{rl}}},\"turns\":[{{\"role\":\"user\",\"content\":\"x\"}}]}}"
+    )
+}
+
+const R1: &str = "{\"alpha\":{\"provider\":\"prov1\",\"model\":\"m1\"}}";
+const R2: &str = "{\"alpha\":{\"provider\":\"prov2\",\"model\":\"m2\"},\"beta\":{\"provider\":\"prov2\",\"model\":\"m2\"}}";
+const RC: &str = "{\"alpha\":{\"provider\":\"prov1\",\"model\":\"m1\"},\"beta\":{\"provider\":\"prov2\",\"model\":\"m2\"},\"gamma\":{\"provider\":\"prov3\",\"model\":\"gm3\"}}";
+
+#[test]
+fn tinyagi_bracket_provability() {
+    let snaps = vec![
+        Snapshot {
+            mtime_ms: TA_T3,
+            roster: parse_roster(&format!("{{\"agents\":{R2}}}")),
+            is_current: false,
+        },
+        Snapshot {
+            mtime_ms: TA_T1,
+            roster: parse_roster(&format!("{{\"agents\":{R1}}}")),
+            is_current: false,
+        },
+        Snapshot {
+            mtime_ms: TA_T2,
+            roster: parse_roster("{\"custom_providers\":{}}"), // restore fragment
+            is_current: false,
+        },
+        Snapshot {
+            mtime_ms: TA_TCUR,
+            roster: parse_roster(&format!("{{\"agents\":{RC}}}")),
+            is_current: true,
+        },
+    ];
+    let b = build_brackets(snaps);
+    assert_eq!(b.len(), 4);
+    // (MIN, T1] roster R1 — provable
+    assert_eq!(b[0].start_ms, Some(i64::MIN));
+    assert_eq!(b[0].end_ms, TA_T1);
+    assert_eq!(b[0].roster.len(), 1);
+    // (T1, T2] empty roster (restore window) — provable edge, dark content
+    assert_eq!(b[1].start_ms, Some(TA_T1));
+    assert_eq!(b[1].end_ms, TA_T2);
+    assert!(b[1].roster.is_empty());
+    // start NOT provable: previous snapshot carried no roster
+    assert_eq!(b[2].start_ms, None);
+    assert_eq!(b[2].end_ms, TA_T3);
+    // live settings: [TCUR, +inf)
+    assert_eq!(b[3].start_ms, Some(TA_TCUR));
+    assert_eq!(b[3].end_ms, i64::MAX);
+    assert_eq!(b.iter().filter(|x| x.start_ms.is_some()).count(), 3);
+}
+
+#[test]
+fn tinyagi_collect_rows_and_skips() {
+    let home = tinyagi_home("ta1");
+    snap(&home, "settings.json.bak-a", R1, TA_T1);
+    snap(&home, "settings.json", RC, TA_TCUR);
+    let lines = [
+        run_line("r_pass", "alpha", TA_T1 - 1000, false, 500), // R1 window -> Pass
+        run_line("r_fail", "alpha", TA_T1 - 2000, true, 0),    // R1 window -> Fail
+        run_line("r_cur", "gamma", TA_TCUR + 5000, false, 40), // current bracket
+        run_line("r_nolane", "ghost", TA_T1 - 3000, false, 10), // agent not in R1
+        // no outcome signal: isFailure absent
+        "{\"agent\":\"alpha\",\"channel\":\"api\",\"created\":0,\"id\":\"r_noout\",\"meta\":{\"responseLength\":9},\"turns\":[]}".replace(
+            "\"created\":0",
+            &format!("\"created\":{}", TA_T1 - 4000),
+        ),
+        "{\"agent\":\"alpha\",\"channel\":\"api\",\"created\":1,\"id\":\"\",\"meta\":{\"isFailure\":false,\"responseLength\":9},\"turns\":[]}".replace(
+            "\"created\":1",
+            &format!("\"created\":{}", TA_T1 - 5000),
+        ), // no id
+        "{\"channel\":\"api\",\"created\":2,\"id\":\"r_noagent\",\"meta\":{\"isFailure\":false,\"responseLength\":9},\"turns\":[]}".replace(
+            "\"created\":2",
+            &format!("\"created\":{}", TA_T1 - 6000),
+        ), // no agent
+        run_line("r_gap", "alpha", TA_T1 + 5000, false, 10), // between snapshots -> no bracket
+        "not json at all".to_string(),                       // torn line
+    ];
+    fs::write(
+        home.join("trajectories").join("runs.jsonl"),
+        lines.join("\n") + "\n",
+    )
+    .unwrap();
+    fs::write(
+        home.join("trajectories").join("failed.jsonl"),
+        [
+            run_line("f_row", "alpha", TA_T1 - 7000, true, 0), // provable Fail row
+            "{\"channel\":\"api\",\"created\":3,\"id\":\"f_noagent\",\"meta\":{\"isFailure\":true,\"responseLength\":0},\"turns\":[]}".replace(
+                "\"created\":3",
+                &format!("\"created\":{}", TA_T1 - 8000),
+            ),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+
+    let root = tmp("ta1-led");
+    let ledger = Ledger::new(root.join("ledger.jsonl"));
+    let rep = collect_tinyagi(&home, &ledger, false).unwrap();
+
+    assert_eq!(rep.snapshots_seen, 2);
+    assert_eq!(rep.snapshots_roster, 2);
+    assert_eq!(rep.brackets_provable, 2);
+    assert_eq!(rep.runs_seen, 9);
+    assert_eq!(rep.failed_seen, 2);
+    assert_eq!(rep.rows, 4);
+    assert_eq!(rep.passes, 2);
+    assert_eq!(rep.fails, 2);
+    assert_eq!(rep.skipped_no_id, 1);
+    assert_eq!(rep.skipped_no_agent, 2);
+    assert_eq!(rep.skipped_no_bracket, 1);
+    assert_eq!(rep.skipped_empty_roster, 0);
+    assert_eq!(rep.skipped_no_lane, 1);
+    assert_eq!(rep.skipped_no_outcome, 1);
+    assert_eq!(rep.skipped_bad_line, 1);
+    assert_eq!(rep.skipped_already, 0);
+
+    let rows = &ledger.load().unwrap().rows;
+    assert_eq!(rows.len(), 4);
+    let lane_of = |cid: &str| {
+        rows.iter()
+            .find_map(|pr| match &pr.row {
+                Row::Outcome(o) if o.card_id == cid => {
+                    Some((o.lane_id.clone(), o.model.clone(), o.outcome))
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    // R1 window resolved from the BACKUP roster, not the live one.
+    assert_eq!(
+        lane_of("tinyagi-run/r_pass"),
+        ("prov1/m1".into(), "m1".into(), Outcome::Pass)
+    );
+    assert_eq!(
+        lane_of("tinyagi-run/r_fail"),
+        ("prov1/m1".into(), "m1".into(), Outcome::Fail)
+    );
+    assert_eq!(
+        lane_of("tinyagi-run/r_cur"),
+        ("prov3/gm3".into(), "gm3".into(), Outcome::Pass)
+    );
+    // failed.jsonl shares the engine: provable identity -> a real Fail row.
+    assert_eq!(
+        lane_of("tinyagi-run/f_row"),
+        ("prov1/m1".into(), "m1".into(), Outcome::Fail)
+    );
+}
+
+#[test]
+fn tinyagi_idempotent() {
+    let home = tinyagi_home("ta2");
+    snap(&home, "settings.json.bak-a", R1, TA_T1);
+    snap(&home, "settings.json", RC, TA_TCUR);
+    fs::write(
+        home.join("trajectories").join("runs.jsonl"),
+        run_line("x1", "alpha", TA_T1 - 1000, false, 10) + "\n",
+    )
+    .unwrap();
+    let root = tmp("ta2-led");
+    let ledger = Ledger::new(root.join("ledger.jsonl"));
+    let first = collect_tinyagi(&home, &ledger, false).unwrap();
+    assert_eq!(first.rows, 1);
+    let again = collect_tinyagi(&home, &ledger, false).unwrap();
+    assert_eq!(again.rows, 0);
+    assert_eq!(again.skipped_already, 1);
+    assert_eq!(ledger.load().unwrap().rows.len(), 1);
+}
+
+#[test]
+fn tinyagi_restore_dark_zone() {
+    let home = tinyagi_home("ta3");
+    snap(&home, "settings.json.bak-a", R1, TA_T1);
+    // restore fragment FIRST (dark change point), full backup AFTER it:
+    // the fragment's window carries no roster, and the R2 window that
+    // follows loses its provable start.
+    let p = home.join("settings.json.bak-frag");
+    fs::write(&p, "{\"custom_providers\":{}}").unwrap();
+    set_mtime(&p, TA_T2);
+    snap(&home, "settings.json.bak-mid", R2, TA_T3);
+    snap(&home, "settings.json", RC, TA_TCUR);
+    fs::write(
+        home.join("trajectories").join("runs.jsonl"),
+        [
+            run_line("ok", "alpha", TA_T1 - 1000, false, 5), // provable R1
+            run_line("dark", "alpha", TA_T1 + 5000, false, 5), // empty-roster window
+            run_line("gap", "alpha", TA_T2 + 2_000_000, false, 5), // unprovable start
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    let root = tmp("ta3-led");
+    let ledger = Ledger::new(root.join("ledger.jsonl"));
+    let rep = collect_tinyagi(&home, &ledger, false).unwrap();
+    assert_eq!(rep.snapshots_seen, 4);
+    assert_eq!(rep.snapshots_roster, 3);
+    assert_eq!(rep.brackets_provable, 3);
+    assert_eq!(rep.rows, 1);
+    assert_eq!(rep.skipped_empty_roster, 1);
+    assert_eq!(rep.skipped_no_bracket, 1);
+}
+
+#[test]
+fn tinyagi_missing_trail_is_clean() {
+    let home = tinyagi_home("ta4");
+    snap(&home, "settings.json", RC, TA_TCUR);
+    let root = tmp("ta4-led");
+    let rep = collect_tinyagi(&home, &Ledger::new(root.join("ledger.jsonl")), true).unwrap();
+    assert_eq!(rep.runs_seen, 0);
+    assert_eq!(rep.failed_seen, 0);
+    assert_eq!(rep.rows, 0);
+    assert!(rep.dry_run);
+}
+
+#[test]
+fn tinyagi_roster_parse_degrades() {
+    // extra members inside an agent config are ignored; non-object and
+    // identity-less entries drop; a missing agents object = empty map.
+    let text = "{\"agents\":{\"a\":{\"provider\":\"p\",\"model\":\"m\",\"harness\":\"x\"},\"b\":7,\"c\":{\"provider\":\"\",\"model\":\"m\"}},\"custom_providers\":{}}";
+    let r = parse_roster(text);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r.get("a").unwrap(), &("p".to_string(), "m".to_string()));
+    assert!(parse_roster("{\"custom_providers\":{}}").is_empty());
+    assert!(parse_roster("not json").is_empty());
+}

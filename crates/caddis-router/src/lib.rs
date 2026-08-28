@@ -44,8 +44,8 @@ pub mod stats;
 pub mod verify;
 
 pub use collect::{
-    collect_bees, collect_councils, BeeLane, BeeReport, CollectErr, CollectReport, SeatDispatch,
-    TASK_CLASS_BEE, TASK_CLASS_CONSULT,
+    collect_bees, collect_councils, collect_tinyagi, BeeLane, BeeReport, CollectErr, CollectReport,
+    SeatDispatch, TinyagiReport, TASK_CLASS_BEE, TASK_CLASS_CONSULT, TASK_CLASS_TINYAGI,
 };
 pub use lane::{Capability, DataClass, Lane, LaneTier};
 pub use ledger::{DecisionRow, Ledger, LedgerErr, Loaded, Outcome, OutcomeRow, ParsedRow, Row};
