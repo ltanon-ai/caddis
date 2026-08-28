@@ -1,18 +1,32 @@
 //! rotate.rs — ROTATION MACHINERY slice A: the ORCHESTRATION (brief §6).
 //! One shot: lock → load → sweep → probe ReprobeDue seats in planned
 //! waves → append result cards → streak bookkeeping → view re-sync →
-//! report. The status map is the ruled table (brief §5.3 + Q6 amendment):
+//! report. The status map is the ruled table (brief §5.3 + Q6 amendment +
+//! council 2026-08-28):
 //!
-//! | wire                     | class       | card                          |
-//! |--------------------------|-------------|-------------------------------|
-//! | 200                      | Live        | Live (since=now)              |
-//! | 402                      | Expired     | Expired (quota calendar)      |
-//! | 429                      | RateLimited | RateLimited (cooldown)        |
-//! | 401/403 WITH auth        | Failed      | Failed (retry cadence)        |
-//! | 401/403 WITHOUT auth     | Unprobeable | none; streak++; ×N ⇒ Unprobeable + ONE alert |
-//! | blank base_url (no dial) | Unprobeable | same as above                 |
-//! | 408/504/5xx/other/unlisted| Transient  | none (TTL backstop)           |
-//! | network/TLS/timeout      | Transient   | none                          |
+//! | wire                              | class       | card                          |
+//! |-----------------------------------|-------------|-------------------------------|
+//! | 200                               | Live        | Live (since=now)              |
+//! | 402                               | Expired     | Expired (quota calendar)      |
+//! | 429                               | RateLimited | RateLimited (cooldown)        |
+//! | 401/403 WITH auth                 | Failed      | Failed (retry cadence)        |
+//! | 401/403 WITHOUT auth              | Unprobeable | none; streak++; ×N ⇒ Unprobeable + ONE alert |
+//! | blank base_url (no dial)          | Unprobeable | same as above                 |
+//! | 408 / 5xx / network/TLS/timeout   | Transient   | none; streak++; ×N ⇒ Failed + ONE alert |
+//! | other unlisted (4xx/3xx/1xx/2xx≠200) | Failed   | Failed (definitive card defect) |
+//!
+//! Council gates folded in (rotation-council-answers 2026-08-28):
+//! - **Mapper audit**: ONLY retriable observations are Transient —
+//!   transport failure, 408, 5xx. Every other unlisted status is
+//!   DEFINITIVE (bad path/request/redirect/odd success): Failed
+//!   immediately, auth or not — never a masked-Transient masquerade,
+//!   never Live on a non-200 (money law).
+//! - **Transient streak** (Q3-iii): N consecutive transient reprobe
+//!   results flip the seat Failed + ONE alert (mirror of the Q6
+//!   unprobeable streak; reset by any definitive or clean result).
+//! - **Stagger**: at most `max_probes_per_run` due seats are probed per
+//!   run (0 = unlimited) — a shared 1h-boundary cohort spreads across
+//!   5-min runs, never one storm.
 //!
 //! Machine-written cards are TRANSPORT OBSERVATIONS (identity law): no
 //! operator confirm per probe — the warden gates stay where F1/F2 put
@@ -46,6 +60,17 @@ pub const LOCK_STALE_S: u64 = 900;
 /// the seat to `unprobeable` (census-visible) + ONE alert line.
 pub const UNPROBEABLE_AFTER: u32 = 3;
 
+/// Council ruling 2026-08-28 (Q3-iii): this many CONSECUTIVE transient
+/// reprobe results flip the seat to `failed` + ONE alert — a lane that
+/// never answers clean is dead, not flaky (mirror of UNPROBEABLE_AFTER).
+pub const TRANSIENT_AFTER: u32 = 3;
+
+/// Council gate 2026-08-28 (stagger): at most this many due seats are
+/// probed in ONE run; the rest defer to the next 5-min run (id order —
+/// probed seats re-stamp `since` and clear the lane, so the tail
+/// advances). 0 = unlimited (operator override).
+pub const MAX_PROBES_PER_RUN: u64 = 20;
+
 /// Everything one rotation run is configured by (brief §6). Defaults =
 /// compiled priors; the home's `rotation.json` overrides (validated,
 /// exact-field; malformed = defect).
@@ -54,6 +79,8 @@ pub struct RotateCfg {
     pub cadence: Cadence,
     pub probe: ProbeCfg,
     pub unprobeable_after: u32,
+    pub transient_after: u32,
+    pub max_probes_per_run: u64,
 }
 
 impl Default for RotateCfg {
@@ -62,6 +89,8 @@ impl Default for RotateCfg {
             cadence: Cadence::default(),
             probe: ProbeCfg::default(),
             unprobeable_after: UNPROBEABLE_AFTER,
+            transient_after: TRANSIENT_AFTER,
+            max_probes_per_run: MAX_PROBES_PER_RUN,
         }
     }
 }
@@ -92,6 +121,13 @@ impl ProbeClass {
 
 /// The status map as ONE pure law: HTTP status (None = transport failed)
 /// × whether auth is configured on the provider row → class.
+///
+/// Mapper audit (council gate 2026-08-28): ONLY retriable observations
+/// are Transient — transport failure, 408, 5xx. Any other unlisted
+/// status (4xx beyond 401/402/403/429, redirects, odd 2xx) is DEFINITIVE:
+/// the lane answered and this probe can never succeed on the current
+/// card — Failed immediately (auth or not), hourly retry. Never Live on
+/// a non-200 (money law).
 pub fn map_status(status: Option<u16>, auth_configured: bool) -> ProbeClass {
     match status {
         Some(200) => ProbeClass::Live,
@@ -104,10 +140,12 @@ pub fn map_status(status: Option<u16>, auth_configured: bool) -> ProbeClass {
                 ProbeClass::Unprobeable
             }
         }
-        // 408/504 explicitly transient (council Q2 amendment); every other
-        // status is UNLISTED — honest transient-no-card, recorded in the
-        // report. Never Live on a non-200 (money law).
-        _ => ProbeClass::Transient,
+        // Retriable wire family (2026-08-28 audit): transport failure,
+        // request-timeout 408, server-side 5xx.
+        None | Some(408) | Some(500..=599) => ProbeClass::Transient,
+        // Definitive non-retriable: card defect (bad path/request/
+        // redirect/odd success) — Failed, never a masked Transient.
+        _ => ProbeClass::Failed,
     }
 }
 
@@ -118,6 +156,9 @@ pub struct RotateReport {
     pub lock_stolen: bool,
     pub sweep_appended: usize,
     pub due: usize,
+    /// Due seats NOT probed this run (stagger gate 2026-08-28) — they
+    /// defer to the next run in id order.
+    pub stagger_deferred: usize,
     pub skipped_non_http: Vec<String>,
     pub waves: usize,
     pub probed: usize,
@@ -149,6 +190,10 @@ impl RotateReport {
                 Value::Num(self.sweep_appended as f64),
             ),
             ("due".into(), Value::Num(self.due as f64)),
+            (
+                "stagger_deferred".into(),
+                Value::Num(self.stagger_deferred as f64),
+            ),
             ("skipped_non_http".into(), seats(&self.skipped_non_http)),
             ("waves".into(), Value::Num(self.waves as f64)),
             ("probed".into(), Value::Num(self.probed as f64)),
@@ -311,8 +356,12 @@ impl Drop for RotateLock {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RotationState {
-    /// seat id → consecutive unprobeable rotations.
+    /// seat id → consecutive unprobeable rotations (Q6 amendment).
     pub streaks: BTreeMap<String, u32>,
+    /// seat id → consecutive transient reprobe results (council
+    /// 2026-08-28 Q3-iii). Back-compat: old files carry no
+    /// `transient_streak` — absent reads as 0.
+    pub transient_streaks: BTreeMap<String, u32>,
 }
 
 impl RotationState {
@@ -330,6 +379,7 @@ impl RotationState {
             .as_obj()
             .ok_or_else(|| format!("{}: seats not an object", p.display()))?;
         let mut streaks = BTreeMap::new();
+        let mut transient_streaks = BTreeMap::new();
         for (id, sv) in obj {
             let st = sv
                 .get("unprobeable_streak")
@@ -338,20 +388,54 @@ impl RotationState {
             if st < 0.0 || st.fract() != 0.0 || st > u32::MAX as f64 {
                 return Err(format!("{}: seat {id} bad streak {st}", p.display()));
             }
-            streaks.insert(id.clone(), st as u32);
+            // Sparse law: 0 == absent (the maps never hold zero values —
+            // entries are created by increment, destroyed by reset).
+            if st > 0.0 {
+                streaks.insert(id.clone(), st as u32);
+            }
+            if let Some(n) = sv.get("transient_streak") {
+                let t = n
+                    .as_f64()
+                    .ok_or_else(|| format!("{}: seat {id} bad transient_streak", p.display()))?;
+                if t < 0.0 || t.fract() != 0.0 || t > u32::MAX as f64 {
+                    return Err(format!(
+                        "{}: seat {id} bad transient_streak {t}",
+                        p.display()
+                    ));
+                }
+                if t > 0.0 {
+                    transient_streaks.insert(id.clone(), t as u32);
+                }
+            }
         }
-        Ok(RotationState { streaks })
+        Ok(RotationState {
+            streaks,
+            transient_streaks,
+        })
     }
 
     fn save(&self, home: &Path, now_epoch_s: u64) -> Result<(), String> {
         let p = state_path(home);
+        // Union of both streak maps, id order (BTreeMap iter is sorted;
+        // dedup keeps one row per seat).
+        let mut ids: Vec<&String> = self
+            .streaks
+            .keys()
+            .chain(self.transient_streaks.keys())
+            .collect();
+        ids.sort();
+        ids.dedup();
         let mut seats = String::from("{");
-        for (i, (id, st)) in self.streaks.iter().enumerate() {
+        for (i, id) in ids.iter().enumerate() {
             if i > 0 {
                 seats.push(',');
             }
-            seats.push_str(&json::to_string(&Value::Str(id.clone())));
-            seats.push_str(&format!(":{{\"unprobeable_streak\":{st}}}"));
+            let u = self.streaks.get(*id).copied().unwrap_or(0);
+            let t = self.transient_streaks.get(*id).copied().unwrap_or(0);
+            seats.push_str(&json::to_string(&Value::Str((*id).clone())));
+            seats.push_str(&format!(
+                ":{{\"unprobeable_streak\":{u},\"transient_streak\":{t}}}"
+            ));
         }
         seats.push('}');
         let body = format!("{{\"updated_epoch_s\":{now_epoch_s},\"seats\":{seats}}}\n");
@@ -403,7 +487,13 @@ pub fn load_cfg(home: &Path) -> Result<RotateCfg, String> {
     if !matches!(v, Value::Obj(_)) {
         return Err(format!("{}: not an object", p.display()));
     }
-    let known = ["cadence", "probe", "unprobeable_after"];
+    let known = [
+        "cadence",
+        "probe",
+        "unprobeable_after",
+        "transient_after",
+        "max_probes_per_run",
+    ];
     for k in fields_of(&v) {
         if !known.contains(&k.as_str()) {
             return Err(format!("{}: unknown field {k}", p.display()));
@@ -470,6 +560,26 @@ pub fn load_cfg(home: &Path) -> Result<RotateCfg, String> {
         }
         cfg.unprobeable_after = n as u32;
     }
+    if v.get("transient_after").is_some() {
+        let n = v
+            .get("transient_after")
+            .and_then(|x| x.as_f64())
+            .ok_or("rotation.json: transient_after not a number")?;
+        if n < 1.0 || n.fract() != 0.0 || n > 100.0 {
+            return Err("rotation.json: transient_after out of range".into());
+        }
+        cfg.transient_after = n as u32;
+    }
+    if v.get("max_probes_per_run").is_some() {
+        let n = v
+            .get("max_probes_per_run")
+            .and_then(|x| x.as_f64())
+            .ok_or("rotation.json: max_probes_per_run not a number")?;
+        if n < 0.0 || n.fract() != 0.0 || n > 100_000.0 {
+            return Err("rotation.json: max_probes_per_run out of range".into());
+        }
+        cfg.max_probes_per_run = n as u64;
+    }
     Ok(cfg)
 }
 
@@ -529,6 +639,14 @@ where
     }
     due.sort_by(|a, b| a.id.cmp(&b.id)); // deterministic dispatch order
     report.due = due.len();
+    // Stagger gate (council 2026-08-28): cap probes per run; the tail
+    // defers to the next 5-min run (id order advances — probed seats
+    // re-stamp `since` and leave the due lane; a deferred seat is never
+    // benched, only re-checked later).
+    if cfg.max_probes_per_run > 0 && due.len() as u64 > cfg.max_probes_per_run {
+        report.stagger_deferred = due.len() - cfg.max_probes_per_run as usize;
+        due.truncate(cfg.max_probes_per_run as usize);
+    }
     if due.is_empty() && report.sweep_appended == 0 {
         return Err(RotateErr::NothingDue(Box::new(report)));
     }
@@ -628,10 +746,25 @@ where
                         .unwrap_or_else(|| format!("unlisted status {:?}", outcome.status));
                     report.transient_reasons.push((seat_id.clone(), reason));
                 }
-                // Learned nothing: the streak chain is NOT consecutive
-                // anymore — reset (documented reading of the amendment).
-                if state.streaks.remove(&seat_id).is_some() {
-                    dirty_state = true;
+                // Transient breaks the unprobeable chain (not consecutive
+                // anymore) but BUILDS the transient chain (council
+                // 2026-08-28 Q3-iii): the seat stays due (per-sweep
+                // retry, 5-min class) and never keeps Live on silence
+                // alone — no Live re-stamp without a fresh 200, ever.
+                state.streaks.remove(&seat_id);
+                let streak = state.transient_streaks.entry(seat_id.clone()).or_insert(0);
+                *streak += 1;
+                dirty_state = true;
+                if *streak >= cfg.transient_after && seat.state != crate::SeatState::Failed {
+                    let mut card = seat.clone();
+                    card.state = crate::SeatState::Failed;
+                    card.since_epoch_s = now_epoch_s;
+                    reg = append(&stream, &view, Card::Seat(card), &mut report)
+                        .map_err(RotateErr::Defect)?;
+                    report.alerts.push(format!(
+                        "seat {seat_id} failed after {} consecutive transient rotations (retriable wire family) — hourly retries continue, never benched on the clock",
+                        *streak
+                    ));
                 }
             }
             ProbeClass::Unprobeable => {
@@ -650,6 +783,9 @@ where
                         *streak
                     ));
                 }
+                if state.transient_streaks.remove(&seat_id).is_some() {
+                    dirty_state = true;
+                }
             }
             mapped => {
                 match mapped {
@@ -660,6 +796,9 @@ where
                     ProbeClass::Unprobeable | ProbeClass::Transient => unreachable!(),
                 }
                 if state.streaks.remove(&seat_id).is_some() {
+                    dirty_state = true;
+                }
+                if state.transient_streaks.remove(&seat_id).is_some() {
                     dirty_state = true;
                 }
                 // Mapped results ALWAYS stamp freshness (even same-state —

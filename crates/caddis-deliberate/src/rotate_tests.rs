@@ -172,12 +172,16 @@ fn class_401_without_auth_is_unprobeable_not_failed() {
 }
 
 #[test]
-fn class_transient_and_unlisted_append_nothing() {
+fn class_transient_appends_nothing_but_books_streak() {
+    // Retriable family (council 2026-08-28 audit): transport failure,
+    // 408, 5xx — no card (no Live re-stamp without a fresh 200), but
+    // the transient streak is booked toward the ×3 flip.
     for out in [
         refused("network unreachable"),
         answered(408),
+        answered(500),
+        answered(503),
         answered(504),
-        answered(418),
     ] {
         let home = default_home_single("https://lane.example");
         let rep = rotate(
@@ -190,7 +194,65 @@ fn class_transient_and_unlisted_append_nothing() {
         assert_eq!(rep.transient, 1, "out={out:?}");
         assert_eq!(rep.cards_appended, 0);
         assert_eq!(rep.transient_reasons.len(), 1);
+        let st = RotationState::load(&home).expect("state");
+        assert_eq!(st.transient_streaks.get("prov/m1"), Some(&1), "out={out:?}");
     }
+}
+
+#[test]
+fn class_definitive_unlisted_lands_failed() {
+    // Mapper audit (council 2026-08-28): unlisted NON-retriable statuses
+    // are definitive card defects — Failed immediately (auth or not),
+    // never masked as Transient.
+    for status in [400u16, 404, 405, 418, 301, 204] {
+        let home = default_home_single("https://lane.example");
+        let rep = rotate(
+            &home,
+            NOW,
+            &RotateCfg::default(),
+            router(BTreeMap::from([("https://lane.example", answered(status))])),
+        )
+        .expect("rotate ok");
+        assert_eq!(rep.failed, 1, "status {status}");
+        assert_eq!(rep.cards_appended, 1, "status {status}");
+        assert_eq!(rep.transient, 0, "status {status}");
+        let reg = fold_view(&home);
+        assert_eq!(
+            reg.seats.get("prov/m1").unwrap().state,
+            crate::SeatState::Failed,
+            "status {status}"
+        );
+    }
+}
+
+/// THE defect fix end-to-end (council 2026-08-28 ruling 1): a Live seat
+/// 10h stale + a transient probe result — the sweep benches NOTHING.
+#[test]
+fn stale_live_transient_stays_live_never_benched() {
+    let home = home_with(&[
+        provider("prov", "https://lane.example", ""),
+        seat("prov/m1", "prov", crate::SeatState::Live, NOW - 10 * 3600),
+    ]);
+    let rep = rotate(
+        &home,
+        NOW,
+        &RotateCfg::default(),
+        router(BTreeMap::from([(
+            "https://lane.example",
+            refused("network unreachable"),
+        )])),
+    )
+    .expect("rotate ok");
+    assert_eq!(rep.sweep_appended, 0, "the clock never benches");
+    assert_eq!(rep.due, 1);
+    assert_eq!(rep.probed, 1);
+    assert_eq!(rep.cards_appended, 0);
+    let reg = fold_view(&home);
+    assert_eq!(
+        reg.seats.get("prov/m1").unwrap().state,
+        crate::SeatState::Live,
+        "stays Live — only a probe result may move the seat"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -268,6 +330,84 @@ fn streak_resets_on_any_observed_result() {
 }
 
 #[test]
+fn transient_times3_flips_to_failed_once() {
+    // Council 2026-08-28 Q3-iii: ×3 consecutive transients → Failed +
+    // ONE alert; a 4th transient (state already Failed) stays quiet.
+    let home = default_home_single("https://lane.example");
+    // Rotations 1 and 2: no card, no alert; the streak builds.
+    for i in 1..=2 {
+        let rep = rotate(
+            &home,
+            NOW + i * 100,
+            &RotateCfg::default(),
+            |_u, _p, _a, _c| refused("tls storm"),
+        )
+        .expect("rotate ok");
+        assert_eq!(rep.cards_appended, 0, "rotation {i}");
+        assert_eq!(rep.alerts.len(), 0);
+    }
+    // Rotation 3: the flip — one Failed card, ONE alert.
+    let rep = rotate(&home, NOW + 300, &RotateCfg::default(), |_u, _p, _a, _c| {
+        refused("tls storm")
+    })
+    .expect("rotate ok");
+    assert_eq!(rep.cards_appended, 1);
+    assert_eq!(rep.alerts.len(), 1);
+    assert!(rep.alerts[0].contains("prov/m1"));
+    let reg = fold_view(&home);
+    assert_eq!(
+        reg.seats.get("prov/m1").unwrap().state,
+        crate::SeatState::Failed
+    );
+    // Rotation 4 (past the failed retry cadence): still transient — NO
+    // second alert, no duplicate card.
+    let rep = rotate(
+        &home,
+        NOW + 4000,
+        &RotateCfg::default(),
+        |_u, _p, _a, _c| refused("tls storm"),
+    )
+    .expect("rotate ok");
+    assert_eq!(rep.alerts.len(), 0, "alert is per TRANSITION");
+    assert_eq!(rep.cards_appended, 0);
+}
+
+#[test]
+fn transient_streak_resets_on_observed_result() {
+    let home = default_home_single("https://lane.example");
+    // Short Live cadence so every rotation here finds the seat due.
+    let cfg = RotateCfg {
+        cadence: crate::ttl::Cadence {
+            live_probe_every_s: 60,
+            ..crate::ttl::Cadence::default()
+        },
+        ..RotateCfg::default()
+    };
+    // Two transients build the chain...
+    for i in 1..=2 {
+        let _ = rotate(&home, NOW + i * 100, &cfg, |_u, _p, _a, _c| refused("boom"))
+            .expect("rotate ok");
+    }
+    // ...a clean 200 breaks it and lifts the seat.
+    let rep = rotate(&home, NOW + 300, &cfg, |_u, _p, _a, _c| answered(200)).expect("rotate ok");
+    assert_eq!(rep.live, 1);
+    let st = RotationState::load(&home).unwrap();
+    assert!(
+        !st.transient_streaks.contains_key("prov/m1"),
+        "a 200 resets the chain"
+    );
+    // ...two more transients, then a DEFINITIVE 404 also breaks it.
+    let _ = rotate(&home, NOW + 400, &cfg, |_u, _p, _a, _c| refused("boom")).expect("rotate ok");
+    let _ = rotate(&home, NOW + 500, &cfg, |_u, _p, _a, _c| refused("boom")).expect("rotate ok");
+    let _ = rotate(&home, NOW + 600, &cfg, |_u, _p, _a, _c| answered(404)).expect("rotate ok");
+    let st = RotationState::load(&home).unwrap();
+    assert!(
+        !st.transient_streaks.contains_key("prov/m1"),
+        "a definitive result breaks the chain"
+    );
+}
+
+#[test]
 fn auth_landing_lifts_unprobeable_next_rotation() {
     let home = default_home_single("https://lane.example");
     // Drive the seat into unprobeable (threshold via config: 1).
@@ -328,11 +468,12 @@ fn blank_base_url_never_dials_and_counts_unprobeable() {
 
 #[test]
 fn sweep_lands_ttl_transitions() {
-    // A stale Live seat (last probe 10h ago with hourly cadence) → Expired
-    // card from the SWEEP; Expired is NOT due (quota cooldown), so zero probes.
+    // A lapsed Expired seat (free, quota calendar over) → Failed card
+    // from the SWEEP; Failed is NOT yet due (hourly retry cadence), so
+    // zero probes this run.
     let home = home_with(&[
         provider("prov", "https://lane.example", ""),
-        seat("prov/m1", "prov", crate::SeatState::Live, NOW - 10 * 3600),
+        seat("prov/m1", "prov", crate::SeatState::Expired, NOW - 90_000),
     ]);
     let rep = rotate(&home, NOW, &RotateCfg::default(), |_u, _p, _a, _c| {
         panic!("no probe expected")
@@ -343,8 +484,50 @@ fn sweep_lands_ttl_transitions() {
     let reg = fold_view(&home);
     assert_eq!(
         reg.seats.get("prov/m1").unwrap().state,
-        crate::SeatState::Expired
+        crate::SeatState::Failed
     );
+}
+
+/// Stagger gate (council 2026-08-28): a due cohort larger than
+/// `max_probes_per_run` is split across runs (id order); the tail
+/// advances next run because probed seats re-stamp `since`.
+#[test]
+fn stagger_caps_probes_per_run() {
+    let mut cards = vec![provider("prov", "https://lane.example", "")];
+    for i in 0..5 {
+        cards.push(seat(
+            &format!("prov/m{i}"),
+            "prov",
+            crate::SeatState::Probing,
+            0,
+        ));
+    }
+    let home = home_with(&cards);
+    let cfg = RotateCfg {
+        max_probes_per_run: 2,
+        ..RotateCfg::default()
+    };
+    let rep = rotate(&home, NOW, &cfg, |_u, _p, _a, _c| answered(200)).expect("rotate ok");
+    assert_eq!(rep.due, 5);
+    assert_eq!(rep.probed, 2);
+    assert_eq!(rep.stagger_deferred, 3);
+    assert_eq!(rep.live, 2);
+    // Next run: the two probed seats are fresh Live (not due); the
+    // remaining three go through.
+    let rep = rotate(&home, NOW + 10, &RotateCfg::default(), |_u, _p, _a, _c| {
+        answered(200)
+    })
+    .expect("rotate ok");
+    assert_eq!(rep.probed, 3);
+    assert_eq!(rep.stagger_deferred, 0);
+    let reg = fold_view(&home);
+    for i in 0..5 {
+        assert_eq!(
+            reg.seats.get(&format!("prov/m{i}")).unwrap().state,
+            crate::SeatState::Live,
+            "seat m{i}"
+        );
+    }
 }
 
 #[test]
@@ -417,7 +600,7 @@ fn config_exact_field_law() {
     // Full valid override.
     std::fs::write(
         config_path(&home),
-        "{\"cadence\":{\"live_probe_every_s\":120},\"probe\":{\"connect_timeout_s\":3,\"total_timeout_s\":7},\"unprobeable_after\":5}",
+        "{\"cadence\":{\"live_probe_every_s\":120},\"probe\":{\"connect_timeout_s\":3,\"total_timeout_s\":7},\"unprobeable_after\":5,\"transient_after\":4,\"max_probes_per_run\":9}",
     )
     .unwrap();
     let cfg = load_cfg(&home).unwrap();
@@ -425,6 +608,8 @@ fn config_exact_field_law() {
     assert_eq!(cfg.probe.connect_timeout, std::time::Duration::from_secs(3));
     assert_eq!(cfg.probe.total_timeout, std::time::Duration::from_secs(7));
     assert_eq!(cfg.unprobeable_after, 5);
+    assert_eq!(cfg.transient_after, 4);
+    assert_eq!(cfg.max_probes_per_run, 9);
     // Unknown field: defect.
     std::fs::write(config_path(&home), "{\"nope\":1}").unwrap();
     assert!(load_cfg(&home).is_err());
@@ -444,12 +629,22 @@ fn map_status_table_unit() {
     assert_eq!(map_status(Some(403), true), Failed);
     assert_eq!(map_status(Some(401), false), Unprobeable);
     assert_eq!(map_status(Some(403), false), Unprobeable);
+    // Retriable family (council 2026-08-28 audit): transport, 408, 5xx.
     assert_eq!(map_status(Some(408), true), Transient);
-    assert_eq!(map_status(Some(504), false), Transient);
     assert_eq!(map_status(Some(500), true), Transient);
-    assert_eq!(map_status(Some(418), true), Transient);
+    assert_eq!(map_status(Some(502), false), Transient);
+    assert_eq!(map_status(Some(503), true), Transient);
+    assert_eq!(map_status(Some(504), false), Transient);
+    assert_eq!(map_status(Some(599), true), Transient);
     assert_eq!(map_status(None, true), Transient);
     assert_eq!(map_status(None, false), Transient);
+    // Definitive unlisted: Failed regardless of auth — never masked.
+    assert_eq!(map_status(Some(400), true), Failed);
+    assert_eq!(map_status(Some(404), false), Failed);
+    assert_eq!(map_status(Some(405), true), Failed);
+    assert_eq!(map_status(Some(418), true), Failed);
+    assert_eq!(map_status(Some(301), false), Failed);
+    assert_eq!(map_status(Some(204), true), Failed);
 }
 
 #[test]
@@ -463,6 +658,10 @@ fn rotation_log_line_lands() {
     let v = crate::json::parse(log.trim()).expect("log line is JSON");
     assert_eq!(v.get("verb").and_then(|x| x.as_str()), Some("rotate"));
     assert_eq!(v.get("live").and_then(|x| x.as_f64()), Some(1.0));
+    assert_eq!(
+        v.get("stagger_deferred").and_then(|x| x.as_f64()),
+        Some(0.0)
+    );
 }
 
 #[test]

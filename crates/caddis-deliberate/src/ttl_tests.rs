@@ -45,12 +45,35 @@ fn cadence_priors_are_pinned() {
 // --- step: every state's law, boundary included (>=, not >).
 
 #[test]
-fn live_stale_expires_fresh_keeps() {
+fn live_stale_reprobes_fresh_keeps() {
     let c = Cadence::default();
     let fresh = seat("p/a", "p", SeatState::Live, CostClass::Free, NOW - 3599);
     let stale = seat("p/a", "p", SeatState::Live, CostClass::Free, NOW - 3600);
     assert_eq!(step(&fresh, NOW, &c, true), Step::Keep);
-    assert_eq!(step(&stale, NOW, &c, true), Step::Expire);
+    // Council 2026-08-28: the 1h clock VERIFIES — never benches.
+    assert_eq!(step(&stale, NOW, &c, true), Step::ReprobeDue);
+}
+
+/// Council ruling 2026-08-28: a stale Live seat is queued for re-probe
+/// and the sweep writes NOTHING on the clock alone — Expired is
+/// reachable only via a 402 probe result.
+#[test]
+fn live_clock_never_benches() {
+    let c = Cadence::default();
+    let stale = seat(
+        "p/a",
+        "p",
+        SeatState::Live,
+        CostClass::Free,
+        NOW - 10 * 3600,
+    );
+    assert_eq!(step(&stale, NOW, &c, true), Step::ReprobeDue);
+    assert_eq!(step(&stale, NOW, &c, false), Step::ReprobeDue);
+    let reg = Registry::fold(&[card(stale)]);
+    assert!(
+        sweep(&reg, NOW, &c, quota_renewable).is_empty(),
+        "no card on the clock alone"
+    );
 }
 
 #[test]
@@ -183,24 +206,25 @@ fn sweep_writes_transition_cards_only() {
             NOW - 7200,
         )),
         card(seat(
-            "p/due",
+            "p/lapsed",
             "p",
-            SeatState::Failed,
+            SeatState::Expired,
             CostClass::Free,
-            NOW - 7200,
+            NOW - 90_000,
         )),
     ]);
     let out = sweep(&reg, NOW, &Cadence::default(), quota_renewable);
-    // Exactly one card: the stale Live seat. Keep and ReprobeDue write none.
+    // Exactly one card: the lapsed Expired seat. Keep and ReprobeDue
+    // (the stale Live seat — the clock verifies, never benches) write none.
     assert_eq!(out.len(), 1);
     let Card::Seat(s) = &out[0] else {
         panic!("transition cards are seat cards")
     };
-    assert_eq!(s.id, "p/stale");
-    assert_eq!(s.state, SeatState::Expired);
+    assert_eq!(s.id, "p/lapsed");
+    assert_eq!(s.state, SeatState::Failed);
     assert_eq!(
         s.since_epoch_s, NOW,
-        "the Expired TTL window starts at sweep time"
+        "the Failed retry window starts at sweep time"
     );
     // Everything else is carried unchanged (append-only edit shape).
     assert_eq!(s.provider, "p");
@@ -209,17 +233,23 @@ fn sweep_writes_transition_cards_only() {
 
 #[test]
 fn sweep_is_one_step_never_a_cascade() {
-    // Live + since=0: elapsed is enormous -> Expire (one step), NOT
-    // Expire->Failed in the same sweep.
-    let reg = Registry::fold(&[card(seat("p/a", "p", SeatState::Live, CostClass::Free, 0))]);
+    // Expired + since=0: elapsed is enormous -> ONE step (Fail on a
+    // renewable lane), NOT Fail->further in the same sweep. The stale
+    // Live seat (since=0) writes nothing — the clock never benches.
+    let reg = Registry::fold(&[
+        card(seat("p/a", "p", SeatState::Expired, CostClass::Free, 0)),
+        card(seat("p/b", "p", SeatState::Live, CostClass::Free, 0)),
+    ]);
     let out = sweep(&reg, NOW, &Cadence::default(), quota_renewable);
     assert_eq!(out.len(), 1);
     let Card::Seat(s) = &out[0] else { panic!() };
-    assert_eq!(s.state, SeatState::Expired);
+    assert_eq!(s.id, "p/a");
+    assert_eq!(s.state, SeatState::Failed);
     assert_eq!(s.since_epoch_s, NOW);
-    // The NEXT sweep re-derives from the new row: nothing due yet.
+    // The NEXT sweep re-derives from the new rows: nothing transitions.
     let cards = vec![
-        card(seat("p/a", "p", SeatState::Live, CostClass::Free, 0)),
+        card(seat("p/a", "p", SeatState::Expired, CostClass::Free, 0)),
+        card(seat("p/b", "p", SeatState::Live, CostClass::Free, 0)),
         out[0].clone(),
     ];
     let reg2 = Registry::fold(&cards);

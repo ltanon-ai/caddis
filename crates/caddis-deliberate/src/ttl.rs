@@ -4,6 +4,11 @@
 //! supplies `now` and performs the actions).
 //!
 //! Laws transcribed (plan P1; brief Rulings 5+8; F10):
+//! - **Live staleness VERIFIES, never benches** (council ruling
+//!   2026-08-28, rotation-council-answers): a Live probe older than
+//!   `live_probe_every_s` queues a RE-PROBE ([`Step::ReprobeDue`]) — the
+//!   1h clock never moves a Live seat to Expired. Expired is reachable
+//!   ONLY through a probe result (402, the true quota calendar).
 //! - **EXPIRED carries TTL → auto Failed/Retired** and removal from panel
 //!   selection. Expired is the quota-calendar COOLDOWN (the preserved
 //!   council-toolkit pattern): within its TTL a seat is NOT re-probed
@@ -37,8 +42,9 @@ use crate::SeatState;
 /// meaning "act immediately".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cadence {
-    /// Live: a probe older than this makes the seat stale — the sweep
-    /// EXPIRES it (stale truth beats a stale live flag, F10).
+    /// Live: a probe older than this makes the seat's truth stale — the
+    /// sweep queues a RE-PROBE (council 2026-08-28: the clock verifies,
+    /// it never benches; only a probe result may move the seat).
     pub live_probe_every_s: u64,
     /// Expired: the quota-calendar cooldown TTL. Within it: no re-probe.
     /// At lapse: [`Step::Fail`] (renewable) / [`Step::Retire`] (not).
@@ -80,9 +86,6 @@ impl Default for Cadence {
 pub enum Step {
     /// No transition; nothing due.
     Keep,
-    /// Live → Expired: the probe went stale (the Expired TTL window
-    /// starts at this sweep's `now`).
-    Expire,
     /// → Failed: Expired TTL lapsed on a renewable lane, or a probe
     /// wedged past its timeout.
     Fail,
@@ -105,8 +108,10 @@ pub fn step(card: &SeatCard, now_epoch_s: u64, cadence: &Cadence, renewable: boo
     let elapsed = now_epoch_s.saturating_sub(card.since_epoch_s);
     match card.state {
         SeatState::Live => {
+            // Council 2026-08-28: stale Live VERIFIES — the clock never
+            // benches (Expired is reachable only via a 402 probe result).
             if elapsed >= cadence.live_probe_every_s {
-                Step::Expire
+                Step::ReprobeDue
             } else {
                 Step::Keep
             }
@@ -179,7 +184,6 @@ pub fn sweep(
     for seat in reg.seats.values() {
         let next = match step(seat, now_epoch_s, cadence, renewable(seat)) {
             Step::Keep | Step::ReprobeDue => continue,
-            Step::Expire => SeatState::Expired,
             Step::Fail => SeatState::Failed,
             Step::Retire => SeatState::Retired,
         };
