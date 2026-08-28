@@ -28,10 +28,12 @@
 //!
 //! P2 (2026-08-28): [`ledger`] decision+outcome stream (R6 append-only,
 //! O_EXCL lock + fsync, fail-closed), [`stats`] EWMA/floors/cold-start,
-//! [`verify`] honest findings. Still ahead: retroactive collector over
-//! existing dispatch trails (P2 remainder), escalation state machine (P3),
-//! warden policy wiring (P4), in-world room (P5).
+//! [`verify`] honest findings, [`collect`] the retroactive collector over
+//! the council-consult archive (bee-ledger and TinyAGI-history sources
+//! follow). Still ahead: escalation state machine (P3), warden policy
+//! wiring (P4), in-world room (P5).
 
+pub mod collect;
 pub mod lane;
 pub mod ledger;
 pub mod lock;
@@ -41,6 +43,7 @@ pub mod route;
 pub mod stats;
 pub mod verify;
 
+pub use collect::{collect_councils, CollectErr, CollectReport, SeatDispatch, TASK_CLASS_CONSULT};
 pub use lane::{Capability, DataClass, Lane, LaneTier};
 pub use ledger::{DecisionRow, Ledger, LedgerErr, Loaded, Outcome, OutcomeRow, ParsedRow, Row};
 pub use policy::RoutePolicy;
@@ -49,4 +52,4 @@ pub use route::{route, RouteDecision, RouteErr};
 pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, MIN_SAMPLES};
 pub use verify::{verify_path, Finding, VerifyReport};
 
-pub const VERSION: &str = "0.2.0";
+pub const VERSION: &str = "0.3.0";

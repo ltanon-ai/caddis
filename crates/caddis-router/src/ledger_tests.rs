@@ -288,3 +288,13 @@ fn f64_costs_roundtrip_shortest() {
     }
     fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn first_append_materializes_missing_state_home() {
+    let dir = tmpdir("home-birth");
+    // a DEEP missing path — the organ's real first write on a fresh box
+    let led = Ledger::new(dir.join("a/b/c/ledger.jsonl"));
+    led.append_ts(&decision("r1", "l1"), "t", WAIT).unwrap();
+    assert_eq!(led.load().unwrap().rows.len(), 1);
+    fs::remove_dir_all(dir).ok();
+}

@@ -211,6 +211,11 @@ impl Ledger {
     }
 
     pub(crate) fn append_ts(&self, row: &Row, ts: &str, wait: Duration) -> Result<u64, LedgerErr> {
+        // The first organ write materializes its own state home — a
+        // missing parent dir is birth, not corruption (os error 3).
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let _guard = Lock::acquire(&self.path, wait)?;
         // Read under the lock: max seq over PARSED rows (a hand-forked or
         // torn file must not re-fork the next append — model-voice seq lesson).

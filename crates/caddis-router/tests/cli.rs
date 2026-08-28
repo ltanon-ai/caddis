@@ -128,3 +128,93 @@ fn unknown_argument_fails_closed() {
     assert_eq!(rc, 0);
     assert!(out.contains("caddis-router"), "{out}");
 }
+
+// --- collect e2e -------------------------------------------------------------
+
+fn councils_fixture(tag: &str) -> PathBuf {
+    let root = tmpdir(tag).join("councils");
+    let mk = |name: &str, manifest: Option<&str>, verdicts: Option<&str>| {
+        let d = root.join(name);
+        fs::create_dir_all(&d).unwrap();
+        if let Some(m) = manifest {
+            fs::write(d.join("MANIFEST.json"), m).unwrap();
+        }
+        if let Some(v) = verdicts {
+            fs::write(d.join("VERDICTS.json"), v).unwrap();
+        }
+    };
+    mk(
+        "20260801-010101-alpha",
+        Some(
+            r#"{"skeptic": {"provider": "grok-coding", "model": "grok-4.6"}, "chair": {"provider": "gemini", "model": "gemini-2.5-flash"}}"#,
+        ),
+        Some(
+            r#"{"skeptic": {"stance": "mixed", "verdict": "sound but two fixes needed"}, "chair": {"stance": "approve", "verdict": "sound"}}"#,
+        ),
+    );
+    mk("20260801-020202-noid", None, None); // no transport record
+    root
+}
+
+#[test]
+fn collect_appends_then_is_idempotent() {
+    let root = councils_fixture("capi");
+    let ledger = root.parent().unwrap().join("ledger.jsonl");
+    let l = ledger.to_str().unwrap();
+    let (rc, out, err) = run(&[
+        "collect",
+        "--councils",
+        root.to_str().unwrap(),
+        "--ledger",
+        l,
+    ]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("consults: 2"), "{out}");
+    assert!(out.contains("rows: 2 (pass 2 / fail 0)"), "{out}");
+    assert!(out.contains("1 no-manifest"), "{out}");
+
+    // the appended stream verifies clean through the OTHER subcommand
+    let (rc, out, err) = run(&["verify", "--ledger", l]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("rows_ok: 2"), "{out}");
+
+    // re-run: everything already there, nothing new
+    let (rc, out, err) = run(&[
+        "collect",
+        "--councils",
+        root.to_str().unwrap(),
+        "--ledger",
+        l,
+    ]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("rows: 0"), "{out}");
+    assert!(out.contains("2 already"), "{out}");
+    fs::remove_dir_all(root.parent().unwrap()).ok();
+}
+
+#[test]
+fn collect_dry_run_writes_nothing_and_json_reports() {
+    let root = councils_fixture("cdry");
+    let ledger = root.parent().unwrap().join("ledger.jsonl");
+    let (rc, out, err) = run(&[
+        "collect",
+        "--councils",
+        root.to_str().unwrap(),
+        "--ledger",
+        ledger.to_str().unwrap(),
+        "--dry-run",
+        "--json",
+    ]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("\"rows\":2"), "{out}");
+    assert!(out.contains("\"dry_run\":true"), "{out}");
+    assert!(!ledger.exists(), "dry-run must not materialize a ledger");
+    fs::remove_dir_all(root.parent().unwrap()).ok();
+}
+
+#[test]
+fn collect_unknown_argument_fails_closed() {
+    let (rc, _, err) = run(&["collect", "--nonsense"]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("unknown argument"), "{err}");
+}
