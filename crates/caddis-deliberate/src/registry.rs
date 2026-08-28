@@ -59,7 +59,9 @@ pub fn lane_type_words() -> [&'static str; 3] {
     ["http", "bridge", "cli"]
 }
 
-fn parse_lane_type(s: &str) -> Option<crate::LaneType> {
+/// Pub: sibling grammars (session cards) share the ONE vocabulary law —
+/// a second wire-word copy anywhere is banned.
+pub fn parse_lane_type(s: &str) -> Option<crate::LaneType> {
     match s {
         "http" => Some(crate::LaneType::Http),
         "bridge" => Some(crate::LaneType::Bridge),
@@ -68,7 +70,7 @@ fn parse_lane_type(s: &str) -> Option<crate::LaneType> {
     }
 }
 
-fn lane_type_word(lt: crate::LaneType) -> &'static str {
+pub fn lane_type_word(lt: crate::LaneType) -> &'static str {
     match lt {
         crate::LaneType::Http => "http",
         crate::LaneType::Bridge => "bridge",
@@ -76,7 +78,7 @@ fn lane_type_word(lt: crate::LaneType) -> &'static str {
     }
 }
 
-fn parse_cost_class(s: &str) -> Option<crate::CostClass> {
+pub fn parse_cost_class(s: &str) -> Option<crate::CostClass> {
     match s {
         "free" => Some(crate::CostClass::Free),
         "mid" => Some(crate::CostClass::Mid),
@@ -85,7 +87,7 @@ fn parse_cost_class(s: &str) -> Option<crate::CostClass> {
     }
 }
 
-fn cost_class_word(cc: crate::CostClass) -> &'static str {
+pub fn cost_class_word(cc: crate::CostClass) -> &'static str {
     match cc {
         crate::CostClass::Free => "free",
         crate::CostClass::Mid => "mid",

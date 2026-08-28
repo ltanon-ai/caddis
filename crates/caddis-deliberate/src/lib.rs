@@ -55,7 +55,18 @@
 //! artifact and the ledger row; below the floor or split = refusal. The
 //! gate, the pin, the clustering, and the verdict digest are the
 //! council card's ONE laws, reused — never second copies.
-//!
+//! P3 slice 1 = [`executor`] + [`sessions`]: the DISPATCH ENGINE and the
+//! R4 session cards. The executor runs a council Convening end-to-end —
+//! waves from the ONE planner ([`caps::plan_batches`] via
+//! [`council::dispatch_plan`]), F3 pin re-checked before every wave
+//! through the caller's card snapshot (Moved → the session rides back
+//! for the F11 choreography), legs of one wave concurrent while the wave
+//! joins before the next (serialized-by-default is the registry's own
+//! caps law — a raised, warden-gated cap is the only parallel door),
+//! collect → integrate → verdict → ledger reused as the ONE laws, and
+//! every answered leg lands a `class: session` row (open before the
+//! first leg, usage per answered seat, close with the verdict-digest
+//! link — the model-visibility feed's one mechanism).
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
 //!   never touches a ledger. It classifies DATA and constructs values; the
 //!   P3 executor is a later slice, in another module, under warden gates.
@@ -89,10 +100,12 @@ pub mod collector;
 pub mod council;
 pub mod disjoint;
 pub mod edits;
+pub mod executor;
 pub mod json;
 pub mod protocol;
 pub mod quorum;
 pub mod registry;
+pub mod sessions;
 pub mod sha256;
 pub mod ttl;
 

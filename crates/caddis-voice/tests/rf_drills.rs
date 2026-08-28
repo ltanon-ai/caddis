@@ -8,16 +8,10 @@
 //! amendments). This file covers the render-lane failure family:
 //!
 //! - Drill 1  Leonas-down — LT speech whose primary lane fails at render
-//!            drops with a `render_error` ledger row and the `bee.fail`
-//!            chime; no other lane renders (never a wrong-voice render).
-//! - Drill 4  mid-utterance generator death — the generator dies after a
-//!            successful utterance; the next utterance through it drops
-//!            with a ledger row, and the queue keeps working through a
-//!            surviving lane.
-//! - Drill 5  dual-LT cascade — Leonas AND Ona lanes both down; LT speech
-//!            on BOTH paths (general + gated confirm) drops with ledger
-//!            rows and fail chimes; panel counters update inside the
-//!            same drain window.
+//! - Drill 1 Leonas-down — LT speech whose primary lane fails at render drops with a `render_error` ledger row and the `bee.fail` chime; no other lane renders (never a wrong-voice render).
+//! - Drill 4 mid-utterance generator death — the generator dies after a successful utterance; the next utterance through it drops with a ledger row, and the queue keeps working through a surviving lane.
+//! - Drill 5 dual-LT cascade — Leonas AND Ona lanes both down; LT speech on BOTH paths (general + gated confirm) drops with ledger rows and fail chimes; panel counters update inside the same drain window.
+//!
 //!
 //! What stays OUT of this file (per the verdict): audio TRUTH stays with
 //! the operator's ear; the socket layer's happy path is covered by
