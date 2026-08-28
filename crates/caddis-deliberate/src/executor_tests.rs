@@ -1236,3 +1236,323 @@ fn quorum_pool_lane_missing_from_laneset_is_a_defect() {
         other => panic!("{other:?}"),
     }
 }
+
+// --- P3 CLOSE: the Done-When sandbox E2E — the reserve door, caps, rows,
+// provenance, ONE composed run (plan P3 Done-When; MODE 2026-08-28) -------
+//
+// What only THIS section composes: a quorum convened through the degraded
+// day's OPERATOR-APPROVABLE door (`Selection` with an approval in hand),
+// executed by run_quorum end-to-end — the executor dispatches the pool
+// convene selected VERBATIM (no second selection path exists to take),
+// the capped shared provider SERIALIZES the reserve pair across waves
+// (observed live by the rendezvous, not just by the plan), the session
+// card rows land open/usage/close with kind `quorum`, and the
+// TRANSPORT-served model — deliberately different from every registered
+// self-report — rides every artifact: usage rows, verdict provenance,
+// VERDICT.md, and the ledger row's digest.
+
+use crate::disjoint::{DisjointErr, OperatorApproval};
+
+/// The degraded day for the close: the council's four LIVE lanes, ONE
+/// live disjoint seat (mistral/m), one non-live disjoint seat shaping
+/// the day (cohere/c expired — F10 skip evidence). Strict selection has
+/// 1 of 3: the operator-approvable door is the only way to convene.
+fn close_day_candidates() -> Vec<Seat> {
+    let mut c = vec![
+        seat("groq/llama", "groq", LaneType::Http, 1),
+        seat("anthropic/claude", "anthropic", LaneType::Bridge, 1),
+        seat("zai/glm", "zai", LaneType::Cli, 1),
+        seat("nvidia/nem", "nvidia", LaneType::Http, 1),
+        seat("mistral/m", "mistral", LaneType::Http, 1),
+    ];
+    let mut dead = seat("cohere/c", "cohere", LaneType::Http, 1);
+    dead.state = SeatState::Expired;
+    c.push(dead);
+    c
+}
+
+fn close_approval(id: &str) -> OperatorApproval {
+    OperatorApproval {
+        id: id.to_string(),
+        approved_overlap_lanes: vec!["anthropic/claude".into(), "zai/glm".into()],
+    }
+}
+
+fn convene_close_quorum(id: &str, approval_id: &str) -> quorum::QuorumSession {
+    let appr = close_approval(approval_id);
+    quorum::convene(
+        id,
+        &council_for_quorum(),
+        &quorum::protocol_v1(),
+        quorum::Selection {
+            candidates: &close_day_candidates(),
+            approval: Some(&appr),
+        },
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap()
+}
+
+/// Registry for the close: the two vetted reserve lanes (anthropic/
+/// claude, zai/glm) share the `anthropic` provider — its cap is the
+/// enforced variable. The disjoint tail (mistral/m) is a caps-1 loner.
+fn close_registry(anthropic_caps: u32) -> Registry {
+    registry_with_caps(
+        &[
+            ("mistral", 1, LaneType::Http),
+            ("anthropic", anthropic_caps, LaneType::Bridge),
+        ],
+        &[
+            ("mistral/m", "mistral", 1, LaneType::Http),
+            (
+                "anthropic/claude",
+                "anthropic",
+                anthropic_caps,
+                LaneType::Bridge,
+            ),
+            ("zai/glm", "anthropic", anthropic_caps, LaneType::Cli),
+        ],
+    )
+}
+
+/// Stubs for the pool: mixed lane types (Http/Bridge/Cli fixtures), Ship
+/// 2-of-3 with one ShipWithChanges. The rendezvous attaches ONLY to the
+/// capped pair — the disjoint loner must never manufacture an overlap.
+fn close_lanes(r: Option<&Arc<Rendezvous>>) -> LaneSet {
+    let cap_pair = |lane: StubLane, r: Option<&Arc<Rendezvous>>| match r {
+        Some(r) => lane.with_rendezvous(r.clone()).into_lane(),
+        None => lane.into_lane(),
+    };
+    LaneSet::new()
+        .with(StubLane::stub("mistral/m", LaneType::Http, Position::Ship).into_lane())
+        .with(cap_pair(
+            StubLane::stub(
+                "anthropic/claude",
+                LaneType::Bridge,
+                Position::ShipWithChanges,
+            ),
+            r,
+        ))
+        .with(cap_pair(
+            StubLane::stub("zai/glm", LaneType::Cli, Position::Ship),
+            r,
+        ))
+}
+
+#[test]
+fn p3_close_reserve_door_e2e_serialized_waves() {
+    // The day without the key: strict selection has 1 of 3 — the hard
+    // Pool refusal, proving this run NEEDS the door (no lucky pool).
+    let strict = quorum::convene(
+        "q-close-strict",
+        &council_for_quorum(),
+        &quorum::protocol_v1(),
+        quorum::Selection::strict(&close_day_candidates()),
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap_err();
+    assert!(strict.is_refusal());
+    assert!(matches!(
+        strict,
+        QuorumErr::Pool(DisjointErr::InsufficientDisjointPool { .. })
+    ));
+
+    // The door WITH the key: disjoint tail + the vetted reserve, audited.
+    let session = convene_close_quorum("q-close-1", "appr-close-1");
+    assert_eq!(
+        pool_lane_ids(&session),
+        vec!["mistral/m", "anthropic/claude", "zai/glm"]
+    );
+    let audit = session.reserve_audit.as_ref().unwrap();
+    assert_eq!(audit.approval_id, "appr-close-1");
+    assert_eq!(audit.disjoint_lanes, vec!["mistral/m"]);
+    assert_eq!(audit.reserve_lanes, vec!["anthropic/claude", "zai/glm"]);
+    assert_eq!(audit.skipped_non_live, 1);
+    assert_eq!(
+        audit.unapproved_live_overlap,
+        vec!["groq/llama", "nvidia/nem"]
+    );
+    // The overlap is REAL: every pulled reserve lane sits on the council
+    // panel — double duty, exactly what F9 kept silent and this cites.
+    let linked_council = council_for_quorum();
+    let panel: Vec<&str> = linked_council
+        .convening
+        .panel
+        .seats
+        .iter()
+        .map(|ps| ps.seat.lane_id.as_str())
+        .collect();
+    for lane in &audit.reserve_lanes {
+        assert!(panel.contains(&lane.as_str()));
+    }
+
+    // Cap law as DATA: the shared provider serializes the reserve pair.
+    let reg = close_registry(1);
+    let waves = quorum::dispatch_plan(&session, &reg).unwrap();
+    assert_eq!(
+        waves,
+        vec![
+            vec!["mistral/m".to_string(), "anthropic/claude".to_string()],
+            vec!["zai/glm".to_string()]
+        ]
+    );
+
+    let r = Rendezvous::new(2);
+    let path = tmp_stream("qclose1");
+    let _ = std::fs::remove_file(&path);
+    let v1 = quorum::protocol_v1();
+    let executed = run_quorum(
+        session,
+        move || v1.clone(),
+        &reg,
+        &close_lanes(Some(&r)),
+        &path,
+    )
+    .unwrap();
+
+    // The executor consumed the convene-selected pool VERBATIM: dispatch
+    // log lanes ARE the pool lanes in pool order — there is no second
+    // selection path to take (run_quorum owns none).
+    let dispatched: Vec<&str> = executed
+        .session
+        .dispatch_log
+        .iter()
+        .map(|e| e.lane_id.as_str())
+        .collect();
+    assert_eq!(dispatched, vec!["mistral/m", "anthropic/claude", "zai/glm"]);
+
+    // Ruling: ship at 2/3 (mistral + zai), never degraded.
+    assert!(!executed.verdict.degraded);
+    assert_eq!(executed.verdict.ruling, "ship");
+    assert_eq!(executed.ruling.agreeing.len(), 2);
+    assert_eq!(executed.ruling.pool_size, 3);
+    assert!(executed.votes.missing.is_empty());
+
+    // Cap enforcement OBSERVED, not just planned: the capped pair never
+    // co-resided inside a lane (each timed out alone in its own wave).
+    assert!(
+        !r.met("anthropic/claude"),
+        "serialized lanes never co-reside"
+    );
+    assert!(!r.met("zai/glm"), "serialized lanes never co-reside");
+
+    // Session cards: open(kind=quorum) + 3 usage + close.
+    let rows = read_rows(&path);
+    assert_eq!(rows.len(), 5);
+    match &rows[0] {
+        SessionRow::Open(o) => {
+            assert_eq!(o.kind, "quorum");
+            assert_eq!(o.conv, "q-close-1");
+            assert_eq!(o.rerun_of, "");
+        }
+        other => panic!("{other:?}"),
+    }
+    let usage: Vec<_> = rows
+        .iter()
+        .filter_map(|r| {
+            if let SessionRow::Usage(u) = r {
+                Some(u)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let mut usage_lanes: Vec<&str> = usage.iter().map(|u| u.lane.as_str()).collect();
+    usage_lanes.sort_unstable();
+    assert_eq!(
+        usage_lanes,
+        vec!["anthropic/claude", "mistral/m", "zai/glm"]
+    );
+
+    // Provenance, artifact 1 of 4 — the usage rows: TRANSPORT-served
+    // models + token counts, never the registered self-report.
+    for u in &usage {
+        assert_eq!(u.model, format!("{}/transport-served", u.lane));
+        assert!(!u.model.contains("registered"));
+        assert_eq!((u.tokens_in, u.tokens_out), (100, 200));
+    }
+
+    // Artifact 2 — the verdict's provenance rows.
+    for p in &executed.verdict.provenance {
+        assert!(p.transport_served_model.ends_with("/transport-served"));
+        assert!(!p.transport_served_model.contains("registered"));
+    }
+
+    // Artifact 3 — the VERDICT.md seat table.
+    assert!(executed.verdict_md.contains("verdict: ship\n"));
+    assert!(executed.verdict_md.contains("missing: none"));
+    assert!(executed.verdict_md.contains("council: c1"));
+    for lane in ["mistral/m", "anthropic/claude", "zai/glm"] {
+        assert!(executed.verdict_md.contains(&format!("{lane} -> ")));
+        assert!(executed
+            .verdict_md
+            .contains(&format!("(served by {lane}/transport-served)")));
+    }
+
+    // Artifact 4 — the ledger row: parses, floor 2/3, and its digest IS
+    // the close row's digest (the ONE digest law).
+    let row = quorum::parse_ledger_row(&executed.ledger_row).unwrap();
+    assert_eq!(row.conv, "q-close-1");
+    assert_eq!(row.ruled, "ship");
+    assert_eq!(row.floor, "2/3");
+    assert_eq!(row.missing, 0);
+    assert!(!row.degraded);
+    let close_digest = match &rows[4] {
+        SessionRow::Close(c) => c.verdict_digest.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(close_digest, row.verdict_digest);
+
+    // The audit rides the EXECUTED session — the warden ledger's fact.
+    let audit = executed.session.reserve_audit.as_ref().unwrap();
+    assert_eq!(audit.approval_id, "appr-close-1");
+    assert_eq!(audit.reserve_lanes, vec!["anthropic/claude", "zai/glm"]);
+}
+
+#[test]
+fn p3_close_reserve_door_e2e_raised_cap_shares_one_wave() {
+    // The SAME reserve-door convening under a RAISED cap (fixture; in
+    // life the cap moves only through the warden-gated edit path): the
+    // capped pair legally shares ONE concurrent wave — observed live.
+    let session = convene_close_quorum("q-close-2", "appr-close-2");
+    let reg = close_registry(2);
+    let waves = quorum::dispatch_plan(&session, &reg).unwrap();
+    assert_eq!(
+        waves,
+        vec![vec![
+            "mistral/m".to_string(),
+            "anthropic/claude".to_string(),
+            "zai/glm".to_string()
+        ]]
+    );
+
+    let r = Rendezvous::new(2);
+    let path = tmp_stream("qclose2");
+    let _ = std::fs::remove_file(&path);
+    let v1 = quorum::protocol_v1();
+    let executed = run_quorum(
+        session,
+        move || v1.clone(),
+        &reg,
+        &close_lanes(Some(&r)),
+        &path,
+    )
+    .unwrap();
+
+    // Sharing OBSERVED: the same-provider pair co-resided in one wave.
+    assert!(r.met("anthropic/claude"), "same-wave lanes co-reside");
+    assert!(r.met("zai/glm"), "same-wave lanes co-reside");
+
+    // Same ruling, same rows, same audit — the door is cap-agnostic.
+    assert_eq!(executed.verdict.ruling, "ship");
+    assert_eq!(executed.session.dispatch_log.len(), 3);
+    let rows = read_rows(&path);
+    assert_eq!(rows.len(), 5);
+    assert!(matches!(rows[0], SessionRow::Open(_)));
+    assert!(matches!(rows[4], SessionRow::Close(_)));
+    let audit = executed.session.reserve_audit.as_ref().unwrap();
+    assert_eq!(audit.approval_id, "appr-close-2");
+    assert_eq!(audit.reserve_lanes, vec!["anthropic/claude", "zai/glm"]);
+}
