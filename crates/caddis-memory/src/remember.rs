@@ -98,7 +98,11 @@ impl MemoryDoc {
         let mut front = self.front.clone();
         front.remove(STAMP_WARDEN_SEQ);
         front.remove(STAMP_WARDEN_TX);
-        MemoryDoc { front, body: self.body.clone() }.render()
+        MemoryDoc {
+            front,
+            body: self.body.clone(),
+        }
+        .render()
     }
 }
 
@@ -154,7 +158,13 @@ pub fn parse_verdict(reply: &str) -> Result<WardenVerdict, String> {
     }
     let seq = seq_f as u64;
     let allow = verdict == "allow";
-    Ok(WardenVerdict { verdict: verdict.to_string(), allow, reason: reason.to_string(), law: law.to_string(), seq })
+    Ok(WardenVerdict {
+        verdict: verdict.to_string(),
+        allow,
+        reason: reason.to_string(),
+        law: law.to_string(),
+        seq,
+    })
 }
 
 fn field_str<'a>(v: &'a json::Value, key: &str) -> Result<&'a str, String> {
@@ -255,7 +265,10 @@ mod tests {
             let v = format!("val-{}-{}", i, rng.next() % 1000);
             front.insert(k, v);
         }
-        MemoryDoc { front, body: "body line\nsecond line\n".to_string() }
+        MemoryDoc {
+            front,
+            body: "body line\nsecond line\n".to_string(),
+        }
     }
 
     /// I1+ gate property (quorum (a)->(b)): >=1000 randomized key
@@ -279,8 +292,15 @@ mod tests {
                 for (k, v) in shuffled {
                     front.insert(k, v);
                 }
-                let rebuilt = MemoryDoc { front, body: doc.body.clone() };
-                assert_eq!(rebuilt.render(), canonical, "seed {seed} perm {perm} drifted");
+                let rebuilt = MemoryDoc {
+                    front,
+                    body: doc.body.clone(),
+                };
+                assert_eq!(
+                    rebuilt.render(),
+                    canonical,
+                    "seed {seed} perm {perm} drifted"
+                );
             }
         }
     }
@@ -319,14 +339,18 @@ mod tests {
     fn multiline_value_is_refused() {
         let mut front = BTreeMap::new();
         front.insert("bad".to_string(), "two\nlines".to_string());
-        let doc = MemoryDoc { front, body: String::new() };
+        let doc = MemoryDoc {
+            front,
+            body: String::new(),
+        };
         let _ = doc.render();
     }
 
     #[test]
     fn frame_encoding_is_exact_bytes() {
         let frame = encode_frame("memory.write", "put", "a.md", b"hi\nthere");
-        let expected = b"tool 12\nmemory.write\ncommand 3\nput\npath 4\na.md\ncontent 8\nhi\nthere\n";
+        let expected =
+            b"tool 12\nmemory.write\ncommand 3\nput\npath 4\na.md\ncontent 8\nhi\nthere\n";
         assert_eq!(&frame, &expected[..]);
         // Byte-count law: multi-byte UTF-8 counts bytes, not chars.
         let utf8 = encode_frame("t", "c", "p", "äöü".as_bytes());
@@ -335,10 +359,12 @@ mod tests {
 
     #[test]
     fn verdict_allow_and_deny_parse() {
-        let ok = parse_verdict(r#"{"verdict":"allow","reason":"clean","law":"L1","seq":12}"#).unwrap();
+        let ok =
+            parse_verdict(r#"{"verdict":"allow","reason":"clean","law":"L1","seq":12}"#).unwrap();
         assert!(ok.allow);
         assert_eq!(ok.seq, 12);
-        let deny = parse_verdict(r#"{"verdict":"block","reason":"secret","law":"S2","seq":13}"#).unwrap();
+        let deny =
+            parse_verdict(r#"{"verdict":"block","reason":"secret","law":"S2","seq":13}"#).unwrap();
         assert!(!deny.allow);
         assert_eq!(deny.verdict, "block");
     }
@@ -363,7 +389,10 @@ mod tests {
 
     #[test]
     fn slug_and_filename_law() {
-        assert_eq!(slugify("Council Verdict: I2+ — steal rule!").unwrap(), "council-verdict-i2-steal-rule");
+        assert_eq!(
+            slugify("Council Verdict: I2+ — steal rule!").unwrap(),
+            "council-verdict-i2-steal-rule"
+        );
         assert_eq!(slugify("  --multiple   gaps--  ").unwrap(), "multiple-gaps");
         assert!(slugify("!!!").is_err());
         let long = "x".repeat(80);

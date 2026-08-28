@@ -74,19 +74,27 @@ impl Registry {
     pub fn load(path: &Path) -> Result<Registry, RegistryError> {
         match fs::read_to_string(path) {
             Ok(text) => Registry::from_str(path, &text),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok(Registry { path: path.to_path_buf(), entries: Vec::new() })
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Registry {
+                path: path.to_path_buf(),
+                entries: Vec::new(),
+            }),
             Err(e) => Err(RegistryError::Io(e.to_string())),
         }
     }
 
     fn from_str(path: &Path, text: &str) -> Result<Registry, RegistryError> {
         let head = |n: usize| text.get(..n).unwrap_or(text).replace('\n', "\\n");
-        let schema = |why: &str| RegistryError::Schema { why: why.to_string(), head: head(120) };
+        let schema = |why: &str| RegistryError::Schema {
+            why: why.to_string(),
+            head: head(120),
+        };
         let root = json::parse(text).map_err(|e| schema(&format!("json: {e:?}")))?;
-        let cols = root.get("collections").ok_or_else(|| schema("collections key missing"))?;
-        let pairs = cols.as_obj().ok_or_else(|| schema("collections must be an object"))?;
+        let cols = root
+            .get("collections")
+            .ok_or_else(|| schema("collections key missing"))?;
+        let pairs = cols
+            .as_obj()
+            .ok_or_else(|| schema("collections must be an object"))?;
         let mut entries = Vec::new();
         for (name, ev) in pairs {
             let public = ev
@@ -108,10 +116,18 @@ impl Registry {
                 Some(Value::Str(r)) if !r.trim().is_empty() => Some(PathBuf::from(r)),
                 Some(_) => return Err(schema(&format!("entry {name}: root must be a string"))),
             };
-            entries.push(CollectionEntry { name: name.clone(), public, owner: owner.to_string(), root });
+            entries.push(CollectionEntry {
+                name: name.clone(),
+                public,
+                owner: owner.to_string(),
+                root,
+            });
         }
         entries.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(Registry { path: path.to_path_buf(), entries })
+        Ok(Registry {
+            path: path.to_path_buf(),
+            entries,
+        })
     }
 
     /// Atomic save (tmp + rename). The organ never leaves a half-written
@@ -237,7 +253,10 @@ impl Registry {
             .filter(|e| !live.iter().any(|c| c.name == e.name))
             .map(|e| e.name.clone())
             .collect();
-        RegistryDiff { unregistered, vanished }
+        RegistryDiff {
+            unregistered,
+            vanished,
+        }
     }
 
     /// I5+ (quorum 2026-08-26, three independent seats): registered roots
@@ -268,7 +287,10 @@ impl Registry {
                 let nested = pa.starts_with(&format!("{pb}/")) || pb.starts_with(&format!("{pa}/"));
                 if nested || pa == pb {
                     return Err(RegistryError::Schema {
-                        why: format!("collection roots overlap: {} ({pa}) vs {} ({pb})", a.name, b.name),
+                        why: format!(
+                            "collection roots overlap: {} ({pa}) vs {} ({pb})",
+                            a.name, b.name
+                        ),
                         head: String::new(),
                     });
                 }
@@ -292,13 +314,18 @@ mod tests {
     use crate::refresh::CollectionStatus;
 
     fn tmp_path(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("caddis-registry-{}-{tag}.json", std::process::id()));
+        let p =
+            std::env::temp_dir().join(format!("caddis-registry-{}-{tag}.json", std::process::id()));
         let _ = fs::remove_file(&p);
         p
     }
 
     fn cs(name: &str) -> CollectionStatus {
-        CollectionStatus { name: name.to_string(), files: 1, updated_ago_secs: None }
+        CollectionStatus {
+            name: name.to_string(),
+            files: 1,
+            updated_ago_secs: None,
+        }
     }
 
     #[test]
@@ -312,8 +339,18 @@ mod tests {
     fn round_trip_preserves_entries_and_leaves_no_tmp() {
         let path = tmp_path("roundtrip");
         let mut reg = Registry::load(&path).unwrap();
-        reg.upsert(CollectionEntry { name: "memory".into(), public: false, owner: "qmd".into(), root: None });
-        reg.upsert(CollectionEntry { name: "showr".into(), public: true, owner: "operator".into(), root: None });
+        reg.upsert(CollectionEntry {
+            name: "memory".into(),
+            public: false,
+            owner: "qmd".into(),
+            root: None,
+        });
+        reg.upsert(CollectionEntry {
+            name: "showr".into(),
+            public: true,
+            owner: "operator".into(),
+            root: None,
+        });
         reg.save().unwrap();
 
         let tmp = {
@@ -330,7 +367,10 @@ mod tests {
 
     #[test]
     fn absent_entry_reads_private_unclaimed() {
-        let reg = Registry { path: tmp_path("law"), entries: Vec::new() };
+        let reg = Registry {
+            path: tmp_path("law"),
+            entries: Vec::new(),
+        };
         let e = reg.get("anything");
         assert!(!e.public);
         assert_eq!(e.owner, "unclaimed");
@@ -346,13 +386,22 @@ mod tests {
         // collections not an object
         assert!(Registry::from_str(Path::new("x"), r#"{"collections":[]}"#).is_err());
         // entry missing owner
-        assert!(Registry::from_str(Path::new("x"), r#"{"collections":{"a":{"public":false}}}"#).is_err());
-        // entry public wrong type
         assert!(
-            Registry::from_str(Path::new("x"), r#"{"collections":{"a":{"public":"no","owner":"x"}}}"#).is_err()
+            Registry::from_str(Path::new("x"), r#"{"collections":{"a":{"public":false}}}"#)
+                .is_err()
         );
+        // entry public wrong type
+        assert!(Registry::from_str(
+            Path::new("x"),
+            r#"{"collections":{"a":{"public":"no","owner":"x"}}}"#
+        )
+        .is_err());
         // owner empty
-        assert!(Registry::from_str(Path::new("x"), r#"{"collections":{"a":{"public":false,"owner":"  "}}}"#).is_err());
+        assert!(Registry::from_str(
+            Path::new("x"),
+            r#"{"collections":{"a":{"public":false,"owner":"  "}}}"#
+        )
+        .is_err());
         // trailing garbage
         assert!(Registry::from_str(Path::new("x"), r#"{"collections":{}} extra"#).is_err());
     }
@@ -369,9 +418,22 @@ mod tests {
 
     #[test]
     fn upsert_replaces_by_name() {
-        let mut reg = Registry { path: tmp_path("upsert"), entries: Vec::new() };
-        reg.upsert(CollectionEntry { name: "a".into(), public: false, owner: "qmd".into(), root: None });
-        reg.upsert(CollectionEntry { name: "a".into(), public: true, owner: "op".into(), root: None });
+        let mut reg = Registry {
+            path: tmp_path("upsert"),
+            entries: Vec::new(),
+        };
+        reg.upsert(CollectionEntry {
+            name: "a".into(),
+            public: false,
+            owner: "qmd".into(),
+            root: None,
+        });
+        reg.upsert(CollectionEntry {
+            name: "a".into(),
+            public: true,
+            owner: "op".into(),
+            root: None,
+        });
         assert_eq!(reg.entries().len(), 1);
         assert!(reg.is_public("a"));
         assert_eq!(reg.get("a").owner, "op");
@@ -379,14 +441,22 @@ mod tests {
 
     #[test]
     fn seed_adds_only_unknown_collections() {
-        let mut reg = Registry { path: tmp_path("seed"), entries: Vec::new() };
+        let mut reg = Registry {
+            path: tmp_path("seed"),
+            entries: Vec::new(),
+        };
         let live = [cs("memory"), cs("showr")];
         assert_eq!(reg.seed_from_status(&live), 2);
         assert_eq!(reg.seed_from_status(&live), 0, "second seed is a no-op");
         assert_eq!(reg.get("memory").owner, "qmd");
         assert!(!reg.get("memory").public);
         // an organ-claimed entry is never overwritten by seeding
-        reg.upsert(CollectionEntry { name: "sergeant-state".into(), public: false, owner: "caddis".into(), root: None });
+        reg.upsert(CollectionEntry {
+            name: "sergeant-state".into(),
+            public: false,
+            owner: "caddis".into(),
+            root: None,
+        });
         let live2 = [cs("memory"), cs("sergeant-state")];
         assert_eq!(reg.seed_from_status(&live2), 0);
         assert_eq!(reg.get("sergeant-state").owner, "caddis");
@@ -394,9 +464,22 @@ mod tests {
 
     #[test]
     fn diff_sees_both_directions() {
-        let mut reg = Registry { path: tmp_path("diff"), entries: Vec::new() };
-        reg.upsert(CollectionEntry { name: "ghost".into(), public: false, owner: "qmd".into(), root: None });
-        reg.upsert(CollectionEntry { name: "memory".into(), public: false, owner: "qmd".into(), root: None });
+        let mut reg = Registry {
+            path: tmp_path("diff"),
+            entries: Vec::new(),
+        };
+        reg.upsert(CollectionEntry {
+            name: "ghost".into(),
+            public: false,
+            owner: "qmd".into(),
+            root: None,
+        });
+        reg.upsert(CollectionEntry {
+            name: "memory".into(),
+            public: false,
+            owner: "qmd".into(),
+            root: None,
+        });
         let d = reg.diff(&[cs("memory"), cs("new-kid")]);
         assert_eq!(d.unregistered, vec!["new-kid"]);
         assert_eq!(d.vanished, vec!["ghost"]);
@@ -404,8 +487,16 @@ mod tests {
 
     #[test]
     fn remove_reports_whether_it_removed() {
-        let mut reg = Registry { path: tmp_path("rm"), entries: Vec::new() };
-        reg.upsert(CollectionEntry { name: "a".into(), public: false, owner: "qmd".into(), root: None });
+        let mut reg = Registry {
+            path: tmp_path("rm"),
+            entries: Vec::new(),
+        };
+        reg.upsert(CollectionEntry {
+            name: "a".into(),
+            public: false,
+            owner: "qmd".into(),
+            root: None,
+        });
         assert!(reg.remove("a"));
         assert!(!reg.remove("a"));
     }

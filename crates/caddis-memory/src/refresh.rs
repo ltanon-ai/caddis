@@ -87,22 +87,43 @@ pub struct CollectionStatus {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RefreshError {
     Spawn(String),
-    Timeout { phase: &'static str, budget: Duration, after: Duration },
-    NonZero { phase: &'static str, code: i32, stderr_head: String },
-    Parse { why: String, stdout_head: String },
+    Timeout {
+        phase: &'static str,
+        budget: Duration,
+        after: Duration,
+    },
+    NonZero {
+        phase: &'static str,
+        code: i32,
+        stderr_head: String,
+    },
+    Parse {
+        why: String,
+        stdout_head: String,
+    },
 }
 
 impl std::fmt::Display for RefreshError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RefreshError::Spawn(why) => write!(f, "spawn failed: {why}"),
-            RefreshError::Timeout { phase, budget, after } => {
+            RefreshError::Timeout {
+                phase,
+                budget,
+                after,
+            } => {
                 write!(f, "{phase} killed at {budget:?} deadline (after {after:?})")
             }
-            RefreshError::NonZero { phase, code, stderr_head } => {
+            RefreshError::NonZero {
+                phase,
+                code,
+                stderr_head,
+            } => {
                 write!(f, "{phase} exited {code}: {stderr_head}")
             }
-            RefreshError::Parse { why, stdout_head } => write!(f, "status unparseable ({why}): {stdout_head}"),
+            RefreshError::Parse { why, stdout_head } => {
+                write!(f, "status unparseable ({why}): {stdout_head}")
+            }
         }
     }
 }
@@ -121,7 +142,10 @@ pub enum RefreshVerdict {
         lock_stolen: bool,
     },
     /// A live sibling refresh owns the lock. Not an error — the host retries.
-    Busy { pid: Option<u32>, age_secs: Option<u64> },
+    Busy {
+        pid: Option<u32>,
+        age_secs: Option<u64>,
+    },
     /// Provably failed. RED halts (canary law).
     Red(String),
     /// qmd unusable right now (spawn failure only). Never halts.
@@ -169,7 +193,10 @@ pub fn default_lock_path() -> PathBuf {
 }
 
 pub fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +236,10 @@ fn parse_files_value(v: &str) -> Option<(u64, Option<u64>)> {
 /// `--json` flag is accepted but ignored by qmd — text IS the contract).
 pub fn parse_status(text: &str) -> Result<StatusSnapshot, RefreshError> {
     let head = |n: usize| text.get(..n).unwrap_or(text).replace('\n', "\\n");
-    let bad = |why: &str| RefreshError::Parse { why: why.to_string(), stdout_head: head(200) };
+    let bad = |why: &str| RefreshError::Parse {
+        why: why.to_string(),
+        stdout_head: head(200),
+    };
 
     #[derive(PartialEq)]
     enum Sec {
@@ -267,7 +297,11 @@ pub fn parse_status(text: &str) -> Result<StatusSnapshot, RefreshError> {
                 } else if let (Some(name), Some(v)) = (&current, trimmed.strip_prefix("Files:")) {
                     let (files, updated_ago_secs) =
                         parse_files_value(v).ok_or_else(|| bad("Files line unreadable"))?;
-                    collections.push(CollectionStatus { name: name.clone(), files, updated_ago_secs });
+                    collections.push(CollectionStatus {
+                        name: name.clone(),
+                        files,
+                        updated_ago_secs,
+                    });
                 }
             }
             Sec::None => {}
@@ -276,7 +310,13 @@ pub fn parse_status(text: &str) -> Result<StatusSnapshot, RefreshError> {
 
     let total_docs = total.ok_or_else(|| bad("Documents section missing Total"))?;
     let vectors = vectors.ok_or_else(|| bad("Documents section missing Vectors"))?;
-    Ok(StatusSnapshot { total_docs, vectors, pending_embed: pending, index_age_secs: updated, collections })
+    Ok(StatusSnapshot {
+        total_docs,
+        vectors,
+        pending_embed: pending,
+        index_age_secs: updated,
+        collections,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -289,9 +329,15 @@ pub enum LockState {
     /// The lock file did not exist.
     Acquired,
     /// A stale (or pre-organ, unparseable) lock was overwritten.
-    Stolen { pid: Option<u32>, age_secs: Option<u64> },
+    Stolen {
+        pid: Option<u32>,
+        age_secs: Option<u64>,
+    },
     /// A live holder owns it — back off.
-    Busy { pid: Option<u32>, age_secs: Option<u64> },
+    Busy {
+        pid: Option<u32>,
+        age_secs: Option<u64>,
+    },
 }
 
 /// Lock file body: `pid\ntimestamp\n`.
@@ -307,13 +353,22 @@ pub fn parse_lock(text: &str) -> Option<(u32, u64)> {
 /// organ and is stealable garbage.
 pub fn decide_lock(holder: Option<(u32, u64)>, now_secs: u64, stale_after_secs: u64) -> LockState {
     match holder {
-        None => LockState::Stolen { pid: None, age_secs: None },
+        None => LockState::Stolen {
+            pid: None,
+            age_secs: None,
+        },
         Some((pid, ts)) => {
             let age = now_secs.saturating_sub(ts);
             if age >= stale_after_secs {
-                LockState::Stolen { pid: Some(pid), age_secs: Some(age) }
+                LockState::Stolen {
+                    pid: Some(pid),
+                    age_secs: Some(age),
+                }
             } else {
-                LockState::Busy { pid: Some(pid), age_secs: Some(age) }
+                LockState::Busy {
+                    pid: Some(pid),
+                    age_secs: Some(age),
+                }
             }
         }
     }
@@ -339,10 +394,18 @@ pub fn acquire_lock(path: &Path, stale_after: Duration) -> LockState {
     let state = match fs::read_to_string(path) {
         Ok(text) => decide_lock(parse_lock(&text), now, stale_after.as_secs()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => LockState::Acquired,
-        Err(_) => return LockState::Busy { pid: None, age_secs: None },
+        Err(_) => {
+            return LockState::Busy {
+                pid: None,
+                age_secs: None,
+            }
+        }
     };
     if !matches!(state, LockState::Busy { .. }) && write_lock(path).is_err() {
-        return LockState::Busy { pid: None, age_secs: None };
+        return LockState::Busy {
+            pid: None,
+            age_secs: None,
+        };
     }
     state
 }
@@ -364,7 +427,10 @@ pub fn release_lock(path: &Path) {
 // ---------------------------------------------------------------------------
 
 /// Read-only staleness probe: run `qmd status` and parse it.
-pub fn probe<R: Runner>(runner: &mut R, cfg: &RefreshConfig) -> Result<StatusSnapshot, RefreshError> {
+pub fn probe<R: Runner>(
+    runner: &mut R,
+    cfg: &RefreshConfig,
+) -> Result<StatusSnapshot, RefreshError> {
     let job = Job {
         launcher: cfg.memory.launcher.clone(),
         args: vec!["status".into()],
@@ -381,7 +447,11 @@ pub fn probe<R: Runner>(runner: &mut R, cfg: &RefreshConfig) -> Result<StatusSna
 
 fn fail_closed(phase: &'static str, budget: Duration, out: &Outcome) -> Option<RefreshError> {
     if out.timed_out {
-        return Some(RefreshError::Timeout { phase, budget, after: out.duration });
+        return Some(RefreshError::Timeout {
+            phase,
+            budget,
+            after: out.duration,
+        });
     }
     match out.code {
         None => Some(RefreshError::Spawn(out.stderr.clone())),
@@ -410,7 +480,9 @@ pub fn refresh<R: Runner>(runner: &mut R, cfg: &RefreshConfig) -> RefreshVerdict
         Err(e) => return err_verdict(e),
     };
     let stale = before.pending_embed > 0
-        || before.index_age_secs.is_some_and(|a| a >= cfg.stale_after.as_secs());
+        || before
+            .index_age_secs
+            .is_some_and(|a| a >= cfg.stale_after.as_secs());
     if !stale {
         return RefreshVerdict::Fresh { snapshot: before };
     }
@@ -421,9 +493,17 @@ pub fn refresh<R: Runner>(runner: &mut R, cfg: &RefreshConfig) -> RefreshVerdict
     };
     release_lock(&cfg.lock_path);
     match verdict {
-        RefreshVerdict::Refreshed { before, after, steps, .. } => {
-            RefreshVerdict::Refreshed { before, after, steps, lock_stolen }
-        }
+        RefreshVerdict::Refreshed {
+            before,
+            after,
+            steps,
+            ..
+        } => RefreshVerdict::Refreshed {
+            before,
+            after,
+            steps,
+            lock_stolen,
+        },
         other => other,
     }
 }
@@ -454,9 +534,12 @@ fn refresh_locked<R: Runner>(
     }
     // The canary (amendment 2): pending-embed must return to 0. RED halts.
     match probe(runner, cfg) {
-        Ok(after) if after.pending_embed == 0 => {
-            RefreshVerdict::Refreshed { before, after, steps, lock_stolen: false }
-        }
+        Ok(after) if after.pending_embed == 0 => RefreshVerdict::Refreshed {
+            before,
+            after,
+            steps,
+            lock_stolen: false,
+        },
         Ok(after) => RefreshVerdict::Red(format!(
             "canary RED: pending-embed still {} after refresh",
             after.pending_embed
@@ -535,7 +618,12 @@ mod tests {
     fn cfg_in(dir: &Path) -> RefreshConfig {
         RefreshConfig {
             lock_path: dir.join("refresh.lock"),
-            memory: MemoryConfig { launcher: vec!["qmd".into()], workdir: None, fast_timeout: FAST, deep_timeout: DEEP },
+            memory: MemoryConfig {
+                launcher: vec!["qmd".into()],
+                workdir: None,
+                fast_timeout: FAST,
+                deep_timeout: DEEP,
+            },
             lock_stale_after: Duration::from_secs(900),
             stale_after: Duration::from_secs(6 * 3600),
             probe_timeout: PROBE_BUDGET,
@@ -593,19 +681,28 @@ mod tests {
     #[test]
     fn missing_total_is_parse_error() {
         let text = status_text(Some("7"), "21h").replace("  Total:    3196 files indexed\r\n", "");
-        assert!(matches!(parse_status(&text), Err(RefreshError::Parse { .. })));
+        assert!(matches!(
+            parse_status(&text),
+            Err(RefreshError::Parse { .. })
+        ));
     }
 
     #[test]
     fn missing_vectors_is_parse_error() {
         let text = status_text(Some("7"), "21h").replace("  Vectors:  20797 embedded\r\n", "");
-        assert!(matches!(parse_status(&text), Err(RefreshError::Parse { .. })));
+        assert!(matches!(
+            parse_status(&text),
+            Err(RefreshError::Parse { .. })
+        ));
     }
 
     #[test]
     fn garbage_pending_token_is_parse_error() {
         let text = status_text(Some("soon"), "21h");
-        assert!(matches!(parse_status(&text), Err(RefreshError::Parse { .. })));
+        assert!(matches!(
+            parse_status(&text),
+            Err(RefreshError::Parse { .. })
+        ));
     }
 
     #[test]
@@ -636,24 +733,42 @@ mod tests {
         // fresh holder → busy
         assert_eq!(
             decide_lock(Some((10, 1_000)), 1_500, 900),
-            LockState::Busy { pid: Some(10), age_secs: Some(500) }
+            LockState::Busy {
+                pid: Some(10),
+                age_secs: Some(500)
+            }
         );
         // stale holder → steal
         assert_eq!(
             decide_lock(Some((10, 1_000)), 2_000, 900),
-            LockState::Stolen { pid: Some(10), age_secs: Some(1_000) }
+            LockState::Stolen {
+                pid: Some(10),
+                age_secs: Some(1_000)
+            }
         );
         // exactly at the boundary → steal (>= is stale)
         assert_eq!(
             decide_lock(Some((10, 1_000)), 1_900, 900),
-            LockState::Stolen { pid: Some(10), age_secs: Some(900) }
+            LockState::Stolen {
+                pid: Some(10),
+                age_secs: Some(900)
+            }
         );
         // corrupt body → steal, unknown holder
-        assert_eq!(decide_lock(None, 1_900, 900), LockState::Stolen { pid: None, age_secs: None });
+        assert_eq!(
+            decide_lock(None, 1_900, 900),
+            LockState::Stolen {
+                pid: None,
+                age_secs: None
+            }
+        );
         // clock behind holder (skew) → age clamps to 0 → busy
         assert_eq!(
             decide_lock(Some((10, 5_000)), 1_000, 900),
-            LockState::Busy { pid: Some(10), age_secs: Some(0) }
+            LockState::Busy {
+                pid: Some(10),
+                age_secs: Some(0)
+            }
         );
     }
 
@@ -661,7 +776,10 @@ mod tests {
     fn lock_acquire_free_then_release() {
         let dir = tmp_dir("free");
         let path = dir.join("refresh.lock");
-        assert_eq!(acquire_lock(&path, Duration::from_secs(900)), LockState::Acquired);
+        assert_eq!(
+            acquire_lock(&path, Duration::from_secs(900)),
+            LockState::Acquired
+        );
         assert!(path.exists());
         release_lock(&path); // our pid is in the file → removed
         assert!(!path.exists());
@@ -677,7 +795,9 @@ mod tests {
         fs::write(&tmp, format!("999999\n{}\n", now_secs())).unwrap();
         fs::rename(&tmp, &path).unwrap();
         match acquire_lock(&path, Duration::from_secs(900)) {
-            LockState::Busy { pid: Some(999_999), .. } => {}
+            LockState::Busy {
+                pid: Some(999_999), ..
+            } => {}
             other => panic!("expected busy, got {other:?}"),
         }
         // release_lock must NOT remove a foreign pid's lock.
@@ -710,7 +830,10 @@ mod tests {
         let verdict = refresh(&mut runner, &cfg_in(&dir));
         assert!(matches!(verdict, RefreshVerdict::Fresh { .. }));
         assert_eq!(runner.calls, vec![vec!["status".to_string()]]);
-        assert!(!dir.join("refresh.lock").exists(), "fresh no-op must not take the lock");
+        assert!(
+            !dir.join("refresh.lock").exists(),
+            "fresh no-op must not take the lock"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -724,7 +847,12 @@ mod tests {
         let dir = tmp_dir("green");
         let verdict = refresh(&mut runner, &cfg_in(&dir));
         match &verdict {
-            RefreshVerdict::Refreshed { before, after, steps, lock_stolen } => {
+            RefreshVerdict::Refreshed {
+                before,
+                after,
+                steps,
+                lock_stolen,
+            } => {
                 assert_eq!(before.pending_embed, 7);
                 assert_eq!(after.pending_embed, 0);
                 assert_eq!(steps.len(), 2);
@@ -743,7 +871,10 @@ mod tests {
                 vec!["status".to_string()],
             ]
         );
-        assert!(!dir.join("refresh.lock").exists(), "lock must be released on Green");
+        assert!(
+            !dir.join("refresh.lock").exists(),
+            "lock must be released on Green"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -760,7 +891,10 @@ mod tests {
             RefreshVerdict::Red(why) => assert!(why.contains("pending-embed still 3")),
             other => panic!("expected Red, got {other:?}"),
         }
-        assert!(!dir.join("refresh.lock").exists(), "lock must be released on Red");
+        assert!(
+            !dir.join("refresh.lock").exists(),
+            "lock must be released on Red"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -775,10 +909,16 @@ mod tests {
         fs::rename(&tmp, &path).unwrap();
         let verdict = refresh(&mut runner, &cfg_in(&dir));
         match verdict {
-            RefreshVerdict::Busy { pid: Some(999_999), .. } => {}
+            RefreshVerdict::Busy {
+                pid: Some(999_999), ..
+            } => {}
             other => panic!("expected Busy, got {other:?}"),
         }
-        assert_eq!(runner.calls, vec![vec!["status".to_string()]], "no update/embed while busy");
+        assert_eq!(
+            runner.calls,
+            vec![vec!["status".to_string()]],
+            "no update/embed while busy"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -810,7 +950,10 @@ mod tests {
             RefreshVerdict::Red(why) => assert!(why.contains("update killed at")),
             other => panic!("expected Red, got {other:?}"),
         }
-        assert!(!dir.join("refresh.lock").exists(), "lock released after timeout");
+        assert!(
+            !dir.join("refresh.lock").exists(),
+            "lock released after timeout"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

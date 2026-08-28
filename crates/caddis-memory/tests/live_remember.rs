@@ -54,7 +54,10 @@ fn ledger_path() -> PathBuf {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 fn qmd(runner: &mut RealRunner, workdir: &Path, args: &[&str]) -> String {
@@ -68,7 +71,12 @@ fn qmd(runner: &mut RealRunner, workdir: &Path, args: &[&str]) -> String {
     };
     let out = runner.run(&job);
     assert!(!out.timed_out, "qmd {args:?} timed out");
-    assert_eq!(out.code, Some(0), "qmd {args:?} failed: {}", out.stderr.trim());
+    assert_eq!(
+        out.code,
+        Some(0),
+        "qmd {args:?} failed: {}",
+        out.stderr.trim()
+    );
     out.stdout
 }
 
@@ -98,10 +106,15 @@ fn live_bootstrap_real_config() {
         let root = e.root.expect("{name} carries its sandbox root");
         assert!(root.is_dir(), "{name} root exists: {}", root.display());
     }
-    reloaded.validate_roots().expect("real roots pairwise non-overlapping");
+    reloaded
+        .validate_roots()
+        .expect("real roots pairwise non-overlapping");
 
     let again = bootstrap(&mut reloaded, &state_dir).expect("second bootstrap");
-    assert!(again.created_dirs.is_empty() && again.upserted.is_empty(), "idempotent on real config");
+    assert!(
+        again.created_dirs.is_empty() && again.upserted.is_empty(),
+        "idempotent on real config"
+    );
 }
 
 /// (c)→live gate: ONE real memory through the whole ratified flow —
@@ -114,7 +127,10 @@ fn live_one_memory_probe() {
     let root = state_dir.join("memory");
     let mut reg = Registry::load(&Registry::default_path()).expect("registry");
     let rep = bootstrap(&mut reg, &state_dir).expect("bootstrap");
-    println!("bootstrap: created={:?} upserted={:?}", rep.created_dirs, rep.upserted);
+    println!(
+        "bootstrap: created={:?} upserted={:?}",
+        rep.created_dirs, rep.upserted
+    );
 
     let cfg = RememberConfig::from_registry(
         &reg,
@@ -142,9 +158,17 @@ fn live_one_memory_probe() {
 
     let mut runner = RealRunner;
     let r = remember(&mut runner, &cfg, doc, &root, ts).expect("warden-gated write lands");
-    println!("remembered: {} seq={} tx={}", r.path.display(), r.seq, r.tx_hash);
+    println!(
+        "remembered: {} seq={} tx={}",
+        r.path.display(),
+        r.seq,
+        r.tx_hash
+    );
     assert!(r.seq > 0, "verdict carried a ledger seq");
-    assert!(r.tx_hash.starts_with("wardn"), "I4 stamp is a ledger row id");
+    assert!(
+        r.tx_hash.starts_with("wardn"),
+        "I4 stamp is a ledger row id"
+    );
 
     // --- ledger row: the stamp points at a REAL row in the real ledger ---
     // The warden flushes its append asynchronously: the verdict (and its tx
@@ -172,7 +196,10 @@ fn live_one_memory_probe() {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n";
-    assert_eq!(stripped, draft, "on-disk doc == warden-judged draft + exactly the two stamps");
+    assert_eq!(
+        stripped, draft,
+        "on-disk doc == warden-judged draft + exactly the two stamps"
+    );
 
     // --- active_heads view: the new doc is the recorded tip ---
     let heads = fs::read_to_string(root.join("active_heads.json")).unwrap();
@@ -186,7 +213,11 @@ fn live_one_memory_probe() {
     let fwd_root = root.to_string_lossy().replace('\\', "/");
     let mut bm = RealRunner;
     qmd(&mut bm, &td, &["init"]);
-    qmd(&mut bm, &td, &["collection", "add", SERGEANT_STATE, &fwd_root]);
+    qmd(
+        &mut bm,
+        &td,
+        &["collection", "add", SERGEANT_STATE, &fwd_root],
+    );
     qmd(&mut bm, &td, &["update"]);
     let hits = qmd(&mut bm, &td, &["search", &nonce, "--json"]);
     println!("bm25 hits ({}): {}", nonce, hits.trim());

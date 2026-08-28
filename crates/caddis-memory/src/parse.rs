@@ -66,27 +66,49 @@ pub fn parse_hits(buf: &str) -> Result<Vec<Hit>, ParseErr> {
     let arr = v.as_arr().ok_or(ParseErr::NotAnArray)?;
     let mut out = Vec::with_capacity(arr.len());
     for (index, item) in arr.iter().enumerate() {
-        let obj = item.as_obj().ok_or(ParseErr::MalformedHit { index, why: "hit is not an object" })?;
+        let obj = item.as_obj().ok_or(ParseErr::MalformedHit {
+            index,
+            why: "hit is not an object",
+        })?;
         if !obj.iter().any(|(k, _)| k == "file") {
-            return Err(ParseErr::MalformedHit { index, why: "hit has no file" });
+            return Err(ParseErr::MalformedHit {
+                index,
+                why: "hit has no file",
+            });
         }
         let docid = item
             .get("docid")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let file = item.get("file").and_then(Value::as_str).unwrap_or("").to_string();
+        let file = item
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         if file.is_empty() {
-            return Err(ParseErr::MalformedHit { index, why: "empty file" });
+            return Err(ParseErr::MalformedHit {
+                index,
+                why: "empty file",
+            });
         }
         out.push(Hit {
             docid,
             score: item.get("score").and_then(Value::as_f64),
             file,
             line: item.get("line").and_then(Value::as_f64).map(|n| n as u32),
-            title: item.get("title").and_then(Value::as_str).map(str::to_string),
-            context: item.get("context").and_then(Value::as_str).map(str::to_string),
-            snippet: item.get("snippet").and_then(Value::as_str).map(str::to_string),
+            title: item
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            context: item
+                .get("context")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            snippet: item
+                .get("snippet")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         });
     }
     Ok(out)
@@ -97,7 +119,9 @@ pub fn parse_hits(buf: &str) -> Result<Vec<Hit>, ParseErr> {
 pub fn parse_get(buf: &str) -> Result<GetDoc, ParseErr> {
     let mut lines = buf.lines();
     let header = lines.next().ok_or(ParseErr::NotGetOutput("empty output"))?;
-    let rest = header.strip_prefix("qmd://").ok_or(ParseErr::NotGetOutput("no qmd:// header"))?;
+    let rest = header
+        .strip_prefix("qmd://")
+        .ok_or(ParseErr::NotGetOutput("no qmd:// header"))?;
     // header shape: "<file>  #<docid>" (two spaces before the hash observed live)
     let (file, docid) = match rest.split_once("  ") {
         Some((f, d)) => (f.to_string(), d.trim().to_string()),
@@ -138,7 +162,12 @@ pub fn parse_get(buf: &str) -> Result<GetDoc, ParseErr> {
             return Err(ParseErr::BadLineNo { index: i });
         }
     }
-    Ok(GetDoc { file: format!("qmd://{file}"), docid, folder_context, lines: body })
+    Ok(GetDoc {
+        file: format!("qmd://{file}"),
+        docid,
+        folder_context,
+        lines: body,
+    })
 }
 
 #[cfg(test)]
@@ -163,7 +192,10 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].docid, "#551652");
         assert_eq!(hits[0].score, Some(0.95));
-        assert_eq!(hits[0].file, "qmd://memory/feedback-memory-md-frozen-index.md");
+        assert_eq!(
+            hits[0].file,
+            "qmd://memory/feedback-memory-md-frozen-index.md"
+        );
         assert_eq!(hits[0].line, Some(2));
     }
 
@@ -171,7 +203,8 @@ mod tests {
     fn parses_deep_lane_progress_prefixed_output() {
         // Shape captured live 2026-08-26: warnings, expansion tree, rerank
         // line, then the JSON array.
-        let mixed = "Warning: 2 documents (100%) need embeddings. Run 'qmd embed' for better results.\n\
+        let mixed =
+            "Warning: 2 documents (100%) need embeddings. Run 'qmd embed' for better results.\n\
                      Expanding query... (17.0s)\n\
                      ├─ golden needle canary\n\
                      ├─ lex: canary spot\n\
@@ -179,8 +212,8 @@ mod tests {
                      └─ hyde: Golden needle canary is an important concept...\n\
                      Searching 6 queries...\n\
                      Reranking 1 chunks... (3.1s)\n"
-            .to_string()
-            + SEARCH_JSON;
+                .to_string()
+                + SEARCH_JSON;
         let hits = parse_hits(&mixed).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].docid, "#551652");
@@ -193,9 +226,15 @@ mod tests {
 
     #[test]
     fn no_json_fails_closed() {
-        assert!(matches!(parse_hits("Warning: nothing here\nno json at all"), Err(ParseErr::NoJsonFound)));
+        assert!(matches!(
+            parse_hits("Warning: nothing here\nno json at all"),
+            Err(ParseErr::NoJsonFound)
+        ));
         // a '[' mid-line must not be picked as a start
-        assert!(matches!(parse_hits("progress [weird] line\nstill no json"), Err(ParseErr::NoJsonFound)));
+        assert!(matches!(
+            parse_hits("progress [weird] line\nstill no json"),
+            Err(ParseErr::NoJsonFound)
+        ));
     }
 
     #[test]
@@ -219,7 +258,10 @@ mod tests {
         let d = parse_get(GET_PLAIN).unwrap();
         assert_eq!(d.file, "qmd://memory/docs/golden.md");
         assert_eq!(d.docid, "#26a8bc");
-        assert_eq!(d.folder_context.as_deref(), Some("Safety-net collection capturing markdown"));
+        assert_eq!(
+            d.folder_context.as_deref(),
+            Some("Safety-net collection capturing markdown")
+        );
         assert_eq!(d.lines.len(), 3);
         assert_eq!(d.lines[1], (2, "name: golden-needle".to_string()));
     }
@@ -239,6 +281,9 @@ mod tests {
             parse_get("qmd://x.md\n5: a\n3: b\n"),
             Err(ParseErr::BadLineNo { index: 1 })
         ));
-        assert!(matches!(parse_get("not a get output at all"), Err(ParseErr::NotGetOutput(_))));
+        assert!(matches!(
+            parse_get("not a get output at all"),
+            Err(ParseErr::NotGetOutput(_))
+        ));
     }
 }

@@ -80,7 +80,10 @@ pub fn bootstrap(reg: &mut Registry, state_dir: &Path) -> Result<BootstrapReport
     }
     reg.validate_roots()?;
     reg.save()?;
-    Ok(BootstrapReport { created_dirs: created, upserted })
+    Ok(BootstrapReport {
+        created_dirs: created,
+        upserted,
+    })
 }
 
 impl RememberConfig {
@@ -96,7 +99,11 @@ impl RememberConfig {
         RememberConfig {
             warden_launcher,
             warden_timeout,
-            roots: reg.entries().iter().filter_map(|e| e.root.clone()).collect(),
+            roots: reg
+                .entries()
+                .iter()
+                .filter_map(|e| e.root.clone())
+                .collect(),
             steal_age_floor,
         }
     }
@@ -108,7 +115,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn tmp_home(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("caddis-bootstrap-{}-{}", std::process::id(), tag));
+        let p =
+            std::env::temp_dir().join(format!("caddis-bootstrap-{}-{}", std::process::id(), tag));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
@@ -123,7 +131,11 @@ mod tests {
 
         let rep = bootstrap(&mut reg, &home.join("state")).unwrap();
         assert_eq!(rep.created_dirs.len(), 2, "both target dirs created");
-        assert_eq!(rep.upserted, vec![SERGEANT_STATE, SERGEANT_BRIEFS], "both entries registered (loop order)");
+        assert_eq!(
+            rep.upserted,
+            vec![SERGEANT_STATE, SERGEANT_BRIEFS],
+            "both entries registered (loop order)"
+        );
 
         let reloaded = Registry::load(&reg_path).unwrap();
         for name in [SERGEANT_STATE, SERGEANT_BRIEFS] {
@@ -134,7 +146,9 @@ mod tests {
             assert!(root.is_absolute());
             assert!(root.is_dir(), "registered root exists on disk");
         }
-        reloaded.validate_roots().expect("sibling roots do not overlap");
+        reloaded
+            .validate_roots()
+            .expect("sibling roots do not overlap");
     }
 
     #[test]
@@ -160,7 +174,12 @@ mod tests {
             root: None,
         });
 
-        let cfg = RememberConfig::from_registry(&reg, vec!["warden".into()], Duration::from_secs(5), Duration::from_secs(60));
+        let cfg = RememberConfig::from_registry(
+            &reg,
+            vec!["warden".into()],
+            Duration::from_secs(5),
+            Duration::from_secs(60),
+        );
         assert_eq!(cfg.roots.len(), 2, "only the rooted write targets");
         assert!(cfg.roots.iter().all(|r| r.is_absolute()));
     }

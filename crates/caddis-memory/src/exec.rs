@@ -311,7 +311,10 @@ mod tests {
         // the missing fixture honestly.
         let out = RealRunner.run(&job_for(
             "node",
-            &["-e", "process.stdout.write(process.env.CI === undefined ? \"CLEAN\" : \"DIRTY\")"],
+            &[
+                "-e",
+                "process.stdout.write(process.env.CI === undefined ? \"CLEAN\" : \"DIRTY\")",
+            ],
             15_000,
         ));
         assert_eq!(out.code, Some(0), "node probe must run: {}", out.stderr);
@@ -324,7 +327,10 @@ mod tests {
         let out = RealRunner.run(&job_for("node", &["-e", "setTimeout(()=>{}, 30000)"], 300));
         assert!(out.timed_out);
         assert_eq!(out.code, None);
-        assert!(out.duration < Duration::from_secs(5), "must die near the 300ms deadline");
+        assert!(
+            out.duration < Duration::from_secs(5),
+            "must die near the 300ms deadline"
+        );
     }
 
     #[test]

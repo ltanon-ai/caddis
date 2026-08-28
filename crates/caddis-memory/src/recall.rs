@@ -60,7 +60,10 @@ impl MemoryConfig {
             .ok()
             .map(|s| s.split_whitespace().map(str::to_string).collect())
             .unwrap_or_else(default_launcher);
-        MemoryConfig { launcher, ..MemoryConfig::default() }
+        MemoryConfig {
+            launcher,
+            ..MemoryConfig::default()
+        }
     }
 }
 
@@ -90,16 +93,30 @@ pub struct Report {
 pub enum RecallError {
     Spawn(String),
     /// Killed at the lane deadline — includes which lane and its budget.
-    Timeout { subcommand: &'static str, budget: Duration, after: Duration },
-    NonZero { code: i32, stderr_head: String },
-    Parse { why: ParseErr, stdout_head: String },
+    Timeout {
+        subcommand: &'static str,
+        budget: Duration,
+        after: Duration,
+    },
+    NonZero {
+        code: i32,
+        stderr_head: String,
+    },
+    Parse {
+        why: ParseErr,
+        stdout_head: String,
+    },
 }
 
 impl std::fmt::Display for RecallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RecallError::Spawn(m) => write!(f, "spawn failed: {m}"),
-            RecallError::Timeout { subcommand, budget, after } => write!(
+            RecallError::Timeout {
+                subcommand,
+                budget,
+                after,
+            } => write!(
                 f,
                 "{subcommand} killed at lane budget {budget:?} (elapsed {after:?})"
             ),
@@ -107,7 +124,11 @@ impl std::fmt::Display for RecallError {
                 write!(f, "qmd exited {code}: {}", head(stderr_head, 200))
             }
             RecallError::Parse { why, stdout_head } => {
-                write!(f, "unparseable qmd output ({why:?}): {}", head(stdout_head, 200))
+                write!(
+                    f,
+                    "unparseable qmd output ({why:?}): {}",
+                    head(stdout_head, 200)
+                )
             }
         }
     }
@@ -129,7 +150,10 @@ pub struct Recall<R: Runner = RealRunner> {
 
 impl Recall<RealRunner> {
     pub fn new(config: MemoryConfig) -> Self {
-        Recall { config, runner: RealRunner }
+        Recall {
+            config,
+            runner: RealRunner,
+        }
     }
 }
 
@@ -144,7 +168,11 @@ impl<R: Runner> Recall<R> {
 
     /// Fast lane: BM25 full-text search, no LLM. Measured ~0.2 s.
     pub fn search(&mut self, query: &str) -> Result<(Vec<Hit>, Report), RecallError> {
-        let (out, report) = self.call("search", query, vec!["search".into(), query.into(), "--json".into()])?;
+        let (out, report) = self.call(
+            "search",
+            query,
+            vec!["search".into(), query.into(), "--json".into()],
+        )?;
         let hits = parse_hits(&out.stdout).map_err(|why| to_parse_err(why, &out))?;
         let mut report = report;
         report.result_count = hits.len();
@@ -155,7 +183,11 @@ impl<R: Runner> Recall<R> {
     /// background/panel use only. Requires the sanitized env (CI stripped) —
     /// the Runner owns that law.
     pub fn query(&mut self, query: &str) -> Result<(Vec<Hit>, Report), RecallError> {
-        let (out, report) = self.call("query", query, vec!["query".into(), query.into(), "--json".into()])?;
+        let (out, report) = self.call(
+            "query",
+            query,
+            vec!["query".into(), query.into(), "--json".into()],
+        )?;
         let hits = parse_hits(&out.stdout).map_err(|why| to_parse_err(why, &out))?;
         let mut report = report;
         report.result_count = hits.len();
@@ -211,14 +243,21 @@ impl<R: Runner> Recall<R> {
 }
 
 fn to_parse_err(why: ParseErr, out: &Outcome) -> RecallError {
-    RecallError::Parse { why, stdout_head: head(&out.stdout, 400).to_string() }
+    RecallError::Parse {
+        why,
+        stdout_head: head(&out.stdout, 400).to_string(),
+    }
 }
 
 fn fail_closed(outcome: &Outcome, report: &Report) -> Option<RecallError> {
     if outcome.timed_out {
         return Some(RecallError::Timeout {
             subcommand: report.subcommand,
-            budget: if report.subcommand == "query" { DEEP_LANE } else { FAST_LANE },
+            budget: if report.subcommand == "query" {
+                DEEP_LANE
+            } else {
+                FAST_LANE
+            },
             after: outcome.duration,
         });
     }
@@ -231,7 +270,6 @@ fn fail_closed(outcome: &Outcome, report: &Report) -> Option<RecallError> {
         _ => None,
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -251,7 +289,10 @@ mod tests {
     #[test]
     fn search_parses_and_telemeters() {
         let mut fake = FakeRunner::default();
-        fake.on("search", FakeRunner::ok_json("search", r##"[{"docid":"#1","file":"qmd://a.md"}]"##));
+        fake.on(
+            "search",
+            FakeRunner::ok_json("search", r##"[{"docid":"#1","file":"qmd://a.md"}]"##),
+        );
         let mut recall = Recall::with_runner(cfg(), fake);
         let (hits, report) = recall.search("needle").unwrap();
         assert_eq!(hits.len(), 1);
@@ -273,7 +314,13 @@ mod tests {
         fake.on("query", slow);
         let mut recall = Recall::with_runner(cfg(), fake);
         let err = recall.query("deep thing").unwrap_err();
-        assert!(matches!(err, RecallError::Timeout { subcommand: "query", .. }));
+        assert!(matches!(
+            err,
+            RecallError::Timeout {
+                subcommand: "query",
+                ..
+            }
+        ));
         assert!(err.to_string().contains("60s"));
     }
 
@@ -298,7 +345,10 @@ mod tests {
     #[test]
     fn unparseable_output_fails_closed_with_head() {
         let mut fake = FakeRunner::default();
-        fake.on("search", FakeRunner::ok_json("search", "Warning: junk\nno json"));
+        fake.on(
+            "search",
+            FakeRunner::ok_json("search", "Warning: junk\nno json"),
+        );
         let mut recall = Recall::with_runner(cfg(), fake);
         let err = recall.search("x").unwrap_err();
         assert!(matches!(err, RecallError::Parse { .. }));

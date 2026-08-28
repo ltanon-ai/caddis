@@ -97,7 +97,8 @@ pub fn holder_state(pid: u32, lock_created_unix: u64) -> Option<Probe> {
         // settles pid reuse; a real live holder predates the lock.
         let mut creation: i64 = 0;
         let (mut exit_t, mut kernel, mut user): (i64, i64, i64) = (0, 0, 0);
-        let times_ok = unsafe { GetProcessTimes(h, &mut creation, &mut exit_t, &mut kernel, &mut user) } != 0;
+        let times_ok =
+            unsafe { GetProcessTimes(h, &mut creation, &mut exit_t, &mut kernel, &mut user) } != 0;
         if !times_ok {
             None
         } else {
@@ -149,7 +150,10 @@ mod tests {
     fn reaped_child_reads_dead() {
         use std::process::Command;
         // A child that ran and exited: exit code 0 != 259 → Dead (F2 shape).
-        let mut child = Command::new("cmd").args(["/c", "exit 0"]).spawn().expect("spawn cmd");
+        let mut child = Command::new("cmd")
+            .args(["/c", "exit 0"])
+            .spawn()
+            .expect("spawn cmd");
         let pid = child.id();
         child.wait().expect("wait child");
         let now = std::time::SystemTime::now()

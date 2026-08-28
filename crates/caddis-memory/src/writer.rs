@@ -85,14 +85,21 @@ pub enum RememberError {
     /// path component is a symlink, or a root is missing.
     Sandbox(String),
     /// Another live writer holds the lock (I2+).
-    Busy { pid: Option<u32>, age_secs: Option<u64> },
+    Busy {
+        pid: Option<u32>,
+        age_secs: Option<u64>,
+    },
     /// Supersede/retract target is not a current leaf (I3+) — or the chain
     /// scan hit a file it cannot honestly parse (fail-closed).
     HeadNotLeaf(String),
     /// The warden verdict exists but the ledger row does not (seq 0).
     Unrecorded,
     /// Warden said no.
-    Denied { verdict: String, reason: String, law: String },
+    Denied {
+        verdict: String,
+        reason: String,
+        law: String,
+    },
     /// Warden ran but its answer is unreadable (timeout / exit / parse) —
     /// BLOCK, never a silent allow.
     WardenUnreadable(String),
@@ -110,12 +117,21 @@ impl std::fmt::Display for RememberError {
                 write!(f, "write lock busy (I2+): pid={pid:?} age={age_secs:?}s")
             }
             RememberError::HeadNotLeaf(w) => write!(f, "head-linearity (I3+): {w}"),
-            RememberError::Unrecorded => write!(f, "warden allow carried seq 0 — ledger row missing, no audit anchor"),
-            RememberError::Denied { verdict, reason, law } => {
+            RememberError::Unrecorded => write!(
+                f,
+                "warden allow carried seq 0 — ledger row missing, no audit anchor"
+            ),
+            RememberError::Denied {
+                verdict,
+                reason,
+                law,
+            } => {
                 write!(f, "warden {verdict}: {reason} (law: {law})")
             }
             RememberError::WardenUnreadable(w) => write!(f, "warden unreadable (BLOCK): {w}"),
-            RememberError::Conflict => write!(f, "target filename already exists — refusing to overwrite"),
+            RememberError::Conflict => {
+                write!(f, "target filename already exists — refusing to overwrite")
+            }
             RememberError::Io(w) => write!(f, "io: {w}"),
         }
     }
@@ -195,7 +211,10 @@ pub enum LockDecision {
     /// Holder proven dead/reused AND old enough — take it.
     Steal { pid: Option<u32> },
     /// Live or unprovable or too young — refuse.
-    Busy { pid: Option<u32>, age_secs: Option<u64> },
+    Busy {
+        pid: Option<u32>,
+        age_secs: Option<u64>,
+    },
 }
 
 pub fn decide_lock(
@@ -212,7 +231,10 @@ pub fn decide_lock(
             if age > steal_age_floor_secs && dead {
                 LockDecision::Steal { pid: Some(pid) }
             } else {
-                LockDecision::Busy { pid: Some(pid), age_secs: Some(age) }
+                LockDecision::Busy {
+                    pid: Some(pid),
+                    age_secs: Some(age),
+                }
             }
         }
     }
@@ -220,7 +242,11 @@ pub fn decide_lock(
 
 /// Acquire the write lock or report Busy. Every non-Busy path rewrites the
 /// lock with OUR pid and a bumped seq before returning.
-fn acquire_lock(lock_path: &Path, now_unix: u64, cfg: &RememberConfig) -> Result<(), RememberError> {
+fn acquire_lock(
+    lock_path: &Path,
+    now_unix: u64,
+    cfg: &RememberConfig,
+) -> Result<(), RememberError> {
     let holder = read_lock_file(lock_path).map_err(|e| RememberError::Io(e.to_string()))?;
     let decision = match holder {
         None => LockDecision::Free,
@@ -233,10 +259,8 @@ fn acquire_lock(lock_path: &Path, now_unix: u64, cfg: &RememberConfig) -> Result
     };
     match decision {
         LockDecision::Busy { pid, age_secs } => Err(RememberError::Busy { pid, age_secs }),
-        LockDecision::Free => {
-            write_lock_file(lock_path, std::process::id(), now_unix, 1)
-                .map_err(|e| RememberError::Io(e.to_string()))
-        }
+        LockDecision::Free => write_lock_file(lock_path, std::process::id(), now_unix, 1)
+            .map_err(|e| RememberError::Io(e.to_string())),
         LockDecision::Steal { .. } => {
             let prev_seq = holder.map(|(_, _, s)| s).unwrap_or(0);
             write_lock_file(lock_path, std::process::id(), now_unix, prev_seq + 1)
@@ -342,12 +366,18 @@ fn read_front(path: &Path) -> io::Result<Option<BTreeMap<String, String>>> {
         if line.trim().is_empty() {
             continue;
         }
-        let (k, v) = line
-            .split_once(": ")
-            .ok_or_else(|| io::Error::other(format!("unparseable frontmatter line in {}: {line:?}", path.display())))?;
+        let (k, v) = line.split_once(": ").ok_or_else(|| {
+            io::Error::other(format!(
+                "unparseable frontmatter line in {}: {line:?}",
+                path.display()
+            ))
+        })?;
         front.insert(k.trim().to_string(), v.trim().to_string());
     }
-    Err(io::Error::other(format!("unterminated frontmatter fence: {}", path.display())))
+    Err(io::Error::other(format!(
+        "unterminated frontmatter fence: {}",
+        path.display()
+    )))
 }
 
 /// Is `target_docid` a current leaf: its file exists AND no doc in the root
@@ -396,9 +426,9 @@ fn load_heads(root: &Path) -> Result<BTreeMap<String, String>, RememberError> {
             })?;
             let mut m = BTreeMap::new();
             for (k, val) in obj {
-                let s = val
-                    .as_str()
-                    .ok_or_else(|| RememberError::Io(format!("active_heads.json: {k} must be a string")))?;
+                let s = val.as_str().ok_or_else(|| {
+                    RememberError::Io(format!("active_heads.json: {k} must be a string"))
+                })?;
                 m.insert(k.clone(), s.to_string());
             }
             Ok(m)
@@ -526,7 +556,12 @@ fn locked_write(
     // I4: the only post-verdict mutations. Write final atomically.
     let mut stamped = doc.clone();
     stamped.apply_stamps(verdict.seq, &tx);
-    let tmp = root.join(format!("{}{}-{}", TMP_PREFIX, std::process::id(), verdict.seq));
+    let tmp = root.join(format!(
+        "{}{}-{}",
+        TMP_PREFIX,
+        std::process::id(),
+        verdict.seq
+    ));
     let write_result = (|| -> Result<(), RememberError> {
         let mut f = fs::File::create(&tmp).map_err(|e| RememberError::Io(e.to_string()))?;
         f.write_all(stamped.render().as_bytes())
@@ -553,7 +588,11 @@ fn locked_write(
     heads.insert(docid, fname.to_string());
     save_heads(root, &heads)?;
 
-    Ok(Remembered { path: final_path.to_path_buf(), seq: verdict.seq, tx_hash: tx })
+    Ok(Remembered {
+        path: final_path.to_path_buf(),
+        seq: verdict.seq,
+        tx_hash: tx,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -568,7 +607,8 @@ mod tests {
     use std::time::Duration;
 
     fn tmp_root(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("caddis-remember-{}-{}", std::process::id(), tag));
+        let p =
+            std::env::temp_dir().join(format!("caddis-remember-{}-{}", std::process::id(), tag));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
@@ -642,12 +682,18 @@ mod tests {
         // young + alive → busy
         assert_eq!(
             decide_lock(Some((10, now - 5, 1)), now, 60, Some(Probe::Alive)),
-            LockDecision::Busy { pid: Some(10), age_secs: Some(5) }
+            LockDecision::Busy {
+                pid: Some(10),
+                age_secs: Some(5)
+            }
         );
         // old + alive (259) → busy: death NOT proven
         assert_eq!(
             decide_lock(Some((10, now - 500, 1)), now, 60, Some(Probe::Alive)),
-            LockDecision::Busy { pid: Some(10), age_secs: Some(500) }
+            LockDecision::Busy {
+                pid: Some(10),
+                age_secs: Some(500)
+            }
         );
         // old + dead → steal
         assert_eq!(
@@ -662,12 +708,18 @@ mod tests {
         // old + unprovable → busy (fail-closed: FFI refusal never steals)
         assert_eq!(
             decide_lock(Some((10, now - 500, 1)), now, 60, None),
-            LockDecision::Busy { pid: Some(10), age_secs: Some(500) }
+            LockDecision::Busy {
+                pid: Some(10),
+                age_secs: Some(500)
+            }
         );
         // young + dead → busy: age is not optional
         assert_eq!(
             decide_lock(Some((10, now - 5, 1)), now, 60, Some(Probe::Dead)),
-            LockDecision::Busy { pid: Some(10), age_secs: Some(5) }
+            LockDecision::Busy {
+                pid: Some(10),
+                age_secs: Some(5)
+            }
         );
     }
 
@@ -748,7 +800,11 @@ mod tests {
         // The target must EXIST: is_leaf short-circuits Ok(false) on a
         // missing file, before the chain scan that reads the corrupt doc.
         write_doc(&root, "target", &[], "real leaf");
-        fs::write(root.join("weird.md"), "---\nnot a frontmatter line\n---\n\nbody").unwrap();
+        fs::write(
+            root.join("weird.md"),
+            "---\nnot a frontmatter line\n---\n\nbody",
+        )
+        .unwrap();
         let err = is_leaf(&root, "target").unwrap_err();
         assert!(matches!(err, RememberError::HeadNotLeaf(_)), "{err}");
         let _ = fs::remove_dir_all(&root);
@@ -790,10 +846,13 @@ mod tests {
         );
         // lock released, no temp corpses
         assert!(!root.join(LOCK_NAME).exists());
-        assert!(fs::read_dir(&root).unwrap().filter_map(|e| e.ok()).all(|e| {
-            let n = e.file_name().to_string_lossy().to_string();
-            !n.starts_with(TMP_PREFIX) && !n.ends_with(".tmp")
-        }));
+        assert!(fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .all(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                !n.starts_with(TMP_PREFIX) && !n.ends_with(".tmp")
+            }));
         // the warden spawn shape: launcher, no args, frame on stdin
         assert_eq!(fake.jobs.len(), 1);
         let job = &fake.jobs[0];
@@ -834,7 +893,10 @@ mod tests {
                 body.push('\n');
             }
         }
-        MemoryDoc { front, body: body.trim_end().to_string() }
+        MemoryDoc {
+            front,
+            body: body.trim_end().to_string(),
+        }
     }
 
     #[test]
@@ -850,14 +912,15 @@ mod tests {
         let r = remember(&mut fake, &cfg_for(&root), d, &root, 1_777_777_000).unwrap();
 
         let heads = load_heads(&root).unwrap();
-        assert!(!heads.contains_key("a"), "superseded doc leaves the heads view");
-        let our_docid = r
-            .path
-            .file_stem()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        assert_eq!(heads.get(&our_docid).map(|s| s.as_str()), r.path.file_name().unwrap().to_str());
+        assert!(
+            !heads.contains_key("a"),
+            "superseded doc leaves the heads view"
+        );
+        let our_docid = r.path.file_stem().unwrap().to_string_lossy().to_string();
+        assert_eq!(
+            heads.get(&our_docid).map(|s| s.as_str()),
+            r.path.file_name().unwrap().to_str()
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -872,7 +935,10 @@ mod tests {
 
         let err = remember(&mut fake, &cfg_for(&root), d, &root, 1_777_777_000).unwrap_err();
         assert!(matches!(err, RememberError::HeadNotLeaf(_)), "{err}");
-        assert!(fake.jobs.is_empty(), "leaf check must precede the warden call");
+        assert!(
+            fake.jobs.is_empty(),
+            "leaf check must precede the warden call"
+        );
         assert!(!root.join(LOCK_NAME).exists(), "lock released on error");
         let _ = fs::remove_dir_all(&root);
     }
@@ -882,15 +948,30 @@ mod tests {
         let root = tmp_root("deny");
         let mut fake = FakeRunner::default();
         fake.then(outcome(deny_json()));
-        let before: Vec<String> = fs::read_dir(&root).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        let before: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
 
-        let err = remember(&mut fake, &cfg_for(&root), doc("Refused", "no"), &root, 1_777_777_000).unwrap_err();
+        let err = remember(
+            &mut fake,
+            &cfg_for(&root),
+            doc("Refused", "no"),
+            &root,
+            1_777_777_000,
+        )
+        .unwrap_err();
         assert!(
             matches!(&err, RememberError::Denied { verdict, .. } if verdict == "deny"),
             "{err}"
         );
 
-        let after: Vec<String> = fs::read_dir(&root).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        let after: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
         assert_eq!(before, after, "deny must not change the root");
         let _ = fs::remove_dir_all(&root);
     }
@@ -900,7 +981,14 @@ mod tests {
         let root = tmp_root("seq0");
         let mut fake = FakeRunner::default();
         fake.then(outcome(allow_json(0)));
-        let err = remember(&mut fake, &cfg_for(&root), doc("Ghost", "no"), &root, 1_777_777_000).unwrap_err();
+        let err = remember(
+            &mut fake,
+            &cfg_for(&root),
+            doc("Ghost", "no"),
+            &root,
+            1_777_777_000,
+        )
+        .unwrap_err();
         assert_eq!(err, RememberError::Unrecorded);
         assert!(!root.join(LOCK_NAME).exists());
         let _ = fs::remove_dir_all(&root);
@@ -911,7 +999,14 @@ mod tests {
         let root = tmp_root("garbage");
         let mut fake = FakeRunner::default();
         fake.then(outcome("not json at all".into()));
-        let err = remember(&mut fake, &cfg_for(&root), doc("G", "no"), &root, 1_777_777_000).unwrap_err();
+        let err = remember(
+            &mut fake,
+            &cfg_for(&root),
+            doc("G", "no"),
+            &root,
+            1_777_777_000,
+        )
+        .unwrap_err();
         assert!(matches!(err, RememberError::WardenUnreadable(_)), "{err}");
         let _ = fs::remove_dir_all(&root);
     }
@@ -929,8 +1024,18 @@ mod tests {
             stdout_truncated: false,
             stderr_truncated: false,
         });
-        let err = remember(&mut fake, &cfg_for(&root), doc("E", "no"), &root, 1_777_777_000).unwrap_err();
-        assert!(matches!(&err, RememberError::WardenUnreadable(w) if w.contains("exit")), "{err}");
+        let err = remember(
+            &mut fake,
+            &cfg_for(&root),
+            doc("E", "no"),
+            &root,
+            1_777_777_000,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, RememberError::WardenUnreadable(w) if w.contains("exit")),
+            "{err}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -942,7 +1047,10 @@ mod tests {
         write_lock_file(&root.join(LOCK_NAME), std::process::id(), now - 1, 1).unwrap();
         let mut fake = FakeRunner::default();
         let err = remember(&mut fake, &cfg_for(&root), doc("B", "no"), &root, now).unwrap_err();
-        assert!(matches!(err, RememberError::Busy { pid: Some(p), .. } if p == std::process::id()), "{err}");
+        assert!(
+            matches!(err, RememberError::Busy { pid: Some(p), .. } if p == std::process::id()),
+            "{err}"
+        );
         assert!(fake.jobs.is_empty());
         // the foreign lock must survive (still theirs)
         assert!(root.join(LOCK_NAME).exists());
@@ -956,9 +1064,19 @@ mod tests {
         let name = format!("{}Z-collide-now.md", remember::utc_compact(now));
         fs::write(root.join(&name), "pre-existing").unwrap();
         let mut fake = FakeRunner::default();
-        let err = remember(&mut fake, &cfg_for(&root), doc("Collide Now", "x"), &root, now).unwrap_err();
+        let err = remember(
+            &mut fake,
+            &cfg_for(&root),
+            doc("Collide Now", "x"),
+            &root,
+            now,
+        )
+        .unwrap_err();
         assert_eq!(err, RememberError::Conflict);
-        assert_eq!(fs::read_to_string(root.join(&name)).unwrap(), "pre-existing");
+        assert_eq!(
+            fs::read_to_string(root.join(&name)).unwrap(),
+            "pre-existing"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -967,7 +1085,14 @@ mod tests {
         let inside = tmp_root("fr-inside");
         let outside = tmp_root("fr-outside");
         let mut fake = FakeRunner::default();
-        let err = remember(&mut fake, &cfg_for(&inside), doc("S", "no"), &outside, 1_777_777_000).unwrap_err();
+        let err = remember(
+            &mut fake,
+            &cfg_for(&inside),
+            doc("S", "no"),
+            &outside,
+            1_777_777_000,
+        )
+        .unwrap_err();
         assert!(matches!(err, RememberError::Sandbox(_)), "{err}");
         assert!(fake.jobs.is_empty());
         let _ = fs::remove_dir_all(&inside);

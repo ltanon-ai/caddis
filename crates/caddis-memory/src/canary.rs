@@ -69,7 +69,10 @@ pub fn run_on<R: crate::exec::Runner>(recall: &mut Recall<R>, golden: &Golden) -
                 .iter()
                 .any(|h| h.file.contains(&golden.expect_file_contains));
             if found {
-                Verdict::Green { hits: hits.len(), ms: report.duration.as_millis() }
+                Verdict::Green {
+                    hits: hits.len(),
+                    ms: report.duration.as_millis(),
+                }
             } else {
                 Verdict::Red(format!(
                     "golden query {:?} returned {} hit(s), none containing {:?}",
@@ -101,19 +104,34 @@ mod tests {
         let mut fake = FakeRunner::default();
         fake.on(
             "search",
-            FakeRunner::ok_json("search", r##"[{"docid":"#1","file":"qmd://docs/golden.md","score":0.9}]"##),
+            FakeRunner::ok_json(
+                "search",
+                r##"[{"docid":"#1","file":"qmd://docs/golden.md","score":0.9}]"##,
+            ),
         );
         let mut recall = Recall::with_runner(cfg(), fake);
-        let verdict = run_on(&mut recall, &Golden::fast("golden needle", "docs/golden.md"));
-        assert!(matches!(verdict, Verdict::Green { hits: 1, .. }), "got {verdict:?}");
+        let verdict = run_on(
+            &mut recall,
+            &Golden::fast("golden needle", "docs/golden.md"),
+        );
+        assert!(
+            matches!(verdict, Verdict::Green { hits: 1, .. }),
+            "got {verdict:?}"
+        );
     }
 
     #[test]
     fn red_when_doc_missing() {
         let mut fake = FakeRunner::default();
-        fake.on("search", FakeRunner::ok_json("search", r##"[{"docid":"#1","file":"qmd://other.md"}]"##));
+        fake.on(
+            "search",
+            FakeRunner::ok_json("search", r##"[{"docid":"#1","file":"qmd://other.md"}]"##),
+        );
         let mut recall = Recall::with_runner(cfg(), fake);
-        let verdict = run_on(&mut recall, &Golden::fast("golden needle", "docs/golden.md"));
+        let verdict = run_on(
+            &mut recall,
+            &Golden::fast("golden needle", "docs/golden.md"),
+        );
         match verdict {
             Verdict::Red(msg) => assert!(msg.contains("none containing"), "got {msg}"),
             other => panic!("expected Red, got {other:?}"),

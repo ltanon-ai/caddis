@@ -6,6 +6,7 @@ members = [
     "crates/caddis-tree",
     "crates/caddis-warden",
     "crates/caddis-organs",
+    "crates/caddis-memory",
     "crates/caddis-voice",
     "crates/caddis-router",
     "crates/caddis",
