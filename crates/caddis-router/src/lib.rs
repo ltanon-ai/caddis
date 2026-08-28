@@ -54,6 +54,15 @@
 //! the organ's streams before any work runs. Still ahead: the lane
 //! registry + CLI consumption surface, R5 identity (P4 remainder),
 //! in-world room (P5).
+//!
+//! P4 slice 4 (2026-08-28, council mistral+cartographer): [`registry`] —
+//! the OPERATOR-AUTHORED lane universe (`lanes.jsonl`, JSONL flat objects,
+//! static-until-ruled, Q1/Q2 unanimous; entry = id|family|tier|cost only —
+//! alive is the caller's probe, caps are ledger-derived, Q4) + the
+//! `route-gated` CLI: the SUBPROCESS consumption surface (versioned
+//! stdout JSON; exit 0 routed / 1 refused / 2 usage-or-defect; liveness
+//! via `--alive` or the NAMED `--assume-alive` assumption, Q3 — silence
+//! is never consent). R5 identity next; in-world room is P5.
 
 pub mod alerts;
 pub mod collect;
@@ -65,6 +74,7 @@ pub mod lock;
 pub mod policy;
 pub mod policy_file;
 pub mod profile;
+pub mod registry;
 pub mod route;
 pub mod stats;
 pub mod verify;
@@ -84,9 +94,10 @@ pub use lane::{Capability, DataClass, Lane, LaneTier};
 pub use ledger::{DecisionRow, Ledger, LedgerErr, Loaded, Outcome, OutcomeRow, ParsedRow, Row};
 pub use policy::RoutePolicy;
 pub use policy_file::{encode_policy, load_policy, parse_policy, PolicyFileErr};
-pub use profile::{ProfileErr, TaskProfile};
+pub use profile::{profile_from_card, ProfileErr, TaskProfile};
+pub use registry::{load_registry, parse_registry, LaneEntry, LaneRegistry, RegistryErr};
 pub use route::{route, RouteDecision, RouteErr};
 pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, HYSTERESIS_FAILS, MIN_SAMPLES};
 pub use verify::{verify_path, Finding, VerifyReport};
 
-pub const VERSION: &str = "0.7.0";
+pub const VERSION: &str = "0.8.0";

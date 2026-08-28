@@ -16,8 +16,9 @@
 //! `collect` appends telemetry rows only — it never dispatches anything.
 
 use caddis_router::{
-    alerts::Alerts, collect_bees, collect_councils, collect_tinyagi, encode_policy, load_policy,
-    run_scan, verify_path, BeeReport, CollectReport, Ledger, RoutePolicy, ScanReport,
+    alerts::Alerts, collect_bees, collect_councils, collect_tinyagi, encode_policy, gate::Gate,
+    load_policy, load_registry, profile_from_card, run_scan, verify_path, BeeReport, CapsReport,
+    CollectReport, DataClass, LaneRegistry, Ledger, Loaded, RegistryErr, RoutePolicy, ScanReport,
     TinyagiReport, VERSION,
 };
 use std::path::{Path, PathBuf};
@@ -29,7 +30,8 @@ const USAGE: &str = "usage:
   caddis-router collect-bees    [--cards <path>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
   caddis-router collect-tinyagi [--tinyagi <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
   caddis-router scan            [--ledger <path>|--home <dir>] [--alerts <path>] [--dry-run] [--json]
-  caddis-router policy          [--policy <path>|--home <dir>] [--json]";
+  caddis-router policy          [--policy <path>|--home <dir>] [--json]
+  caddis-router route-gated   --card <path> --data <secret|pii|internal|public> (--alive <ids>|--assume-alive <ids>) [--lanes <path>|--home <dir>] [--policy <path>] [--ledger <path>] [--alerts <path>] [--json]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -43,6 +45,7 @@ fn main() -> ExitCode {
         "policy" => run_policy(&args[1..]),
         "collect-bees" => run_collect_bees(&args[1..]),
         "collect-tinyagi" => run_collect_tinyagi(&args[1..]),
+        "route-gated" => run_route_gated(&args[1..]),
         "collect" => run_collect(&args[1..]),
         "--version" => {
             println!("caddis-router {VERSION}");
@@ -76,6 +79,24 @@ fn main() -> ExitCode {
             println!("    --policy <path>   this exact policy file (wins over --home)");
             println!("    --home <dir>      look for <dir>/policy.json (default ~/.caddis/router)");
             println!("    --json            machine report on stdout");
+            println!("  route-gated: the SUBPROCESS consumption surface (P4 slice 4) —");
+            println!("        route one task card and print the versioned decision JSON");
+            println!("        ({{v:1,...}}); the CALLER dispatches (F1: this binary never does).");
+            println!("        exit 0 = routed (decision row persisted, seq in stdout);");
+            println!("        exit 1 = refused (routing stop, alert persisted — honest halt);");
+            println!("        exit 2 = usage/environment defect (missing or malformed card,");
+            println!("        registry, policy — never a routing decision; fail closed).");
+            println!("    --card <path>      task card: id+class frontmatter, Done-When, RED-TEST");
+            println!("    --data <class>     secret|pii|internal|public (F5 vocabulary)");
+            println!("    --alive <ids>      comma list of PROBED-alive lane ids (your probe)");
+            println!("    --assume-alive <ids>  same set as a NAMED assumption (auditable);");
+            println!("        exactly ONE of the two is required — silence is never consent");
+            println!("        (council Q3); an id outside lanes.jsonl is a usage stop.");
+            println!("    --lanes <path>     lane registry (default <home>/lanes.jsonl —");
+            println!("        operator-authored, static-until-ruled; JSONL flat objects:");
+            println!("        id | family | tier | cost_per_task_usd, nothing else)");
+            println!("    --policy <path>    ruling policy (default <home>/policy.json; absent");
+            println!("        = builtin conservative priors, auditable via `policy`)");
             ExitCode::SUCCESS
         }
         other => {
@@ -687,6 +708,290 @@ fn print_policy_json(ppath: &Path, present: bool, policy: Option<&RoutePolicy>) 
         resolved.floors().len(),
         resolved.ceilings().len()
     );
+}
+
+// --- route-gated --------------------------------------------------------------
+
+/// The subprocess consumption surface (P4 slice 4, council-folded):
+/// load the organ home's inputs (lane registry + policy + ledger fold),
+/// route ONE task card through the gate, print the versioned decision.
+/// Exit 0 = routed (the decision row IS in the ledger — the caller may
+/// dispatch on it); 1 = refused (a routing stop, its alert persisted —
+/// an honest halt, not a defect); 2 = usage or environment defect (bad
+/// argv, unreadable/malformed card, registry, or policy — never a routing
+/// decision; fail closed). The binary NEVER dispatches (F1): the caller
+/// consumes {v:1, lane_id, seq} and dispatches itself. Liveness is the
+/// CALLER's declaration — `--alive` (probed) or `--assume-alive` (named
+/// assumption), exactly one; silence is never consent (council Q3).
+fn run_route_gated(args: &[String]) -> ExitCode {
+    let mut card_path: Option<PathBuf> = None;
+    let mut data_word: Option<String> = None;
+    let mut alive_arg: Option<String> = None;
+    let mut assume_arg: Option<String> = None;
+    let mut lanes_path: Option<PathBuf> = None;
+    let mut policy_path: Option<PathBuf> = None;
+    let mut ledger_path: Option<PathBuf> = None;
+    let mut alerts_path: Option<PathBuf> = None;
+    let mut json = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => {
+                json = true;
+                i += 1;
+            }
+            "--card" if i + 1 < args.len() => {
+                card_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--data" if i + 1 < args.len() => {
+                data_word = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--alive" if i + 1 < args.len() => {
+                alive_arg = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--assume-alive" if i + 1 < args.len() => {
+                assume_arg = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--lanes" if i + 1 < args.len() => {
+                lanes_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--policy" if i + 1 < args.len() => {
+                policy_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--alerts" if i + 1 < args.len() => {
+                alerts_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--ledger" if i + 1 < args.len() => {
+                ledger_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--home" if i + 1 < args.len() => {
+                let h = PathBuf::from(&args[i + 1]);
+                if ledger_path.is_none() {
+                    ledger_path = Some(h.join("ledger.jsonl"));
+                }
+                if lanes_path.is_none() {
+                    lanes_path = Some(h.join("lanes.jsonl"));
+                }
+                if policy_path.is_none() {
+                    policy_path = Some(h.join("policy.json"));
+                }
+                if alerts_path.is_none() {
+                    alerts_path = Some(h.join("alerts.jsonl"));
+                }
+                i += 2;
+            }
+            other => {
+                eprintln!("caddis-router route-gated: unknown argument {other:?}");
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    // Q3 law: exactly ONE liveness declaration. Both at once is ambiguous
+    // provenance; neither is silence-as-consent.
+    let (alive_list, assumed) = match (alive_arg, assume_arg) {
+        (Some(_), Some(_)) => {
+            eprintln!(
+                "caddis-router route-gated: --alive and --assume-alive are mutually exclusive (pick one liveness provenance)"
+            );
+            return ExitCode::from(2);
+        }
+        (Some(ids), None) => (ids, false),
+        (None, Some(ids)) => (ids, true),
+        (None, None) => {
+            eprintln!(
+                "caddis-router route-gated: exactly one of --alive <ids> | --assume-alive <ids> is required (council Q3: silence is never consent)"
+            );
+            return ExitCode::from(2);
+        }
+    };
+
+    let Some(card_path) = card_path else {
+        eprintln!("caddis-router route-gated: --card <path> is required");
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let Some(data_word) = data_word else {
+        eprintln!("caddis-router route-gated: --data <secret|pii|internal|public> is required");
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let Some(data_class) = DataClass::parse(&data_word) else {
+        eprintln!(
+            "caddis-router route-gated: unknown data class {data_word:?} (vocabulary: secret|pii|internal|public)"
+        );
+        return ExitCode::from(2);
+    };
+
+    let home = default_home();
+    let ledger_path = ledger_path.unwrap_or_else(|| home.join("ledger.jsonl"));
+    let lanes_path = lanes_path.unwrap_or_else(|| home.join("lanes.jsonl"));
+    let policy_path = policy_path.unwrap_or_else(|| home.join("policy.json"));
+    let alerts_path = alerts_path.unwrap_or_else(|| {
+        ledger_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("alerts.jsonl")
+    });
+
+    // Card -> profile. The F3 read surface is minimal; a card that does
+    // not parse (or lacks the routing sections) is a construction defect.
+    let card_text = match std::fs::read_to_string(&card_path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!(
+                "caddis-router route-gated: cannot read card {}: {e}",
+                card_path.display()
+            );
+            return ExitCode::from(2);
+        }
+    };
+    let card = match caddis_card::Card::parse(&card_text) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("caddis-router route-gated: card does not parse: {e:?}");
+            return ExitCode::from(2);
+        }
+    };
+    let profile = match profile_from_card(&card) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("caddis-router route-gated: card lacks the routing surface: {e:?}");
+            return ExitCode::from(2);
+        }
+    };
+
+    // Policy: absent = builtin conservative priors (auditable via
+    // `policy`); present-but-malformed = refuse (fail closed past an
+    // authored file).
+    let policy = match load_policy(&policy_path) {
+        Ok(Some(p)) => p,
+        Ok(None) => RoutePolicy::default(),
+        Err(e) => {
+            eprintln!(
+                "caddis-router route-gated: policy {}: {:?}",
+                policy_path.display(),
+                e
+            );
+            return ExitCode::from(2);
+        }
+    };
+
+    // Registry: absent = the operator has not ruled lanes yet — fail
+    // closed with the exact message; malformed likewise. Never a routing
+    // decision, never an empty-universe guess.
+    let registry: LaneRegistry = match load_registry(&lanes_path) {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            eprintln!(
+                "caddis-router route-gated: no lane registry at {} — lanes.jsonl is the operator-authored ruling home (static-until-ruled; `caddis-router policy` shows the law analog)",
+                lanes_path.display()
+            );
+            return ExitCode::from(2);
+        }
+        Err(RegistryErr::Read(m)) | Err(RegistryErr::Malformed(m)) => {
+            eprintln!(
+                "caddis-router route-gated: registry {}: {}",
+                lanes_path.display(),
+                m
+            );
+            return ExitCode::from(2);
+        }
+    };
+
+    // Caller liveness set. The authored universe is the routing universe:
+    // an id outside it is a caller typo, stopped here — never routed.
+    let mut alive = std::collections::BTreeSet::new();
+    let flag_name = if assumed { "assume-alive" } else { "alive" };
+    for id in alive_list.split(',') {
+        let id = id.trim();
+        if id.is_empty() {
+            eprintln!("caddis-router route-gated: empty lane id in --{flag_name} list");
+            return ExitCode::from(2);
+        }
+        if !registry.knows(id) {
+            eprintln!(
+                "caddis-router route-gated: lane {id:?} is not in the registry — fix the registry ruling or the caller list"
+            );
+            return ExitCode::from(2);
+        }
+        alive.insert(id.to_string());
+    }
+
+    // Capability fold. A missing ledger is an honest empty history (the
+    // append below materializes the file); an unreadable existing one is
+    // a defect.
+    let ledger = Ledger::new(&ledger_path);
+    let loaded = if ledger_path.exists() {
+        match ledger.load() {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!(
+                    "caddis-router route-gated: ledger {}: {e}",
+                    ledger_path.display()
+                );
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        Loaded::default()
+    };
+    let caps = CapsReport::from_rows(&loaded);
+    let lanes = registry.lanes(&caps, &alive);
+
+    let alerts = Alerts::new(&alerts_path);
+    let gate = Gate::new(&ledger, &alerts);
+    match gate.route_gated(&profile, data_class, &lanes, &policy) {
+        Ok((d, seq)) => {
+            let liveness = if assumed { "assumed" } else { "probed" };
+            if json {
+                println!(
+                    "{{\"v\":1,\"status\":\"routed\",\"route_id\":\"{}\",\"card_id\":\"{}\",\"task_class\":\"{}\",\"lane_id\":\"{}\",\"lane_tier\":\"{}\",\"cost_per_task_usd\":{},\"degraded\":{},\"seq\":{},\"liveness\":\"{}\"}}",
+                    esc(&d.route_id),
+                    esc(&d.card_id),
+                    esc(&d.task_class),
+                    esc(&d.lane_id),
+                    d.lane_tier.as_str(),
+                    d.cost_per_task_usd,
+                    d.degraded,
+                    seq,
+                    liveness
+                );
+            } else {
+                println!(
+                    "routed {} ({}) -> {} [{}] ${:.4} seq {}{} (liveness: {liveness})",
+                    d.card_id,
+                    d.task_class,
+                    d.lane_id,
+                    d.lane_tier.as_str(),
+                    d.cost_per_task_usd,
+                    seq,
+                    if d.degraded { " DEGRADED" } else { "" }
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            if json {
+                println!(
+                    "{{\"v\":1,\"status\":\"refused\",\"error\":\"{}\"}}",
+                    esc(&e.to_string())
+                );
+            } else {
+                println!("refused: {e}");
+            }
+            ExitCode::from(1)
+        }
+    }
 }
 
 // --- shared helpers ----------------------------------------------------------

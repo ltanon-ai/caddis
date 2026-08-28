@@ -372,3 +372,232 @@ fn policy_unknown_argument_fails_closed() {
     assert_eq!(rc, 2);
     assert!(err.contains("unknown argument"), "{err}");
 }
+
+// --- route-gated e2e (P4 slice 4) ---------------------------------------------
+
+/// One seed outcome row per line, seq 1..5 — groq-free PASSED class
+/// "chair" five times (EWMA 1.0, samples 5 = the F2 holdout cleared;
+/// default floor chair 0.70).
+fn chair_pass_seeds() -> String {
+    (1..=5)
+        .map(|n| {
+            format!(
+                "{{\"seq\":{n},\"ts\":\"2026-08-28T00:00:0{n}Z\",\"kind\":\"outcome\",\"card_id\":\"SEED-{n}\",\"task_class\":\"chair\",\"lane_id\":\"groq-free\",\"model\":\"gpt-oss-120b\",\"cost_tokens\":900,\"cost_usd_est\":0.011,\"latency_ms\":6200,\"verify_outcome\":\"pass\",\"escalated_to\":null}}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+const LANES_FILE: &str = concat!(
+    "{\"id\":\"gemini-mid\",\"family\":\"google\",\"tier\":\"mid\",\"cost_per_task_usd\":0.011}\n",
+    "{\"id\":\"groq-free\",\"family\":\"openai-compat\",\"tier\":\"free\",\"cost_per_task_usd\":0}\n",
+);
+
+const CHAIR_CARD: &str = "---\nid: CARD-7\nclass: chair\nowner: loop\n---\n# Done-When\n\nThe tray feed renders.\n\n# RED-TEST\n\ne2e-tray 17/17 green.\n";
+
+const SKEPTIC_CARD: &str = "---\nid: CARD-8\nclass: skeptic\nowner: loop\n---\n# Done-When\n\nThe claim survives review.\n\n# RED-TEST\n\nreview-findings 0 high.\n";
+
+fn rg_home(tag: &str, card_class: &str) -> PathBuf {
+    let home = tmpdir(tag);
+    fs::write(home.join("lanes.jsonl"), LANES_FILE).unwrap();
+    fs::write(home.join("ledger.jsonl"), chair_pass_seeds()).unwrap();
+    fs::write(
+        home.join("card.md"),
+        if card_class == "skeptic" {
+            SKEPTIC_CARD
+        } else {
+            CHAIR_CARD
+        },
+    )
+    .unwrap();
+    home
+}
+
+#[test]
+fn route_gated_routes_persists_row_and_prints_contract() {
+    let home = rg_home("rg-ok", "chair");
+    let (rc, out, err) = run(&[
+        "route-gated",
+        "--card",
+        home.join("card.md").to_str().unwrap(),
+        "--data",
+        "public",
+        "--alive",
+        "groq-free,gemini-mid",
+        "--home",
+        home.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(rc, 0, "{out}{err}");
+    // Versioned contract, cheapest lane (O3: groq-free $0 < gemini $0.011),
+    // liveness provenance named, seq continues the seed stream.
+    assert!(out.contains("\"v\":1"), "{out}");
+    assert!(out.contains("\"status\":\"routed\""), "{out}");
+    assert!(out.contains("\"lane_id\":\"groq-free\""), "{out}");
+    assert!(out.contains("\"liveness\":\"probed\""), "{out}");
+    assert!(out.contains("\"seq\":6"), "{out}");
+    // F3: the decision row IS in the ledger.
+    let body = fs::read_to_string(home.join("ledger.jsonl")).unwrap();
+    let last = body.lines().last().unwrap();
+    assert!(last.contains("\"kind\":\"decision\""), "{last}");
+    assert!(last.contains("\"card_id\":\"CARD-7\""), "{last}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn route_gated_assume_alive_is_a_named_assumption() {
+    let home = rg_home("rg-assume", "chair");
+    let (rc, out, err) = run(&[
+        "route-gated",
+        "--card",
+        home.join("card.md").to_str().unwrap(),
+        "--data",
+        "public",
+        "--assume-alive",
+        "groq-free",
+        "--home",
+        home.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("\"liveness\":\"assumed\""), "{out}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn route_gated_no_registry_fails_closed() {
+    let home = tmpdir("rg-noreg");
+    fs::write(home.join("card.md"), CHAIR_CARD).unwrap();
+    let (rc, _, err) = run(&[
+        "route-gated",
+        "--card",
+        home.join("card.md").to_str().unwrap(),
+        "--data",
+        "public",
+        "--alive",
+        "groq-free",
+        "--home",
+        home.to_str().unwrap(),
+    ]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("no lane registry"), "{err}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn route_gated_malformed_registry_refused_droid() {
+    let home = tmpdir("rg-droid");
+    fs::write(home.join("card.md"), CHAIR_CARD).unwrap();
+    fs::write(
+        home.join("lanes.jsonl"),
+        "{\"id\":\"x\",\"family\":\"f\",\"tier\":\"droid\",\"cost_per_task_usd\":0}\n",
+    )
+    .unwrap();
+    let (rc, _, err) = run(&[
+        "route-gated",
+        "--card",
+        home.join("card.md").to_str().unwrap(),
+        "--data",
+        "public",
+        "--alive",
+        "x",
+        "--home",
+        home.to_str().unwrap(),
+    ]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("droid is refused"), "{err}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn route_gated_liveness_flag_law() {
+    let home = rg_home("rg-flags", "chair");
+    let card = home.join("card.md").to_str().unwrap().to_string();
+    let h = home.to_str().unwrap().to_string();
+    // Neither: silence is never consent.
+    let (rc, _, err) = run(&[
+        "route-gated",
+        "--card",
+        &card,
+        "--data",
+        "public",
+        "--home",
+        &h,
+    ]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("silence is never consent"), "{err}");
+    // Both: ambiguous provenance.
+    let (rc, _, err) = run(&[
+        "route-gated",
+        "--card",
+        &card,
+        "--data",
+        "public",
+        "--alive",
+        "groq-free",
+        "--assume-alive",
+        "groq-free",
+        "--home",
+        &h,
+    ]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("mutually exclusive"), "{err}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn route_gated_alive_id_outside_registry_is_a_usage_stop() {
+    let home = rg_home("rg-typo", "chair");
+    let (rc, _, err) = run(&[
+        "route-gated",
+        "--card",
+        home.join("card.md").to_str().unwrap(),
+        "--data",
+        "public",
+        "--alive",
+        "grqq-free",
+        "--home",
+        home.to_str().unwrap(),
+    ]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("not in the registry"), "{err}");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn route_gated_refusal_persists_alert_no_row_exit_one() {
+    let home = rg_home("rg-refuse", "skeptic");
+    let before = fs::read_to_string(home.join("ledger.jsonl")).unwrap();
+    let (rc, out, err) = run(&[
+        "route-gated",
+        "--card",
+        home.join("card.md").to_str().unwrap(),
+        "--data",
+        "public",
+        "--alive",
+        "groq-free",
+        "--home",
+        home.to_str().unwrap(),
+        "--json",
+    ]);
+    // groq-free is measured for chair ONLY — class skeptic has no measured
+    // lane: NoMeasuredLane, an honest routing stop.
+    assert_eq!(rc, 1, "{out}{err}");
+    assert!(out.contains("\"status\":\"refused\""), "{out}");
+    assert!(out.contains("NoMeasuredLane"), "{out}");
+    // The stop is LOUD: an alert row exists; the ledger gained NO decision.
+    let alerts = fs::read_to_string(home.join("alerts.jsonl")).unwrap();
+    assert!(alerts.contains("skeptic"), "{alerts}");
+    let after = fs::read_to_string(home.join("ledger.jsonl")).unwrap();
+    assert_eq!(before, after, "a refused routing must not write a row");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn route_gated_unknown_argument_fails_closed() {
+    let (rc, _, err) = run(&["route-gated", "--nonsense"]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("unknown argument"), "{err}");
+}
