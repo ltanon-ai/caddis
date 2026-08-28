@@ -45,16 +45,20 @@
 //! by prefix; [`Alert::from_escalation_stop`] is the surface the dispatch
 //! adapters will call on every P3 fail-safe halt.
 //!
-//! P4 slice 2 (2026-08-28): [`policy_file`] — the WARDEN POLICY FILE as
-//! the ruling home (`policy.json`, flat keys, the file IS the whole
-//! policy: unruled pieces fail closed, never default-mixed; malformed =
-//! refuse to route) + [`Alert::from_route_stop`] as the halt surface the
-//! dispatch adapters persist on every route() refusal. Still ahead:
-//! dispatch-path adapters + R5 identity (P4 remainder), in-world room (P5).
+//! P4 slice 3 (2026-08-28): [`gate`] — the DISPATCH-PATH GATE. The one
+//! surface the real dispatch paths (TinyAGI consult / omp task / bee card
+//! consume) call: `route_gated` persists the decision row (F3) before the
+//! caller may dispatch and announces degraded runs first (R4);
+//! `escalate_gated` persists the stop alert on every escalation refusal.
+//! Both stop alerts + the success-row law make the routing event REAL in
+//! the organ's streams before any work runs. Still ahead: the lane
+//! registry + CLI consumption surface, R5 identity (P4 remainder),
+//! in-world room (P5).
 
 pub mod alerts;
 pub mod collect;
 pub mod escalation;
+pub mod gate;
 pub mod lane;
 pub mod ledger;
 pub mod lock;
@@ -64,6 +68,8 @@ pub mod profile;
 pub mod route;
 pub mod stats;
 pub mod verify;
+
+pub use gate::{Gate, GateErr};
 
 pub use alerts::{
     run_scan, transitions, Alert, AlertErr, AlertKind, AlertRow, Alerts, LoadedAlerts, ScanErr,
@@ -83,4 +89,4 @@ pub use route::{route, RouteDecision, RouteErr};
 pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, HYSTERESIS_FAILS, MIN_SAMPLES};
 pub use verify::{verify_path, Finding, VerifyReport};
 
-pub const VERSION: &str = "0.6.0";
+pub const VERSION: &str = "0.7.0";

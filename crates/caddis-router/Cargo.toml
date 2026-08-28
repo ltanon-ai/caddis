@@ -1,6 +1,6 @@
 [package]
 name = "caddis-router"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "ROUTING ORGAN (sergeant unit caddis-router-organ): P1 pure route core (profile->lane->cheapest-above-floor) + P2 decision/outcome ledger (R6 append-only, fsync, fail-closed lock) with EWMA capability stats, cold-start family median, and honest verify. No dispatch, no LLM; emits decision rows for the EXISTING validated dispatch paths."
 # Origin: OMP sergeant BUILD-QUEUE caddis-router-organ. Design =
