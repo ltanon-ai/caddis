@@ -2,17 +2,17 @@
 name = "caddis-deliberate"
 version = "0.1.0"
 edition = "2021"
-description = "DELIBERATION ORGAN P0 substrate (BUILD-QUEUE r2-organs-rewrite; plan state/briefs/caddis-deliberate-organ-plan-2026-08-28.md): pure Seat/Panel types + panel construction with floors as DATA (>=2 families, >=1 non-Chinese), free-first ordering, fail-closed refusals; slice 2 adds the versioned Protocol with its F3 PIN (hand-rolled sha256 over canonical bytes), Convening (pin stored at open, floor/size refusals) and Verdict provenance (transport-served model, never self-report). Zero I/O, zero dispatch, zero daemon knowledge; serde is dev-only for the P0 round-trip proof."
+description = "DELIBERATION ORGAN (BUILD-QUEUE r2-organs-rewrite; plan state/briefs/caddis-deliberate-organ-plan-2026-08-28.md): P0 pure substrate (Seat/Panel/floors-as-data, F3-pinned Protocol, F9 strict disjointness) + P1 slice 1 seat registry: append-only card stream (seats.jsonl, flat exact-field cards, last-row-wins fold) with sha256-verified cached view re-synced per row (F2) and the deterministic seed collector from the desktop models.json provider catalog — no secrets carried (vault paths only), no taste derived (cost classes from measured cost, seeds state=probing). Zero runtime deps; serde dev-only for round-trip proofs."
 # Origin: OMP sergeant BUILD-QUEUE r2-organs-rewrite, rung 6 P-phase plan.
 #   Quorum verdict: quorum-r2-organs-rewrite/VERDICT.md (2026-08-26,
-#   SHIP-WITH-CHANGES). P0 slice 1 = substrate + panel construction; slice 2
-#   = Protocol/Convening/Verdict + pinning hash; slice 3 = disjointness +
-#   degraded-day data-driven tests; the seat registry (P1), protocols (P2),
-#   dispatch (P3), world (P4), parallel run (P5) and cutover (P6) follow as
-#   their own tick-sized slices.
-#   Organ law: zero runtime deps, sync, std only (caddis-voice/organs
-#   precedent); serde/serde_json are DEV-only until the wire format freezes.
-
+#   SHIP-WITH-CHANGES). P0 = substrate + protocol pin + disjointness (DONE);
+#   P1 slice 1 = registry stream/view/collector (this); slices 2-3 (caps +
+#   TTL state machine, warden-gated propose->confirm edits) and P2-P6
+#   (protocols, dispatch, world, parallel run, cutover) follow as their own
+#   tick-sized slices. Organ law: zero runtime deps, sync, std only
+#   (caddis-voice/organs precedent); serde/serde_json are DEV-only until the
+#   wire format freezes. json.rs vendored from caddis-memory (fix law: all
+#   three copies).
 [dependencies]
 
 [dev-dependencies]

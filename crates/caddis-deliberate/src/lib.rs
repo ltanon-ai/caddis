@@ -1,4 +1,4 @@
-//! caddis-deliberate — COUNCIL + QUORUM DELIBERATION ORGAN, P0 substrate
+//! caddis-deliberate — COUNCIL + QUORUM DELIBERATION ORGAN (P0 substrate + P1 registry)
 //! (BUILD-QUEUE r2-organs-rewrite; rung-6 plan
 //! state/briefs/caddis-deliberate-organ-plan-2026-08-28.md; quorum verdict
 //! quorum-r2-organs-rewrite/VERDICT.md, 2026-08-26, SHIP-WITH-CHANGES).
@@ -11,8 +11,16 @@
 //! (transport-served model, never self-report). P0 slice 3 = [`disjoint`]:
 //! the F9 STRICT quorum-pool law — selection with the disjoint filter,
 //! the zero-overlap proof, the degraded-day honest refusal — with floors
-//! as DATA proven by a day table. Zero I/O, zero daemon
-//! knowledge, zero warden writes. Ruling provenance per piece:
+//! as DATA proven by a day table. Zero I/O,
+//! zero daemon knowledge, zero warden writes.
+//! P1 slice 1 = [`registry`] + [`collector`]: the seat registry as an
+//! APPEND-ONLY CARD STREAM (`seats.jsonl`, flat one-object-per-line
+//! cards, exact field law) with a sha256-verified CACHED JSON VIEW
+//! re-synced per row (F2), plus the seed collector from the desktop
+//! models.json provider catalog (13 providers) — deterministic bytes, no
+//! secrets, no taste: cost classes derive from measured cost, states
+//! seed `probing`, and anything judgment-shaped stays an operator
+//! ruling through the P1-slice-3 edit path.
 //!
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
 //!   never touches a ledger. It classifies DATA and constructs values; the
@@ -41,8 +49,11 @@
 //! (at least one seat from OUTSIDE the Chinese free-provider cluster). The
 //! operator may re-rule it; the floor's meaning never lives in control flow.
 
+pub mod collector;
 pub mod disjoint;
+pub mod json;
 pub mod protocol;
+pub mod registry;
 pub mod sha256;
 
 use std::collections::BTreeSet;
