@@ -842,7 +842,7 @@ fn convened_quorum() -> quorum::QuorumSession {
         "q1",
         &council_for_quorum(),
         &quorum::protocol_v1(),
-        &quorum_candidates(),
+        quorum::Selection::strict(&quorum_candidates()),
         ACTOR,
         &gate_open(),
     )
@@ -1166,7 +1166,7 @@ fn quorum_pin_move_returns_session_then_f11_redispatch_completes() {
             p
         },
         &council,
-        &quorum_candidates(),
+        quorum::Selection::strict(&quorum_candidates()),
         ACTOR,
         &gate_open(),
     )

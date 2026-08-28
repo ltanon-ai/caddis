@@ -10,7 +10,15 @@
 //!   [`crate::disjoint::select_quorum_pool`] — the STRICT disjoint
 //!   filter against the council panel, live-only, free-first, floors
 //!   validated on the selected pool, zero-overlap re-proven before
-//!   return. This module adds no selection logic of its own.
+//!   return. This module adds no selection logic of its own. The
+//!   DEGRADED day (strict pool short) is the operator-approvable door
+//!   (P3 slice 4): [`convene`] and [`pause_and_re_dispatch`] take an
+//!   optional [`crate::disjoint::OperatorApproval`] and route through
+//!   [`crate::disjoint::select_quorum_pool_with_reserve`] — the ONE
+//!   code path that can produce a pool-vs-council overlap, always
+//!   audited on the session ([`QuorumSession::reserve_audit`]). Without
+//!   an approval the degraded day stays the hard [`QuorumErr::Pool`]
+//!   refusal it always was: no approval, no overlap, ever.
 //! - **The ladder link** (charter: quorum comes AFTER the council
 //!   integrated): [`convene`] takes the council SESSION, inherits its
 //!   task — the SAME staged questions — verbatim, selects the pool
@@ -70,10 +78,13 @@ use crate::council::{
     self, CouncilErr, CouncilSession, DisagreementMap, GateReceipt, PinOutcome, Position, Reply,
     Stakes,
 };
-use crate::disjoint::{select_quorum_pool, DisjointErr, QuorumPool};
+use crate::disjoint::{
+    select_quorum_pool, select_quorum_pool_with_reserve, DisjointErr, OperatorApproval, QuorumPool,
+    ReserveAudit, ReserveErr,
+};
 use crate::protocol::{DispatchEntry, PinMismatch, Protocol, ProtocolKind, ProvenanceRow, Verdict};
 use crate::registry::Registry;
-use crate::{caps, sha256, Floors, Seat};
+use crate::{caps, sha256, Floors, Panel, Seat};
 
 /// The seven canonical quorum stages, in execution order. Stage two is
 /// `pool` — the peers-not-roles law ([`crate::disjoint`]); a quorum card
@@ -193,6 +204,12 @@ pub struct QuorumSession {
     /// a convening is auditable from birth through execution, the
     /// council law).
     pub dispatch_log: Vec<DispatchEntry>,
+    /// F9 reserve provenance (P3 slice 4): `Some` iff this pool was
+    /// selected under an explicit operator approval — cited even on a
+    /// healthy day (the approval unspent, `reserve_lanes` empty), so the
+    /// warden ledger records the proven fact. `None` = the strict day:
+    /// no approval involved, no overlap possible.
+    pub reserve_audit: Option<ReserveAudit>,
 }
 
 /// Honest failure taxonomy (council CouncilErr law): `is_refusal()`
@@ -209,6 +226,16 @@ pub enum QuorumErr {
     GateClosed { actor: String },
     /// Pool selection refusal (F9 overlap, degraded day, floors).
     Pool(DisjointErr),
+    /// The degraded day exhausted: disjoint live seats + APPROVED
+    /// reserve still below the pool size (P3 slice 4). A refusal —
+    /// nothing convened; `unapproved_live_overlap` carries the operator's
+    /// next vetting decision.
+    ReserveExhausted {
+        have: usize,
+        want: usize,
+        skipped_non_live: usize,
+        unapproved_live_overlap: Vec<String>,
+    },
     /// Fewer answers than the decision floor — nothing can land.
     CollectIncomplete {
         missing: Vec<String>,
@@ -236,6 +263,7 @@ impl QuorumErr {
             QuorumErr::CardInvalid(_)
                 | QuorumErr::GateClosed { .. }
                 | QuorumErr::Pool(_)
+                | QuorumErr::ReserveExhausted { .. }
                 | QuorumErr::CollectIncomplete { .. }
                 | QuorumErr::FloorUnmet { .. }
                 | QuorumErr::VersionNotBumped { .. }
@@ -253,6 +281,17 @@ impl fmt::Display for QuorumErr {
                 "warden gate closed: no active card for '{actor}' — F1 refuses the convening"
             ),
             QuorumErr::Pool(e) => write!(f, "pool selection refused: {e}"),
+            QuorumErr::ReserveExhausted {
+                have,
+                want,
+                skipped_non_live,
+                unapproved_live_overlap,
+            } => write!(
+                f,
+                "degraded day exhausted: disjoint live + approved reserve {have} < pool {want} \
+                 (skipped: {skipped_non_live} non-live; unapproved live overlap: {})",
+                unapproved_live_overlap.join(", ")
+            ),
             QuorumErr::CollectIncomplete {
                 missing,
                 have,
@@ -287,6 +326,43 @@ impl From<DisjointErr> for QuorumErr {
     }
 }
 
+/// Reserve-selector refusals, translated into the quorum taxonomy: strict
+/// and floors refusals stay [`QuorumErr::Pool`] (the refusal law is
+/// unchanged — the reserve NEVER papers over a strict refusal); the
+/// exhausted degraded day becomes [`QuorumErr::ReserveExhausted`] (still
+/// exit 1 — nothing convened); a blank approval id and a post-condition
+/// overlap are wiring Defects — unauditable or impossible pools never
+/// reach a session.
+impl From<ReserveErr> for QuorumErr {
+    fn from(e: ReserveErr) -> Self {
+        match e {
+            ReserveErr::Strict(d) => QuorumErr::Pool(d),
+            ReserveErr::Floors(p) => QuorumErr::Pool(DisjointErr::Floors(p)),
+            ReserveErr::ReserveExhausted {
+                have,
+                want,
+                skipped_non_live,
+                unapproved_live_overlap,
+            } => QuorumErr::ReserveExhausted {
+                have,
+                want,
+                skipped_non_live,
+                unapproved_live_overlap,
+            },
+            ReserveErr::BlankApproval => QuorumErr::Defect(
+                "operator approval id is blank — an unauditable overlap never seats".into(),
+            ),
+            ReserveErr::EmptyPool => QuorumErr::Defect(
+                "quorum pool size must be >= 1 — convene never asks for an empty pool".into(),
+            ),
+            ReserveErr::Overlap { lanes } => QuorumErr::Defect(format!(
+                "F9 reserve construction bug: overlap outside the approval: {} — refused, never shipped",
+                lanes.join(", ")
+            )),
+        }
+    }
+}
+
 /// The F1 gate — [`crate::council::gate`], the ONE law, wrapped only to
 /// translate the error language into this module's taxonomy.
 fn gate(warden_ledger_text: &str, actor: &str) -> Result<GateReceipt, QuorumErr> {
@@ -294,6 +370,58 @@ fn gate(warden_ledger_text: &str, actor: &str) -> Result<GateReceipt, QuorumErr>
         CouncilErr::GateClosed { actor } => QuorumErr::GateClosed { actor },
         other => QuorumErr::Defect(other.to_string()),
     })
+}
+
+/// What the ONE selection law runs against (P3 slice 4): the live
+/// candidate snapshot plus, when the day is degraded, the operator's
+/// explicit reserve approval. Grouped so the door and the candidates it
+/// opens on travel as ONE argument — never swapped at a call site.
+#[derive(Debug, Clone, Copy)]
+pub struct Selection<'a> {
+    pub candidates: &'a [Seat],
+    pub approval: Option<&'a OperatorApproval>,
+}
+
+impl<'a> Selection<'a> {
+    /// The strict day: candidates only, no approval in hand — a short
+    /// disjoint pool stays the hard [`QuorumErr::Pool`] refusal.
+    pub fn strict(candidates: &'a [Seat]) -> Self {
+        Selection {
+            candidates,
+            approval: None,
+        }
+    }
+}
+
+/// The ONE selection call site for both convening paths: the STRICT law
+/// ([`select_quorum_pool`]) or, when an approval travels with the
+/// selection, [`select_quorum_pool_with_reserve`] — the only code path
+/// that can seat a council lane onto the pool. Returns the pool and the
+/// audit the session carries (`None` on the strict day; cited even when
+/// unspent under an approval).
+fn select_pool(
+    council: &Panel,
+    selection: Selection,
+    size: usize,
+    floors: &Floors,
+) -> Result<(QuorumPool, Option<ReserveAudit>), QuorumErr> {
+    match selection.approval {
+        None => Ok((
+            select_quorum_pool(council, selection.candidates, size, floors)?,
+            None,
+        )),
+        Some(approval) => {
+            let selected = select_quorum_pool_with_reserve(
+                council,
+                selection.candidates,
+                size,
+                floors,
+                approval,
+            )
+            .map_err(QuorumErr::from)?;
+            Ok((selected.pool, Some(selected.audit)))
+        }
+    }
 }
 
 /// STAGE `convene` (+ `pool`): validate the card, pass the F1 gate,
@@ -305,11 +433,18 @@ fn gate(warden_ledger_text: &str, actor: &str) -> Result<GateReceipt, QuorumErr>
 /// task verbatim — the SAME staged questions (ladder link). Nothing is
 /// written by this function; a [`QuorumSession`] is a value; the P3
 /// executor persists and dispatches under these same gates.
+///
+/// [`Selection::approval`] is the degraded day's operator door (P3
+/// slice 4): `None` selects STRICT — a short disjoint pool stays the
+/// hard [`QuorumErr::Pool`] refusal (no approval, no overlap, ever);
+/// `Some` routes through the ONE overlap-producing code path and the
+/// session carries its [`ReserveAudit`] (cited even on a healthy day,
+/// the approval unspent).
 pub fn convene(
     id: impl Into<String>,
     council_session: &CouncilSession,
     protocol: &Protocol,
-    candidates: &[Seat],
+    selection: Selection,
     actor: &str,
     warden_ledger_text: &str,
 ) -> Result<QuorumSession, QuorumErr> {
@@ -321,9 +456,9 @@ pub fn convene(
     }
     validate_card(protocol)?;
     let gate_receipt = gate(warden_ledger_text, actor)?;
-    let pool = select_quorum_pool(
+    let (pool, reserve_audit) = select_pool(
         &council_session.convening.panel,
-        candidates,
+        selection,
         protocol.floors.panel_size,
         &protocol.floors,
     )?;
@@ -337,6 +472,7 @@ pub fn convene(
         gate: gate_receipt,
         rerun_of: None,
         dispatch_log: Vec::new(),
+        reserve_audit,
     })
 }
 
@@ -859,15 +995,20 @@ pub struct PausedReDispatch {
 /// after (F9 disjointness is proven against THAT panel — swapping
 /// councils mid-flight is a Defect); the new version must be STRICTLY
 /// greater; the new pin must differ (no-op law); the F1 gate re-runs
-/// (EVERY convening is gated); the pool re-selects under the NEW floors;
-/// the re-run id derives deterministically (`{original}#r{version}`) and
-/// `rerun_of` points at the archived id.
+/// (EVERY convening is gated); the pool re-selects under the NEW floors
+/// through the same [`Selection`] law as [`convene`] (strict without an
+/// approval — a re-dispatch onto a degraded day stays the hard
+/// [`QuorumErr::Pool`] refusal; the reserve door with one, the new
+/// session carrying its own fresh [`ReserveAudit`]); the re-run id
+/// derives deterministically (`{original}#r{version}`) and `rerun_of`
+/// points at the archived id. The archived session keeps the audit it
+/// was born with — history is immutable.
 pub fn pause_and_re_dispatch(
     session: QuorumSession,
     archived_protocol: &Protocol,
     new_protocol: &Protocol,
     council_session: &CouncilSession,
-    candidates: &[Seat],
+    selection: Selection,
     actor: &str,
     warden_ledger_text: &str,
 ) -> Result<PausedReDispatch, QuorumErr> {
@@ -895,9 +1036,9 @@ pub fn pause_and_re_dispatch(
         return Err(QuorumErr::SameCard { pin: new_pin });
     }
     let gate_receipt = gate(warden_ledger_text, actor)?;
-    let pool = select_quorum_pool(
+    let (pool, reserve_audit) = select_pool(
         &council_session.convening.panel,
-        candidates,
+        selection,
         new_protocol.floors.panel_size,
         &new_protocol.floors,
     )?;
@@ -911,6 +1052,7 @@ pub fn pause_and_re_dispatch(
         stakes: session.stakes,
         gate: gate_receipt,
         rerun_of: Some(session.id.clone()),
+        reserve_audit,
     };
     Ok(PausedReDispatch {
         archived: session,

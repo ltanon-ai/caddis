@@ -1,15 +1,19 @@
-//! quorum_tests.rs — P2 slice 2 tests. Plan P2 Done-When slice: the
-//! quorum card validates mechanically; the F9 disjoint pool, floor 2/3,
-//! degradation asterisk, fail-closed paths, VERDICT.md artifact, ledger
-//! row round-trip, and the F11 re-dispatch are proven on fixtures.
+//! quorum_tests.rs — P2 slice 2 + P3 slice 4 tests. P2 Done-When slice:
+//! the quorum card validates mechanically; the F9 disjoint pool, floor
+//! 2/3, degradation asterisk, fail-closed paths, VERDICT.md artifact,
+//! ledger row round-trip, and the F11 re-dispatch are proven on
+//! fixtures. P3 slice 4: the degraded day's OPERATOR-APPROVABLE door —
+//! convene and pause_and_re_dispatch thread an optional
+//! [`crate::disjoint::OperatorApproval`]; the unapproved degraded day
+//! stays the hard Pool refusal; the healthy day spends no approval; the
+//! exhausted day names the operator's next vetting decision.
 
 use crate::council::{self, Stakes};
+use crate::disjoint::{DisjointErr, OperatorApproval};
 use crate::protocol::{Protocol, ProtocolKind};
 use crate::quorum::*;
 use crate::registry::{ProviderCard, Registry, SeatCard};
 use crate::{CostClass, Floors, LaneType, Seat, SeatState};
-
-// --- fixtures ---------------------------------------------------------------
 
 fn seat(id: &str, family: &str, cost: CostClass, state: SeatState) -> Seat {
     Seat {
@@ -25,11 +29,10 @@ fn seat(id: &str, family: &str, cost: CostClass, state: SeatState) -> Seat {
     }
 }
 
-/// Eight live seats: four FREE (the council panel takes these — four
-/// families, floors 4/2/1 satisfied) plus four disjoint candidates whose
-/// selection order (free-first, lane_id ties) is
-/// anthropic/claude < cohere/c < gemini/g < mistral/m — the pool is the
-/// first three.
+/// Eight live seats, all FREE. The council panel (selection order:
+/// free-first, `lane_id` ties) takes anthropic/claude, cohere/c,
+/// gemini/g, groq/llama; the quorum pool selects from the disjoint
+/// remainder — mistral/m, nvidia/nem, openai/x (the first three).
 fn candidates() -> Vec<Seat> {
     vec![
         seat("groq/llama", "groq", CostClass::Free, SeatState::Live),
@@ -94,7 +97,7 @@ fn convened_under_v1() -> QuorumSession {
         "q1",
         &council_convened(),
         &protocol_v1(),
-        &candidates(),
+        Selection::strict(&candidates()),
         ACTOR,
         &gate_open(),
     )
@@ -250,7 +253,7 @@ fn convene_happy_path_links_the_council_and_pins_the_card() {
         "q1",
         &council,
         &protocol_v1(),
-        &candidates(),
+        Selection::strict(&candidates()),
         ACTOR,
         &gate_open(),
     )
@@ -284,7 +287,7 @@ fn convene_refuses_when_the_gate_is_closed() {
         "q1",
         &council_convened(),
         &protocol_v1(),
-        &candidates(),
+        Selection::strict(&candidates()),
         ACTOR,
         "", // no warden ledger rows: no active card
     )
@@ -323,7 +326,15 @@ fn convene_pool_skips_council_lanes_before_ordering() {
         &gate_open(),
     )
     .unwrap();
-    let session = convene("q1", &council, &protocol_v1(), &cands, ACTOR, &gate_open()).unwrap();
+    let session = convene(
+        "q1",
+        &council,
+        &protocol_v1(),
+        Selection::strict(&cands),
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap();
     let pool_lanes: Vec<&str> = session
         .pool
         .seats
@@ -357,7 +368,7 @@ fn convene_refuses_the_degraded_day_honestly() {
         "q1",
         &council_convened(),
         &protocol_v1(),
-        &short_day,
+        Selection::strict(&short_day),
         ACTOR,
         &gate_open(),
     )
@@ -765,7 +776,7 @@ fn pause_and_re_dispatch_bumps_reselects_and_archives() {
         &protocol_v1(),
         &v2,
         &council,
-        &candidates(),
+        Selection::strict(&candidates()),
         ACTOR,
         &gate_open(),
     )
@@ -795,7 +806,7 @@ fn pause_refuses_missing_bump_wrong_card_and_wrong_council() {
         &protocol_v1(),
         &card(1, protocol_v1().floors),
         &council,
-        &candidates(),
+        Selection::strict(&candidates()),
         ACTOR,
         &gate_open(),
     )
@@ -815,7 +826,7 @@ fn pause_refuses_missing_bump_wrong_card_and_wrong_council() {
         &card(9, protocol_v1().floors),
         &card(10, protocol_v1().floors),
         &council,
-        &candidates(),
+        Selection::strict(&candidates()),
         ACTOR,
         &gate_open(),
     )
@@ -839,11 +850,265 @@ fn pause_refuses_missing_bump_wrong_card_and_wrong_council() {
         &protocol_v1(),
         &card(2, protocol_v1().floors),
         &other_council,
-        &candidates(),
+        Selection::strict(&candidates()),
         ACTOR,
         &gate_open(),
     )
     .unwrap_err();
     assert!(matches!(err, QuorumErr::Defect(_)));
     assert!(err.to_string().contains("SAME council"));
+}
+
+// --- P3 slice 4: the degraded day's operator-approvable door ----------------
+// Geometry truth (proven by the selectors above): the council panel from
+// candidates() is anthropic/claude, cohere/c, gemini/g, groq/llama — the
+// disjoint remainder is mistral/m, nvidia/nem, openai/x, zai/glm.
+
+fn approval(id: &str, lanes: &[&str]) -> OperatorApproval {
+    OperatorApproval {
+        id: id.to_string(),
+        approved_overlap_lanes: lanes.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// ONE live disjoint seat (openai/x), the two live approvable council
+/// lanes (anthropic/claude, groq/llama), and two non-live disjoint
+/// seats. Strict selection has 1 of 3 — the degraded day.
+fn degraded_day() -> Vec<Seat> {
+    vec![
+        seat(
+            "anthropic/claude",
+            "anthropic",
+            CostClass::Free,
+            SeatState::Live,
+        ),
+        seat("groq/llama", "groq", CostClass::Free, SeatState::Live),
+        seat("openai/x", "openai", CostClass::Free, SeatState::Live),
+        seat("mistral/m", "mistral", CostClass::Free, SeatState::Failed),
+        seat("nvidia/nem", "nvidia", CostClass::Free, SeatState::Retired),
+    ]
+}
+
+#[test]
+fn convene_with_approval_healthy_day_spends_nothing() {
+    // A healthy day with an approval in hand: the strict pool stands,
+    // the audit cites the act unspent — the ledger records the proven
+    // fact, not a pull that never happened.
+    let appr = approval("appr-healthy", &["anthropic/claude"]);
+    let strict = convene(
+        "q1",
+        &council_convened(),
+        &protocol_v1(),
+        Selection::strict(&candidates()),
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap();
+    let under_approval = convene(
+        "q2",
+        &council_convened(),
+        &protocol_v1(),
+        Selection {
+            candidates: &candidates(),
+            approval: Some(&appr),
+        },
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap();
+    assert_eq!(under_approval.pool, strict.pool);
+    assert!(strict.reserve_audit.is_none());
+    let audit = under_approval.reserve_audit.expect("approval cited");
+    assert_eq!(audit.approval_id, "appr-healthy");
+    assert!(audit.reserve_lanes.is_empty());
+    assert_eq!(
+        audit.disjoint_lanes,
+        vec!["mistral/m", "nvidia/nem", "openai/x"]
+    );
+    // The council lanes the approval did not name — recorded even though
+    // nothing blocked: the operator's next vetting decision either way.
+    assert_eq!(
+        audit.unapproved_live_overlap,
+        vec!["cohere/c", "gemini/g", "groq/llama"]
+    );
+    assert_eq!(audit.skipped_non_live, 0);
+}
+
+#[test]
+fn convene_without_approval_stays_the_hard_refusal_on_degraded_day() {
+    // The door without the key: no approval, no overlap, ever.
+    let err = convene(
+        "q1",
+        &council_convened(),
+        &protocol_v1(),
+        Selection::strict(&degraded_day()),
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap_err();
+    assert!(err.is_refusal());
+    assert!(matches!(
+        err,
+        QuorumErr::Pool(DisjointErr::InsufficientDisjointPool { .. })
+    ));
+}
+
+#[test]
+fn convene_with_approval_pulls_vetted_reserve_on_degraded_day() {
+    let appr = approval("appr-1", &["anthropic/claude", "groq/llama"]);
+    let session = convene(
+        "q1",
+        &council_convened(),
+        &protocol_v1(),
+        Selection {
+            candidates: &degraded_day(),
+            approval: Some(&appr),
+        },
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap();
+    let lanes: Vec<&str> = session
+        .pool
+        .seats
+        .iter()
+        .map(|s| s.lane_id.as_str())
+        .collect();
+    // Disjoint tail first, then the vetted reserve in selection order.
+    assert_eq!(lanes, vec!["openai/x", "anthropic/claude", "groq/llama"]);
+    let audit = session
+        .reserve_audit
+        .expect("a pulled pool is an audited pool");
+    assert_eq!(audit.approval_id, "appr-1");
+    assert_eq!(audit.reserve_lanes, vec!["anthropic/claude", "groq/llama"]);
+    assert_eq!(audit.disjoint_lanes, vec!["openai/x"]);
+    assert_eq!(audit.skipped_non_live, 2);
+    assert!(audit.unapproved_live_overlap.is_empty());
+}
+
+#[test]
+fn convene_reserve_never_papers_over_floors() {
+    // Strict selection reaches enough disjoint seats but the floors fail
+    // (one family for a 2-family floor). The reserve pull exists ONLY
+    // for the short pool — with an approval in hand it must propagate
+    // the floors refusal, never seat an overlapping lane to "fix"
+    // diversity.
+    let mono = vec![
+        seat("z2/a", "z2", CostClass::Free, SeatState::Live),
+        seat("z2/b", "z2", CostClass::Free, SeatState::Live),
+        seat("z2/c", "z2", CostClass::Free, SeatState::Live),
+        seat("groq/llama", "groq", CostClass::Free, SeatState::Live),
+    ];
+    let appr = approval("appr-floors", &["groq/llama"]);
+    let err = convene(
+        "q1",
+        &council_convened(),
+        &protocol_v1(),
+        Selection {
+            candidates: &mono,
+            approval: Some(&appr),
+        },
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap_err();
+    assert!(err.is_refusal());
+    assert!(matches!(err, QuorumErr::Pool(DisjointErr::Floors(_))));
+}
+
+#[test]
+fn convene_blank_approval_is_a_defect_on_every_day() {
+    // Blank id = unauditable = the silent path F9 killed. Refused on a
+    // healthy day too — the door never opens without a name.
+    let blank = approval("  ", &["anthropic/claude"]);
+    let err = convene(
+        "q1",
+        &council_convened(),
+        &protocol_v1(),
+        Selection {
+            candidates: &candidates(),
+            approval: Some(&blank),
+        },
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap_err();
+    assert!(!err.is_refusal());
+    assert!(matches!(err, QuorumErr::Defect(_)));
+    assert!(err.to_string().contains("unauditable"));
+}
+
+#[test]
+fn convene_reserve_exhausted_carries_the_next_vetting_decision() {
+    // Disjoint + approved reserve still short: the refusal names what the
+    // operator could vet next — the live overlap the approval did not.
+    let appr = approval("appr-2", &["anthropic/claude"]); // groq NOT approved
+    let err = convene(
+        "q1",
+        &council_convened(),
+        &protocol_v1(),
+        Selection {
+            candidates: &degraded_day(),
+            approval: Some(&appr),
+        },
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap_err();
+    assert!(err.is_refusal());
+    match err {
+        QuorumErr::ReserveExhausted {
+            have,
+            want,
+            skipped_non_live,
+            unapproved_live_overlap,
+        } => {
+            assert_eq!((have, want), (2, 3));
+            assert_eq!(skipped_non_live, 2);
+            assert_eq!(unapproved_live_overlap, vec!["groq/llama"]);
+        }
+        other => panic!("expected ReserveExhausted, got {other:?}"),
+    }
+}
+
+#[test]
+fn pause_and_re_dispatch_with_approval_re_selects_through_the_door() {
+    // Convened strict on a healthy day; mid-flight edit to v2 lands on a
+    // degraded day (registry drift) — the re-selection pulls the vetted
+    // reserve under the approval, the fresh session carries its own
+    // audit, and the archived original keeps the audit it was born with.
+    let session = convened_under_v1();
+    let council = council_convened();
+    let v2 = card(2, protocol_v1().floors);
+    let appr = approval("appr-r2", &["anthropic/claude", "groq/llama"]);
+    let out = pause_and_re_dispatch(
+        session,
+        &protocol_v1(),
+        &v2,
+        &council,
+        Selection {
+            candidates: &degraded_day(),
+            approval: Some(&appr),
+        },
+        ACTOR,
+        &gate_open(),
+    )
+    .unwrap();
+    assert_eq!(out.re_dispatched.id, "q1#r2");
+    assert_eq!(out.re_dispatched.rerun_of.as_deref(), Some("q1"));
+    assert!(out.archived.reserve_audit.is_none());
+    let lanes: Vec<&str> = out
+        .re_dispatched
+        .pool
+        .seats
+        .iter()
+        .map(|s| s.lane_id.as_str())
+        .collect();
+    assert_eq!(lanes, vec!["openai/x", "anthropic/claude", "groq/llama"]);
+    let audit = out
+        .re_dispatched
+        .reserve_audit
+        .expect("the re-selection is audited like any other");
+    assert_eq!(audit.approval_id, "appr-r2");
+    assert_eq!(audit.reserve_lanes, vec!["anthropic/claude", "groq/llama"]);
 }
