@@ -36,7 +36,10 @@ fn rotate_archives_bytes_untouched() {
     let (o, e, c) = run(&live, &["ledger", "rotate"]);
     assert_eq!(c, 0, "rotate: {o}{e}");
     let live_now = fs::read_to_string(&live).unwrap();
-    assert!(live_now.is_empty(), "live must be empty after rotate: {live_now:?}");
+    assert!(
+        live_now.is_empty(),
+        "live must be empty after rotate: {live_now:?}"
+    );
     let dir = live.parent().unwrap();
     let name = live.file_name().unwrap().to_string_lossy();
     let archive = fs::read_dir(dir)

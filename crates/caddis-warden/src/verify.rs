@@ -3,12 +3,14 @@
 //!
 //! `caddis-warden verify` scans one ledger READ-ONLY and counts what the
 //! integrity survey measured by hand: unparseable lines (defect L1 — two
-//! writers' rows fused by an unlocked concurrent append) and duplicate `seq`
+//! writers' rows fused by an unlocked concurrent append), duplicate `seq`
 //! values (defect L2 — `seq` is per-writer-instance, so every restarted
-//! writer re-seeds from 1). Same findings-engine shape as the model-voice
-//! organ v0.2.0: the tool REPORTS the ledger's honest state, it never
-//! rewrites history — the append-only law outranks tidiness, and the L1/L2
-//! write-path fix shape belongs to the warden owner, not to this reader.
+//! writer re-seeds from 1), and junk `from` labels (weak L1 — fused rows
+//! that STILL parse, carrying writer B's JSON inside writer A's `from`
+//! string; census 2026-08-28). Same findings-engine shape as the
+//! model-voice organ v0.2.0: the tool REPORTS the ledger's honest state, it
+//! never rewrites history — the append-only law outranks tidiness, and the
+//! L1/L2 write-path fix shape belongs to the warden owner, not this reader.
 //!
 //! The row scan is replay's and report's (shared, never duplicated): one
 //! parser for one file format. JSON output is hand-rolled under the crate's
@@ -37,6 +39,7 @@ pub(crate) struct Scan {
     unparseable_total: usize,
     seq_counts: BTreeMap<u64, usize>,
     by_from: BTreeMap<String, usize>,
+    junk_from: BTreeMap<String, usize>,
     first_ts: Option<u64>,
     last_ts: u64,
 }
@@ -69,6 +72,9 @@ pub(crate) fn scan(text: &str) -> Scan {
 fn fold(s: &mut Scan, row: Row) {
     s.rows += 1;
     *s.seq_counts.entry(row.seq).or_insert(0) += 1;
+    if is_junk_from(&row.from) {
+        *s.junk_from.entry(row.from.clone()).or_insert(0) += 1;
+    }
     *s.by_from.entry(row.from).or_insert(0) += 1;
     if row.ts > 0 && s.first_ts.is_none_or(|f| row.ts < f) {
         s.first_ts = Some(row.ts);
@@ -91,6 +97,31 @@ pub(crate) fn dup_seqs(s: &Scan) -> Vec<(u64, usize)> {
     dups
 }
 
+/// Junk `from` labels, worst first (count desc, then label asc — the same
+/// deterministic-order law as `dup_seqs`).
+pub(crate) fn junk_from_worst(s: &Scan) -> Vec<(&str, usize)> {
+    let mut worst: Vec<(&str, usize)> = s
+        .junk_from
+        .iter()
+        .map(|(label, n)| (label.as_str(), *n))
+        .collect();
+    worst.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    worst
+}
+
+/// A `from` value no adapter could have stamped. Under the L1 fusion
+/// mechanism writer B's row head lands INSIDE writer A's `from` string
+/// (extract stops at B's first quote), so the label parses but carries JSON
+/// fragments — the census measured `caddis{`, `omp{`, `,` on the live
+/// ledger (2026-08-28). Labels are `[A-Za-z0-9._-]` (`<label>` or
+/// `<label>.<session>`, rows.rs `from_matches`); anything else inside the
+/// value is corruption that still parses. An EMPTY from is a missing stamp,
+/// not corruption — it stays a census fact (`from` map), never a finding.
+fn is_junk_from(from: &str) -> bool {
+    from.chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+}
+
 /// Parsed coverage as hundredths of a percent, integer math so the JSON never
 /// carries a float artifact. An empty ledger is vacuously complete.
 fn coverage_hundredths(s: &Scan) -> u64 {
@@ -107,13 +138,7 @@ fn json_of(path: &str, s: &Scan) -> String {
     let examples: Vec<String> = s
         .unparseable
         .iter()
-        .map(|(line, head)| {
-            format!(
-                "{{\"line\":{},\"head\":\"{}\"}}",
-                line,
-                json_escape(head)
-            )
-        })
+        .map(|(line, head)| format!("{{\"line\":{},\"head\":\"{}\"}}", line, json_escape(head)))
         .collect();
     let worst: Vec<String> = dups
         .iter()
@@ -125,13 +150,21 @@ fn json_of(path: &str, s: &Scan) -> String {
         .iter()
         .map(|(k, v)| format!("\"{}\":{}", json_escape(k), v))
         .collect();
+    let junk = junk_from_worst(s);
+    let junk_rows: usize = junk.iter().map(|(_, n)| *n).sum();
+    let junk_worst: Vec<String> = junk
+        .iter()
+        .take(EXAMPLES)
+        .map(|(label, n)| format!("{{\"from\":\"{}\",\"count\":{n}}}", json_escape(label)))
+        .collect();
     let cov = coverage_hundredths(s);
-    let findings = s.unparseable_total + dups.len();
+    let findings = s.unparseable_total + dups.len() + junk.len();
     format!(
         "{{\"ledger\":\"{}\",\"lines_scanned\":{},\"blank_lines\":{},\"rows\":{},\
          \"coverage_pct\":{}.{:02},\"from\":{{{}}},\"first_ts\":{},\"last_ts\":{},\
          \"findings\":{{\"unparseable\":{},\"unparseable_examples\":[{}],\
-         \"dup_seq_values\":{},\"dup_seq_rows\":{},\"dup_seq_worst\":[{}]}},\
+         \"dup_seq_values\":{},\"dup_seq_rows\":{},\"dup_seq_worst\":[{}],\
+         \"junk_from_values\":{},\"junk_from_rows\":{},\"junk_from_worst\":[{}]}},\
          \"status\":\"{}\"}}",
         json_escape(path),
         s.scanned,
@@ -147,6 +180,9 @@ fn json_of(path: &str, s: &Scan) -> String {
         dups.len(),
         dup_rows,
         worst.join(","),
+        junk.len(),
+        junk_rows,
+        junk_worst.join(","),
         if findings == 0 { "clean" } else { "findings" }
     )
 }
@@ -154,10 +190,17 @@ fn json_of(path: &str, s: &Scan) -> String {
 fn digest(path: &str, s: &Scan) -> String {
     let dups = dup_seqs(s);
     let dup_rows: usize = dups.iter().map(|(_, n)| *n).sum();
+    let junk = junk_from_worst(s);
+    let junk_rows: usize = junk.iter().map(|(_, n)| *n).sum();
     let cov = coverage_hundredths(s);
     let mut out = format!(
         "verify: {path}\nlines: {} (blank {})  rows: {}  coverage: {}.{:02}%  from: {} labels",
-        s.scanned, s.blank, s.rows, cov / 100, cov % 100, s.by_from.len()
+        s.scanned,
+        s.blank,
+        s.rows,
+        cov / 100,
+        cov % 100,
+        s.by_from.len()
     );
     if let Some(first) = s.first_ts {
         out.push_str(&format!("\nfirst_ts: {first}  last_ts: {}", s.last_ts));
@@ -180,8 +223,21 @@ fn digest(path: &str, s: &Scan) -> String {
         out.push_str(&format!("\n  worst: {}", worst.join("  ")));
     }
     out.push_str(&format!(
+        "\njunk from: {} values across {} rows (parsed rows whose from-label carries JSON fragments)",
+        junk.len(),
+        junk_rows
+    ));
+    if !junk.is_empty() {
+        let worst: Vec<String> = junk
+            .iter()
+            .take(EXAMPLES)
+            .map(|(label, n)| format!("from={label:?} x{n}"))
+            .collect();
+        out.push_str(&format!("\n  worst: {}", worst.join("  ")));
+    }
+    out.push_str(&format!(
         "\nstatus: {}",
-        if s.unparseable_total + dups.len() == 0 {
+        if s.unparseable_total + dups.len() + junk.len() == 0 {
             "CLEAN"
         } else {
             "FINDINGS"
@@ -224,7 +280,7 @@ pub fn run(args: &[String]) -> i32 {
     } else {
         println!("{}", digest(&path, &s));
     }
-    if s.unparseable_total > 0 || !dup_seqs(&s).is_empty() {
+    if s.unparseable_total > 0 || !dup_seqs(&s).is_empty() || !junk_from_worst(&s).is_empty() {
         FINDINGS
     } else {
         0

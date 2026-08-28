@@ -85,7 +85,6 @@ fn write_attest(id: &str, card_path: &str) -> i32 {
     }
 }
 
-
 fn close_plain() -> i32 {
     let (_, caller, state) = match read_state() {
         Ok(v) => v,

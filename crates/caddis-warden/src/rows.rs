@@ -129,7 +129,6 @@ pub(crate) fn body_why(body: &str) -> String {
         .unwrap_or_default()
 }
 
-
 pub(crate) fn first_line_capped(s: &str) -> String {
     s.lines().next().unwrap_or("").chars().take(60).collect()
 }

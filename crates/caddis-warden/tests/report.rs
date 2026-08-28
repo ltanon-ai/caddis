@@ -177,10 +177,7 @@ fn report_rejects_an_unknown_verdict_filter() {
 
 #[test]
 fn report_defaults_to_home_ledger() {
-    let home = std::env::temp_dir().join(format!(
-        "caddis-report-home-{}",
-        std::process::id()
-    ));
+    let home = std::env::temp_dir().join(format!("caddis-report-home-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(home.join(".caddis")).unwrap();
     std::fs::write(home.join(".caddis").join("warden-ledger.jsonl"), "").unwrap();

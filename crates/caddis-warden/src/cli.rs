@@ -21,6 +21,9 @@ USAGE:
                                     re-judge recorded history against today's law
   caddis-warden report [--from NAME] [--since HOURS] [--json]
                                     summarise what the ledger recorded
+  caddis-warden verify [LEDGER] [--json]
+                                    ledger integrity findings: fused lines, duplicate
+                                    seq, junk from-labels (exit 3 findings / 0 clean)
   caddis-warden receipt [--from NAME] [--since HOURS] [--json]
                                     what one caller did, reconstructed from the ledger
   caddis-warden laws [--from NAME] [--since HOURS] [--json]

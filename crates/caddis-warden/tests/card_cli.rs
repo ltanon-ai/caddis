@@ -218,7 +218,14 @@ fn close_verify_nonzero_leaves_card_open() {
     let (out, err, code) = card(
         &f.ledger,
         from,
-        &["close", "--verify", "--", "python", "-c", "raise SystemExit(1)"],
+        &[
+            "close",
+            "--verify",
+            "--",
+            "python",
+            "-c",
+            "raise SystemExit(1)",
+        ],
     );
     assert_ne!(code, 0, "nonzero verify must not close: {out}{err}");
     let (st, _, _) = card(&f.ledger, from, &["status"]);
@@ -233,7 +240,14 @@ fn close_verify_zero_closes() {
     let (out, err, code) = card(
         &f.ledger,
         from,
-        &["close", "--verify", "--", "python", "-c", "raise SystemExit(0)"],
+        &[
+            "close",
+            "--verify",
+            "--",
+            "python",
+            "-c",
+            "raise SystemExit(0)",
+        ],
     );
     assert_eq!(code, 0, "zero verify must close: {out}{err}");
     let led = std::fs::read_to_string(&f.ledger).unwrap();
@@ -250,7 +264,14 @@ fn close_verify_writes_attest_bundle() {
     let (out, err, code) = card(
         &f.ledger,
         from,
-        &["close", "--verify", "--", "python", "-c", "raise SystemExit(0)"],
+        &[
+            "close",
+            "--verify",
+            "--",
+            "python",
+            "-c",
+            "raise SystemExit(0)",
+        ],
     );
     assert_eq!(code, 0, "zero verify must close: {out}{err}");
     let bundle = f.card_path.with_extension("attest.json");
@@ -263,4 +284,3 @@ fn close_verify_writes_attest_bundle() {
     assert!(body.contains("CARD-TEST-1"), "{body}");
     let _ = std::fs::remove_file(&bundle);
 }
-

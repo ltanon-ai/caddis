@@ -94,7 +94,10 @@ fn dup_seqs_rank_worst_first_and_ties_break_on_seq_ascending() {
 fn blank_lines_are_counted_not_treated_as_corruption() {
     let text = format!("\n\n{}\n\n", good(1, "omp", 10));
     let s = scan(&text);
-    assert_eq!((s.scanned, s.blank, s.rows, s.unparseable_total), (1, 3, 1, 0));
+    assert_eq!(
+        (s.scanned, s.blank, s.rows, s.unparseable_total),
+        (1, 3, 1, 0)
+    );
     assert!(digest("L", &s).contains("status: CLEAN"));
 }
 
@@ -117,7 +120,10 @@ fn json_carries_locatable_examples_and_escapes_the_head() {
     let s = scan(&text);
     let j = json_of("L", &s);
     assert!(j.contains("\"line\":2"), "{j}");
-    assert!(j.contains("\\\"seq\\\":1"), "quotes in the head must survive: {j}");
+    assert!(
+        j.contains("\\\"seq\\\":1"),
+        "quotes in the head must survive: {j}"
+    );
 }
 
 #[test]
@@ -141,4 +147,82 @@ fn run_reads_a_positional_ledger_and_codes_findings_vs_clean() {
     let _ = std::fs::remove_file(&ok);
     assert_eq!(rc_bad, FINDINGS);
     assert_eq!(rc_ok, 0);
+}
+
+/// The weak-corruption signal the 2026-08-28 census measured on the live
+/// ledger: a fused line that STILL parses, its `from` string carrying
+/// writer B's row head (`caddis{`, `omp{`, `,`). Before this finding class
+/// those rows counted as healthy — verify UNDERCOUNTED corruption.
+#[test]
+fn fused_but_parseable_rows_are_junk_from_findings() {
+    let fused = good(1, "omp", 10).replace("\"from\":\"omp\"", "\"from\":\"omp{\"seq\":9");
+    let text = format!("{}\n{}\n", fused, good(2, "caddis", 20));
+    let s = scan(&text);
+    assert_eq!(
+        (s.rows, s.unparseable_total),
+        (2, 0),
+        "both lines parse: {text}"
+    );
+    let worst = junk_from_worst(&s);
+    assert_eq!(worst.len(), 1, "one junk label: {worst:?}");
+    assert_eq!(
+        worst[0].0, "omp{",
+        "extract stops at the fused row's first quote"
+    );
+    assert_eq!(worst[0].1, 1);
+    let d = digest("L", &s);
+    assert!(d.contains("junk from: 1 values across 1 rows"), "{d}");
+    assert!(d.contains("status: FINDINGS"), "{d}");
+    let j = json_of("L", &s);
+    assert!(j.contains("\"junk_from_values\":1"), "{j}");
+    assert!(j.contains("\"junk_from_rows\":1"), "{j}");
+    assert!(j.contains("junk_from_worst"), "{j}");
+}
+
+#[test]
+fn healthy_labels_including_session_suffixes_stay_clean() {
+    let text = format!(
+        "{}\n{}\n{}\n",
+        good(1, "bee-kamane", 10),
+        good(2, "peleda.a1b2c3d4", 20),
+        good(3, "claude-code", 30)
+    );
+    let s = scan(&text);
+    assert!(junk_from_worst(&s).is_empty());
+    let d = digest("L", &s);
+    assert!(d.contains("junk from: 0 values"), "{d}");
+    assert!(d.contains("status: CLEAN"), "{d}");
+}
+
+#[test]
+fn junk_from_worst_ranks_count_desc_then_label_asc() {
+    let mut text = String::new();
+    for seq in 1..=3 {
+        text.push_str(&good(seq, "omp{", 10));
+        text.push('\n');
+    }
+    for seq in 4..=6 {
+        text.push_str(&good(seq, ",", 10));
+        text.push('\n');
+    }
+    text.push_str(&good(7, "caddis{", 10));
+    text.push('\n');
+    let s = scan(&text);
+    let worst = junk_from_worst(&s);
+    assert_eq!(worst.len(), 3, "{worst:?}");
+    assert_eq!(worst[0], (",", 3), "count desc first: {worst:?}");
+    assert_eq!(worst[1], ("omp{", 3), "tie breaks on label asc: {worst:?}");
+    assert_eq!(worst[2], ("caddis{", 1), "{worst:?}");
+}
+
+/// An empty `from` is a MISSING STAMP, not corruption: it stays visible in
+/// the `from` census and never becomes a finding — the detector targets the
+/// fusion mechanism, not label policy.
+#[test]
+fn empty_from_is_a_census_fact_not_a_finding() {
+    let row = good(1, "omp", 10).replace("\"from\":\"omp\"", "\"from\":\"\"");
+    let s = scan(&row);
+    assert_eq!(s.rows, 1);
+    assert!(junk_from_worst(&s).is_empty());
+    assert!(digest("L", &s).contains("status: CLEAN"));
 }

@@ -173,7 +173,6 @@ fn fold_card(r: &mut Receipt, row: &Row) -> bool {
     }
 }
 
-
 /// One command's head, for the digest. Kept here so the renderer never has to
 /// know the body grammar.
 pub fn command_head(body: &str) -> String {

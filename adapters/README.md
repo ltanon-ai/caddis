@@ -60,6 +60,24 @@ not Python semantics.
   no per-agent stamp to configure; kernel attribution is the harness's
   lane entry.
 
+## Ledger facts (read the label, not the row number)
+
+The shared ledger is append-only and multi-writer; two measured properties
+(integrity survey 2026-08-26) shape every consumer:
+
+- **`seq` is per writer instance, not global.** Every restarted writer
+  re-seeds from 1, so the live ledger holds thousands of duplicate seq
+  values. Never build a row identity, cursor, or "everything after seq N"
+  consumer on it — filter by `from:` label, which is what `--replay --from`
+  and `report --from` do.
+- **Unlocked concurrent appends occasionally fuse two rows into one line.**
+  Most fused lines are unparseable; a few still parse and carry the other
+  writer's JSON inside the `from` label (`caddis{`, `omp{`, `,`).
+  `caddis-warden verify [LEDGER] [--json]` is the reading end: it counts
+  unparseable lines, duplicate seq values, and junk `from` labels — exit 0
+  clean / 3 findings. The write-path fix (single appending authority) is the
+  warden owner's call, and the ledger is never rewritten either way.
+
 ## Two behaviors worth knowing
 
 - **Only written content is scanned**, never the text an edit replaces — in

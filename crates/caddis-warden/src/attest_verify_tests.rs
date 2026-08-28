@@ -42,7 +42,6 @@ fn the_row_path_strips_a_trailing_fingerprint() {
     );
 }
 
-
 #[test]
 fn the_text_bundle_leads_with_what_went_outside_the_declaration() {
     let t = render_text(&bundle());

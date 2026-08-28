@@ -183,7 +183,6 @@ fn status() -> i32 {
     0
 }
 
-
 /// The card file must be the card that was opened.
 ///
 /// Nothing else stops an executor from editing its own allowlist mid-card,
