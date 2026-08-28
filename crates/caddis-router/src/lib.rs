@@ -1,4 +1,4 @@
-//! caddis-router — ROUTING ORGAN P1 (BUILD-QUEUE caddis-router-organ, 2026-08-26).
+//! caddis-router — ROUTING ORGAN (BUILD-QUEUE caddis-router-organ, 2026-08-26).
 //!
 //! Pure library: [`profile_from_card`] -> [`route`] -> [`RouteDecision`].
 //! Every input is DATA (capability rows, policy maps); every output is a
@@ -19,25 +19,34 @@
 //! - **F6** floors are DATA with prior defaults (skeptic 0.85, chair 0.70);
 //!   floor changes require operator sign-off (enforced outside P1).
 //! - **F2** a lane enters the cheap-selection pool only with N >= 5 measured
-//!   runs for the class (cold-start lanes are honest errors here, family
-//!   median cold-start belongs to the P2 capability ledger).
+//!   runs for the class; P2 adds the cold-start family median (ADVISORY —
+//!   [`stats::CapsReport::p1_caps`] feeds route() OWN measurements only).
 //! - **O3** among suitable lanes (quality >= floor) pick the CHEAPEST;
 //!   ties break Local > Free > Mid > Premium (free/local first).
 //! - **O2** NO droid lanes — unenforceable by decree alone, so
 //!   [`LaneTier::parse`] rejects `"droid"` and there is no variant for it.
 //!
-//! NOT in P1 (quorum-gated QQ1-3 or later phases): escalation state machine
-//! (P3), capability ledger + EWMA (P2), warden policy wiring (P4), in-world
-//! room (P5).
+//! P2 (2026-08-28): [`ledger`] decision+outcome stream (R6 append-only,
+//! O_EXCL lock + fsync, fail-closed), [`stats`] EWMA/floors/cold-start,
+//! [`verify`] honest findings. Still ahead: retroactive collector over
+//! existing dispatch trails (P2 remainder), escalation state machine (P3),
+//! warden policy wiring (P4), in-world room (P5).
 
 pub mod lane;
+pub mod ledger;
+pub mod lock;
 pub mod policy;
 pub mod profile;
 pub mod route;
+pub mod stats;
+pub mod verify;
 
 pub use lane::{Capability, DataClass, Lane, LaneTier};
+pub use ledger::{DecisionRow, Ledger, LedgerErr, Loaded, Outcome, OutcomeRow, ParsedRow, Row};
 pub use policy::RoutePolicy;
 pub use profile::{ProfileErr, TaskProfile};
 pub use route::{route, RouteDecision, RouteErr};
+pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, MIN_SAMPLES};
+pub use verify::{verify_path, Finding, VerifyReport};
 
-pub const VERSION: &str = "0.1.0";
+pub const VERSION: &str = "0.2.0";

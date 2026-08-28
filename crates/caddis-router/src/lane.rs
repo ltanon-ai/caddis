@@ -27,6 +27,17 @@ impl LaneTier {
             _ => None,
         }
     }
+
+    /// Canonical wire form (ledger rows, registry feeds) — inverse of
+    /// [`LaneTier::parse`].
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LaneTier::Local => "local",
+            LaneTier::Free => "free",
+            LaneTier::Mid => "mid",
+            LaneTier::Premium => "premium",
+        }
+    }
 }
 
 /// F5 data-class vocabulary. Secret is the strictest (local-only by default

@@ -1,8 +1,8 @@
 [package]
 name = "caddis-router"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "ROUTING ORGAN P1 (sergeant unit caddis-router-organ, 2026-08-26): pure task->lane routing — profile-from-card + lane filter + cheapest-above-floor. No dispatch, no I/O, no LLM; emits decision rows for the EXISTING validated dispatch paths."
+description = "ROUTING ORGAN (sergeant unit caddis-router-organ): P1 pure route core (profile->lane->cheapest-above-floor) + P2 decision/outcome ledger (R6 append-only, fsync, fail-closed lock) with EWMA capability stats, cold-start family median, and honest verify. No dispatch, no LLM; emits decision rows for the EXISTING validated dispatch paths."
 # Origin: OMP sergeant BUILD-QUEUE caddis-router-organ. Design =
 #   state/briefs/r2-routing-design-brief.md, council rulings F1-F7
 #   (r2-routing-design-council, 2026-08-25T22:57Z, 2/4 lanes, both full).
