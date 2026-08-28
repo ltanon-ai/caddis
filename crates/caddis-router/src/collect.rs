@@ -238,6 +238,193 @@ pub fn collect_councils(
 }
 
 // ---------------------------------------------------------------------------
+// Bee-ledger source (P2 remainder slice 3a) — BEE-CARDS.json replay
+// ---------------------------------------------------------------------------
+
+/// Task class for bee card executions (mechanical feed/office work).
+pub const TASK_CLASS_BEE: &str = "bee-card";
+
+/// One bee lane from the bee lane registry (BEE-LANES.json + loop-runner
+/// `started (model=...)` lines — the transport-side record of which model
+/// each loop runs). Lane resolution NEVER guesses: a card resolves only
+/// when its transport-written `assigned` field names a bee (`KAMANĖ`), a
+/// loop (`bee`), or the lane's model string (`glm-5.2`) — all verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BeeLane {
+    /// Bee name as it appears in `assigned` (matched case-insensitively
+    /// by substring, so `KAMANĖ`/`KAMANE`/`kamane` all resolve).
+    pub bee: &'static str,
+    /// Loop id as it appears in `assigned` (loop `bee` = KAMANĖ, `bee2` =
+    /// BITUTE — the registry's own mapping).
+    pub loop_id: &'static str,
+    /// `<provider>/<model>` — the lane-id convention from slice 2.
+    pub lane_id: &'static str,
+    /// Model string as `assigned` spells it when it names the model.
+    pub model: &'static str,
+}
+
+/// The bee lane registry this collector resolves against. Provenance:
+/// `~/.omp/sergeant/state/BEE-LANES.json` (kamane -> loop `bee`, glm-5.2
+/// via z.ai; bitute -> loop `bee2`, llama3.2:3b-64k local ollama) and the
+/// runner logs' `loop:bee: started (model=glm-5.2, ...)` lines.
+pub const BEE_LANES: [BeeLane; 2] = [
+    BeeLane {
+        // "kaman" not "kamane": the diacritic in KAMANĖ would break a
+        // full substring match; the 5-char prefix matches every spelling.
+        bee: "kaman",
+        loop_id: "bee",
+        lane_id: "zai/glm-5.2",
+        model: "glm-5.2",
+    },
+    BeeLane {
+        bee: "bitute",
+        loop_id: "bee2",
+        lane_id: "ollama/llama3.2:3b-64k",
+        model: "llama3.2:3b-64k",
+    },
+];
+
+/// Honest counts for one bee collect run (model-voice convention).
+#[derive(Debug, Default, PartialEq)]
+pub struct BeeReport {
+    /// Card objects examined.
+    pub cards_seen: u32,
+    /// Outcome rows appended (under `dry_run`: that WOULD be appended).
+    pub rows: u32,
+    /// Rows carry Pass only — see [`collect_bees`]: the bee trail has no
+    /// fail representation; quality folds get sample counts.
+    pub passes: u32,
+    /// Card skipped: status is not `done` (blocked-* is an external block
+    /// — the warden-deny analogue, it never enters the stream).
+    pub skipped_not_done: u32,
+    /// Card skipped: no usable `id` string.
+    pub skipped_no_id: u32,
+    /// Card skipped: `assigned` proves no lane (claim-time quirk, empty,
+    /// or a model outside the registry — never guessed from card content).
+    pub skipped_no_lane: u32,
+    /// Row skipped: (card_id, lane_id) already an outcome row.
+    pub skipped_already: u32,
+    pub dry_run: bool,
+}
+
+/// Resolve one `assigned` value to a registry lane. The claim-time quirk
+/// (the bee loop writes the claim TIMESTAMP into `assigned`) lands in
+/// `None` — a timestamp names no lane, and the lesson-bank law forbids
+/// reconstructing identity from note content.
+fn resolve_bee_lane(assigned: &str) -> Option<&'static BeeLane> {
+    let a = assigned.trim().to_lowercase();
+    if a.is_empty() {
+        return None;
+    }
+    // A timestamp (claim-time quirk) or any non-registry string falls
+    // through every arm below -> None.
+    BEE_LANES
+        .iter()
+        .find(|l| a.contains(l.bee) || a == l.loop_id || a == l.model)
+}
+
+/// Walk `cards_json` (BEE-CARDS.json shape `{"cards":[...]}`) and replay
+/// every DONE card as an outcome row into `ledger`.
+///
+/// Laws encoded (slice-2 law applied to the bee trail):
+/// - **Identity from the transport-written `assigned` field only**, via
+///   [`BEE_LANES`]. The bee loop's claim-time quirk (a timestamp in
+///   `assigned`) and note-content markers are NOT identity — such cards
+///   are counted skips until the loop writes the model in (the fix the
+///   beekeeper census asked for). Misattributed rows corrupt two lanes;
+///   missing rows cost one sample.
+/// - **Outcome = the card's own contract**: `done` means the bee verified
+///   its Done-When (recorded in the card note). The bee trail has NO fail
+///   representation — failed attempts stay `assigned` and contribute no
+///   row — so every row here is Pass and the report says so honestly.
+/// - **Zero-cost honesty:** the bee trail records no tokens/usd/latency;
+///   those append as 0 meaning NOT RECORDED.
+/// - **Idempotency:** (card_id, lane_id) already present -> skip, counted.
+pub fn collect_bees(
+    cards_json: &Path,
+    ledger: &Ledger,
+    dry_run: bool,
+) -> Result<BeeReport, CollectErr> {
+    let mut rep = BeeReport {
+        dry_run,
+        ..BeeReport::default()
+    };
+
+    let seen: BTreeSet<(String, String)> = ledger
+        .load()?
+        .rows
+        .iter()
+        .filter_map(|pr| match &pr.row {
+            Row::Outcome(o) => Some((o.card_id.clone(), o.lane_id.clone())),
+            _ => None,
+        })
+        .collect();
+
+    let text = fs::read_to_string(cards_json)?;
+    let members = split_members(&text)
+        .map_err(|_| CollectErr::Io(std::io::Error::other("cards file is not a JSON object")))?;
+    let Some(cards_raw) = members
+        .iter()
+        .find(|(k, _)| k == "cards")
+        .map(|(_, v)| v.trim())
+    else {
+        return Err(CollectErr::Io(std::io::Error::other(
+            "cards file has no 'cards' array",
+        )));
+    };
+    let card_texts = split_array(cards_raw)
+        .map_err(|_| CollectErr::Io(std::io::Error::other("'cards' is not a JSON array")))?;
+    rep.cards_seen = card_texts.len() as u32;
+
+    for ct in card_texts {
+        // id/status/assigned are flat string members; nested arrays
+        // (steps) are raw-captured and ignored.
+        let Ok(fields) = split_members(&ct) else {
+            rep.skipped_no_id += 1;
+            continue;
+        };
+        let id = str_val(&fields, "id").unwrap_or_default();
+        if id.is_empty() {
+            rep.skipped_no_id += 1;
+            continue;
+        }
+        let status = str_val(&fields, "status").unwrap_or_default();
+        if status != "done" {
+            rep.skipped_not_done += 1;
+            continue;
+        }
+        let assigned = str_val(&fields, "assigned").unwrap_or_default();
+        let Some(lane) = resolve_bee_lane(&assigned) else {
+            rep.skipped_no_lane += 1;
+            continue;
+        };
+        let card_id = format!("bee/{id}");
+        if seen.contains(&(card_id.clone(), lane.lane_id.to_string())) {
+            rep.skipped_already += 1;
+            continue;
+        }
+        let row = Row::Outcome(OutcomeRow {
+            card_id,
+            task_class: TASK_CLASS_BEE.to_string(),
+            lane_id: lane.lane_id.to_string(),
+            model: lane.model.to_string(),
+            // Not recorded in the bee trail — never "free".
+            cost_tokens: 0,
+            cost_usd_est: 0.0,
+            latency_ms: 0,
+            outcome: Outcome::Pass,
+            escalated_to: None,
+        });
+        if !dry_run {
+            ledger.append(&row)?;
+        }
+        rep.rows += 1;
+        rep.passes += 1;
+    }
+    Ok(rep)
+}
+
+// ---------------------------------------------------------------------------
 // Trail parsers — one nesting level, the only shape MANIFEST/VERDICTS have
 // ---------------------------------------------------------------------------
 
@@ -350,6 +537,41 @@ fn split_members(text: &str) -> Result<Vec<(String, String)>, String> {
             Some(',') => i += 1,
             Some('}') => return Ok(out),
             _ => return Err("expected ',' or '}'".into()),
+        }
+    }
+}
+
+/// Split a top-level JSON array text into its element texts (each a
+/// verbatim slice). Used by the bee collector over `{"cards":[...]}`.
+fn split_array(text: &str) -> Result<Vec<String>, String> {
+    let b: Vec<char> = text.chars().collect();
+    let n = b.len();
+    let mut i = 0usize;
+    while i < n && b[i].is_whitespace() {
+        i += 1;
+    }
+    if i >= n || b[i] != '[' {
+        return Err("expected '['".into());
+    }
+    i += 1;
+    let mut out = Vec::new();
+    loop {
+        while i < n && b[i].is_whitespace() {
+            i += 1;
+        }
+        if i < n && b[i] == ']' {
+            return Ok(out);
+        }
+        let start = i;
+        skip_value(&b, &mut i)?;
+        out.push(b[start..i].iter().collect());
+        while i < n && b[i].is_whitespace() {
+            i += 1;
+        }
+        match b.get(i) {
+            Some(',') => i += 1,
+            Some(']') => return Ok(out),
+            _ => return Err("expected ',' or ']'".into()),
         }
     }
 }

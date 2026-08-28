@@ -330,5 +330,132 @@ fn missing_councils_dir_is_a_hard_io_error() {
         &Ledger::new(root.join("l.jsonl")),
         false,
     );
-    assert!(matches!(err, Err(CollectErr::Io(_))));
+    assert!(err.is_err());
+}
+// ---------------------------------------------------------------------------
+// Bee collector (slice 3a)
+// ---------------------------------------------------------------------------
+
+const CARDS_A: &str = r#"{
+  "law": "fixture",
+  "cards": [
+    {"id":"bee-alpha","status":"done","assigned":"KAMANĖ","steps":["a","b"],"note":"x"},
+    {"id":"bee-beta","status":"done","assigned":"glm-5.2"},
+    {"id":"bee-gamma","status":"done","assigned":"bee"},
+    {"id":"bee-delta","status":"done","assigned":"BITUTE"},
+    {"id":"bee-eps","status":"done","assigned":"2026-08-25T18:07:37Z"},
+    {"id":"bee-zeta","status":"done","assigned":"glm-4.7-flash"},
+    {"id":"bee-eta","status":"done","assigned":""},
+    {"id":"bee-blocked","status":"blocked-sergeant","assigned":"KAMANĖ"},
+    {"id":"bee-open","status":"assigned","assigned":"KAMANĖ"},
+    {"id":"","status":"done","assigned":"KAMANĖ"}
+  ]
+}"#;
+
+#[test]
+fn bee_lane_ladder_resolves_only_registry_identity() {
+    // bee / model / loop spellings all resolve; everything else is None.
+    assert_eq!(
+        resolve_bee_lane("bee2").unwrap().lane_id,
+        "ollama/llama3.2:3b-64k",
+        "bee2 is bitute's loop"
+    );
+    assert_eq!(resolve_bee_lane("kamane").unwrap().lane_id, "zai/glm-5.2");
+    assert_eq!(resolve_bee_lane("glm-5.2").unwrap().lane_id, "zai/glm-5.2");
+    assert_eq!(resolve_bee_lane("bee").unwrap().lane_id, "zai/glm-5.2");
+    assert_eq!(
+        resolve_bee_lane("bitute").unwrap().lane_id,
+        "ollama/llama3.2:3b-64k"
+    );
+    assert_eq!(
+        resolve_bee_lane("llama3.2:3b-64k").unwrap().lane_id,
+        "ollama/llama3.2:3b-64k"
+    );
+    // Claim-time quirk, empty, unregistered model: never guessed.
+    assert!(resolve_bee_lane("2026-08-25T18:07:37Z").is_none());
+    assert!(resolve_bee_lane("").is_none());
+    assert!(resolve_bee_lane("glm-4.7-flash").is_none());
+}
+
+#[test]
+fn bee_collect_maps_done_cards_and_counts_every_skip() {
+    let root = tmp("bees");
+    let cards = root.join("BEE-CARDS.json");
+    fs::write(&cards, CARDS_A).unwrap();
+    let ledger = Ledger::new(root.join("ledger.jsonl"));
+    let rep = collect_bees(&cards, &ledger, false).unwrap();
+
+    assert_eq!(rep.cards_seen, 10);
+    assert_eq!(rep.rows, 4, "alpha+beta+gamma (kamane) + delta (bitute)");
+    assert_eq!(rep.passes, 4);
+    assert_eq!(rep.skipped_not_done, 2, "blocked-sergeant + assigned");
+    assert_eq!(rep.skipped_no_id, 1);
+    assert_eq!(
+        rep.skipped_no_lane, 3,
+        "ts-quirk + unregistered model + empty"
+    );
+    assert_eq!(rep.skipped_already, 0);
+
+    // Wire roundtrip: identity and task class intact.
+    let loaded = ledger.load().unwrap();
+    let mut lanes = BTreeSet::new();
+    let mut ids = BTreeSet::new();
+    for pr in &loaded.rows {
+        if let Row::Outcome(o) = &pr.row {
+            assert_eq!(o.task_class, TASK_CLASS_BEE);
+            assert_eq!(o.outcome, Outcome::Pass);
+            assert_eq!(o.cost_tokens, 0);
+            lanes.insert(o.lane_id.clone());
+            ids.insert(o.card_id.clone());
+        }
+    }
+    assert_eq!(
+        lanes,
+        BTreeSet::from([
+            "zai/glm-5.2".to_string(),
+            "ollama/llama3.2:3b-64k".to_string()
+        ])
+    );
+    assert_eq!(
+        ids,
+        BTreeSet::from([
+            "bee/bee-alpha".to_string(),
+            "bee/bee-beta".to_string(),
+            "bee/bee-gamma".to_string(),
+            "bee/bee-delta".to_string(),
+        ])
+    );
+}
+
+#[test]
+fn bee_rerun_is_a_noop_and_dry_run_writes_nothing() {
+    let root = tmp("bees2");
+    let cards = root.join("BEE-CARDS.json");
+    fs::write(&cards, CARDS_A).unwrap();
+    let ledger = Ledger::new(root.join("ledger.jsonl"));
+
+    let dry = collect_bees(&cards, &ledger, true).unwrap();
+    assert_eq!(dry.rows, 4);
+    assert_eq!(ledger.load().unwrap().rows.len(), 0, "dry-run appends none");
+
+    collect_bees(&cards, &ledger, false).unwrap();
+    let again = collect_bees(&cards, &ledger, false).unwrap();
+    assert_eq!(again.rows, 0);
+    assert_eq!(again.skipped_already, 4);
+    assert_eq!(ledger.load().unwrap().rows.len(), 4);
+}
+
+#[test]
+fn bee_missing_or_malformed_file_is_a_hard_error() {
+    let root = tmp("bees3");
+    let ledger = Ledger::new(root.join("ledger.jsonl"));
+    assert!(collect_bees(&root.join("nope.json"), &ledger, false).is_err());
+
+    let bad = root.join("bad.json");
+    fs::write(&bad, "{\"nope\": 1}").unwrap();
+    assert!(collect_bees(&bad, &ledger, false).is_err());
+
+    let notarr = root.join("notarr.json");
+    fs::write(&notarr, "{\"cards\": 3}").unwrap();
+    assert!(collect_bees(&notarr, &ledger, false).is_err());
 }

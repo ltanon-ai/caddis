@@ -29,9 +29,9 @@
 //! P2 (2026-08-28): [`ledger`] decision+outcome stream (R6 append-only,
 //! O_EXCL lock + fsync, fail-closed), [`stats`] EWMA/floors/cold-start,
 //! [`verify`] honest findings, [`collect`] the retroactive collector over
-//! the council-consult archive (bee-ledger and TinyAGI-history sources
-//! follow). Still ahead: escalation state machine (P3), warden policy
-//! wiring (P4), in-world room (P5).
+//! the council-consult archive (slice 3a: bee-card source landed — the
+//! TinyAGI-history source follows). Still ahead: escalation state machine
+//! (P3), warden policy wiring (P4), in-world room (P5).
 
 pub mod collect;
 pub mod lane;
@@ -43,7 +43,10 @@ pub mod route;
 pub mod stats;
 pub mod verify;
 
-pub use collect::{collect_councils, CollectErr, CollectReport, SeatDispatch, TASK_CLASS_CONSULT};
+pub use collect::{
+    collect_bees, collect_councils, BeeLane, BeeReport, CollectErr, CollectReport, SeatDispatch,
+    TASK_CLASS_BEE, TASK_CLASS_CONSULT,
+};
 pub use lane::{Capability, DataClass, Lane, LaneTier};
 pub use ledger::{DecisionRow, Ledger, LedgerErr, Loaded, Outcome, OutcomeRow, ParsedRow, Row};
 pub use policy::RoutePolicy;

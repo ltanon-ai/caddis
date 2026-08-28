@@ -15,13 +15,16 @@
 //! The append path stays in the LIBRARY (F1: no dispatch in the crate);
 //! `collect` appends telemetry rows only — it never dispatches anything.
 
-use caddis_router::{collect_councils, verify_path, CollectReport, Ledger, VERSION};
+use caddis_router::{
+    collect_bees, collect_councils, verify_path, BeeReport, CollectReport, Ledger, VERSION,
+};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
-  caddis-router verify  [--ledger <path>] [--home <dir>] [--json]
-  caddis-router collect [--councils <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]";
+  caddis-router verify       [--ledger <path>] [--home <dir>] [--json]
+  caddis-router collect      [--councils <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
+  caddis-router collect-bees [--cards <path>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -31,6 +34,7 @@ fn main() -> ExitCode {
     }
     match args[0].as_str() {
         "verify" => run_verify(&args[1..]),
+        "collect-bees" => run_collect_bees(&args[1..]),
         "collect" => run_collect(&args[1..]),
         "--version" => {
             println!("caddis-router {VERSION}");
@@ -44,6 +48,11 @@ fn main() -> ExitCode {
             println!("    --json            machine report on stdout");
             println!("  collect: replay council consults as outcome rows (idempotent)");
             println!("    --councils <dir>  consult archive (default H:\\ai_temp\\councils)");
+            println!("    --dry-run         report what would land, append nothing");
+            println!(
+                "  collect-bees: replay bee cards (BEE-CARDS.json) as outcome rows (idempotent)"
+            );
+            println!("    --cards <path>    bee card file (default the sergeant state home)");
             println!("    --dry-run         report what would land, append nothing");
             ExitCode::SUCCESS
         }
@@ -261,6 +270,90 @@ fn print_collect_json(councils: &Path, lpath: &Path, rep: &CollectReport) {
         rep.skipped_verdicts_bad,
         rep.skipped_seat_no_identity,
         rep.skipped_seat_no_verdict,
+        rep.skipped_already
+    );
+}
+
+// --- collect-bees ------------------------------------------------------------
+
+fn run_collect_bees(args: &[String]) -> ExitCode {
+    let mut ledger: Option<PathBuf> = None;
+    let mut cards: Option<PathBuf> = None;
+    let mut json = false;
+    let mut dry = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--cards" if i + 1 < args.len() => {
+                cards = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--dry-run" => {
+                dry = true;
+                i += 1;
+            }
+            _ => match scan_common(args, &mut i) {
+                Ok(Flag::Ledger(p)) => ledger = Some(p),
+                Ok(Flag::Json) => json = true,
+                Err(other) => {
+                    eprintln!("caddis-router collect-bees: unknown argument {other:?}");
+                    eprintln!("{USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
+        }
+    }
+    let cards = cards
+        .unwrap_or_else(|| PathBuf::from(r"C:\Users\ashpac\.omp\sergeant\state\BEE-CARDS.json"));
+    let lpath = ledger.unwrap_or_else(|| default_home().join("ledger.jsonl"));
+    match collect_bees(&cards, &Ledger::new(&lpath), dry) {
+        Ok(rep) => {
+            if json {
+                print_collect_bees_json(&cards, &lpath, &rep);
+            } else {
+                print_collect_bees_human(&cards, &lpath, &rep);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("caddis-router: collect-bees {}: {e}", cards.display());
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn print_collect_bees_human(cards: &Path, lpath: &Path, rep: &BeeReport) {
+    println!("cards: {}", cards.display());
+    println!("ledger: {}", lpath.display());
+    println!(
+        "cards seen: {} rows: {} (all pass — the bee trail has no fail record){}",
+        rep.cards_seen,
+        rep.rows,
+        if rep.dry_run {
+            " [dry-run: nothing written]"
+        } else {
+            ""
+        }
+    );
+    println!(
+        "skipped: {} not-done, {} no-id, {} no-lane (claim-time quirk / unregistered), {} already",
+        rep.skipped_not_done, rep.skipped_no_id, rep.skipped_no_lane, rep.skipped_already
+    );
+}
+
+fn print_collect_bees_json(cards: &Path, lpath: &Path, rep: &BeeReport) {
+    println!(
+        "{{\"version\":\"{}\",\"cards\":\"{}\",\"ledger\":\"{}\",\"dry_run\":{},\"cards_seen\":{},\"rows\":{},\"passes\":{},\"skipped\":{{\"not_done\":{},\"no_id\":{},\"no_lane\":{},\"already\":{}}}}}",
+        VERSION,
+        esc(&cards.display().to_string()),
+        esc(&lpath.display().to_string()),
+        rep.dry_run,
+        rep.cards_seen,
+        rep.rows,
+        rep.passes,
+        rep.skipped_not_done,
+        rep.skipped_no_id,
+        rep.skipped_no_lane,
         rep.skipped_already
     );
 }
