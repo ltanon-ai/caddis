@@ -16,8 +16,8 @@
 //! `collect` appends telemetry rows only — it never dispatches anything.
 
 use caddis_router::{
-    collect_bees, collect_councils, collect_tinyagi, verify_path, BeeReport, CollectReport, Ledger,
-    TinyagiReport, VERSION,
+    alerts::Alerts, collect_bees, collect_councils, collect_tinyagi, run_scan, verify_path,
+    BeeReport, CollectReport, Ledger, ScanReport, TinyagiReport, VERSION,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -26,7 +26,8 @@ const USAGE: &str = "usage:
   caddis-router verify          [--ledger <path>] [--home <dir>] [--json]
   caddis-router collect         [--councils <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
   caddis-router collect-bees    [--cards <path>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
-  caddis-router collect-tinyagi [--tinyagi <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]";
+  caddis-router collect-tinyagi [--tinyagi <dir>] [--ledger <path>] [--home <dir>] [--dry-run] [--json]
+  caddis-router scan            [--ledger <path>|--home <dir>] [--alerts <path>] [--dry-run] [--json]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -36,6 +37,7 @@ fn main() -> ExitCode {
     }
     match args[0].as_str() {
         "verify" => run_verify(&args[1..]),
+        "scan" => run_scan_cmd(&args[1..]),
         "collect-bees" => run_collect_bees(&args[1..]),
         "collect-tinyagi" => run_collect_tinyagi(&args[1..]),
         "collect" => run_collect(&args[1..]),
@@ -60,6 +62,9 @@ fn main() -> ExitCode {
             println!("  collect-tinyagi: replay trajectory runs as outcome rows (idempotent)");
             println!("    --tinyagi <dir>   tinyagi home (default ~/.tinyagi; brackets from");
             println!("                      settings.json snapshots, provable edges only)");
+            println!("    --dry-run         report what would land, append nothing");
+            println!("  scan: promote persistent lane decay to ledger rows + alerts (R2/R4)");
+            println!("    --alerts <path>   alert stream (default: alerts.jsonl beside the ledger)");
             println!("    --dry-run         report what would land, append nothing");
             ExitCode::SUCCESS
         }
@@ -471,6 +476,105 @@ fn print_collect_tinyagi_json(tinyagi: &Path, lpath: &Path, rep: &TinyagiReport)
         rep.skipped_no_outcome,
         rep.skipped_bad_line,
         rep.skipped_already
+    );
+}
+
+// --- scan --------------------------------------------------------------------
+
+fn run_scan_cmd(args: &[String]) -> ExitCode {
+    let mut ledger: Option<PathBuf> = None;
+    let mut alerts: Option<PathBuf> = None;
+    let mut json = false;
+    let mut dry = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--alerts" if i + 1 < args.len() => {
+                alerts = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--ledger" if i + 1 < args.len() => {
+                let p = PathBuf::from(&args[i + 1]);
+                alerts = alerts.clone().or_else(|| p.parent().map(|d| d.join("alerts.jsonl")));
+                ledger = Some(p);
+                i += 2;
+            }
+            "--home" if i + 1 < args.len() => {
+                let d = PathBuf::from(&args[i + 1]);
+                alerts = alerts.clone().or_else(|| Some(d.join("alerts.jsonl")));
+                ledger = Some(d.join("ledger.jsonl"));
+                i += 2;
+            }
+            "--dry-run" => {
+                dry = true;
+                i += 1;
+            }
+            "--json" => {
+                json = true;
+                i += 1;
+            }
+            other => {
+                eprintln!("caddis-router scan: unknown argument {other:?}");
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let lpath = ledger.unwrap_or_else(|| default_home().join("ledger.jsonl"));
+    let apath = alerts.unwrap_or_else(|| {
+        lpath
+            .parent()
+            .map(|d| d.join("alerts.jsonl"))
+            .unwrap_or_else(|| PathBuf::from("alerts.jsonl"))
+    });
+    match run_scan(&Ledger::new(&lpath), &Alerts::new(&apath), dry) {
+        Ok(rep) => {
+            if json {
+                print_scan_json(&lpath, &apath, &rep);
+            } else {
+                print_scan_human(&lpath, &apath, &rep);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("caddis-router: scan {}: {e}", lpath.display());
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn print_scan_human(lpath: &Path, apath: &Path, rep: &ScanReport) {
+    println!("ledger: {}", lpath.display());
+    println!("alerts: {}", apath.display());
+    println!(
+        "outcomes: {} transitions: {} recorded: {} appended: {} alerts: {} mismatch: {}{}",
+        rep.outcomes_scanned,
+        rep.transitions_total,
+        rep.promotions_recorded,
+        rep.promotions_appended,
+        rep.alerts_appended,
+        rep.marker_mismatch,
+        if rep.dry_run {
+            " [dry-run: nothing written]"
+        } else {
+            ""
+        }
+    );
+}
+
+fn print_scan_json(lpath: &Path, apath: &Path, rep: &ScanReport) {
+    println!(
+        "{{\"version\":\"{}\",\"ledger\":\"{}\",\"alerts\":\"{}\",\"dry_run\":{},\"outcomes_scanned\":{},\"transitions_total\":{},\"promotions_recorded\":{},\"promotions_appended\":{},\"alerts_appended\":{},\"marker_mismatch\":{}}}",
+        VERSION,
+        esc(&lpath.display().to_string()),
+        esc(&apath.display().to_string()),
+        rep.dry_run,
+        rep.outcomes_scanned,
+        rep.transitions_total,
+        rep.promotions_recorded,
+        rep.promotions_appended,
+        rep.alerts_appended,
+        rep.marker_mismatch
     );
 }
 

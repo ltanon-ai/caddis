@@ -218,3 +218,83 @@ fn collect_unknown_argument_fails_closed() {
     assert_eq!(rc, 2);
     assert!(err.contains("unknown argument"), "{err}");
 }
+
+// --- scan e2e ------------------------------------------------------------------
+
+const SCAN_FAIL_1: &str = "{\"seq\":1,\"ts\":\"2026-08-28T00:00:00Z\",\"kind\":\"outcome\",\"card_id\":\"CARD-9\",\"task_class\":\"coding\",\"lane_id\":\"groq-free\",\"model\":\"gpt-oss-120b\",\"cost_tokens\":100,\"cost_usd_est\":0.001,\"latency_ms\":900,\"verify_outcome\":\"fail\",\"escalated_to\":null}";
+const SCAN_FAIL_2: &str = "{\"seq\":2,\"ts\":\"2026-08-28T00:00:01Z\",\"kind\":\"outcome\",\"card_id\":\"CARD-10\",\"task_class\":\"coding\",\"lane_id\":\"groq-free\",\"model\":\"gpt-oss-120b\",\"cost_tokens\":100,\"cost_usd_est\":0.001,\"latency_ms\":900,\"verify_outcome\":\"fail\",\"escalated_to\":null}";
+const SCAN_PASS_3: &str = "{\"seq\":3,\"ts\":\"2026-08-28T00:00:02Z\",\"kind\":\"outcome\",\"card_id\":\"CARD-11\",\"task_class\":\"coding\",\"lane_id\":\"groq-free\",\"model\":\"gpt-oss-120b\",\"cost_tokens\":100,\"cost_usd_est\":0.001,\"latency_ms\":900,\"verify_outcome\":\"pass\",\"escalated_to\":null}";
+
+#[test]
+fn scan_appends_promotion_and_alert_then_is_idempotent() {
+    let ledger = write(
+        "scan1",
+        "ledger.jsonl",
+        &format!("{SCAN_FAIL_1}\n{SCAN_FAIL_2}\n"),
+    );
+    let l = ledger.to_str().unwrap();
+    let (rc, out, err) = run(&["scan", "--ledger", l]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(
+        out.contains("transitions: 1 recorded: 0 appended: 1 alerts: 1 mismatch: 0"),
+        "{out}"
+    );
+    // the alert stream lands beside the ledger with a degraded row
+    let alerts = ledger.parent().unwrap().join("alerts.jsonl");
+    let body = fs::read_to_string(&alerts).unwrap();
+    assert_eq!(body.lines().count(), 1);
+    assert!(body.contains("\"kind\":\"degraded\""), "{body}");
+    assert!(body.contains("\"lane_id\":\"groq-free\""), "{body}");
+    // the ledger gained a promotion row and still verifies clean
+    let (rc, out, err) = run(&["verify", "--ledger", l]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("rows_ok: 3"), "{out}");
+    // re-scan: prefix complete, nothing new (idempotent)
+    let (rc, out, err) = run(&["scan", "--ledger", l, "--json"]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("\"promotions_appended\":0"), "{out}");
+    assert_eq!(fs::read_to_string(&alerts).unwrap().lines().count(), 1);
+    fs::remove_dir_all(ledger.parent().unwrap()).ok();
+}
+
+#[test]
+fn scan_follows_heal_with_second_promotion() {
+    let ledger = write(
+        "scan2",
+        "ledger.jsonl",
+        &format!("{SCAN_FAIL_1}\n{SCAN_FAIL_2}\n{SCAN_PASS_3}\n"),
+    );
+    let l = ledger.to_str().unwrap();
+    let (rc, out, err) = run(&["scan", "--ledger", l]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("appended: 2 alerts: 2"), "{out}");
+    let body = fs::read_to_string(ledger.parent().unwrap().join("alerts.jsonl")).unwrap();
+    assert!(body.contains("\"kind\":\"degraded\""), "{body}");
+    assert!(body.contains("\"kind\":\"healed\""), "{body}");
+    fs::remove_dir_all(ledger.parent().unwrap()).ok();
+}
+
+#[test]
+fn scan_dry_run_writes_nothing_and_home_override() {
+    let home = tmpdir("scanhome");
+    fs::write(
+        home.join("ledger.jsonl"),
+        format!("{SCAN_FAIL_1}\n{SCAN_FAIL_2}\n"),
+    )
+    .unwrap();
+    let (rc, out, err) = run(&["scan", "--home", home.to_str().unwrap(), "--dry-run", "--json"]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("\"promotions_appended\":1"), "{out}");
+    assert!(out.contains("\"dry_run\":true"), "{out}");
+    assert!(!home.join("alerts.jsonl").exists(), "dry run writes no alerts");
+    let body = fs::read_to_string(home.join("ledger.jsonl")).unwrap();
+    assert_eq!(body.lines().count(), 2, "dry run appends no promotions");
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn scan_unknown_argument_fails_closed() {
+    let (rc, _, err) = run(&["scan", "--nonsense"]);
+    assert_eq!(rc, 2);
+    assert!(err.contains("unknown argument"), "{err}");
+}

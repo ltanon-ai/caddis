@@ -298,3 +298,24 @@ fn first_append_materializes_missing_state_home() {
     assert_eq!(led.load().unwrap().rows.len(), 1);
     fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn promotion_row_roundtrips_and_folds_nothing() {
+    let dir = tmpdir("promo");
+    let led = Ledger::new(dir.join("d.jsonl"));
+    let row = Row::Promotion(PromotionRow {
+        lane_id: "groq-free".into(),
+        task_class: "coding".into(),
+        demoted: true,
+        trailing_fails: 2,
+    });
+    led.append_ts(&row, "2026-08-28T00:00:00Z", WAIT).unwrap();
+    let loaded = led.load().unwrap();
+    assert_eq!(loaded.bad.len(), 0);
+    assert_eq!(loaded.rows[0].row, row);
+    // QQ1a spirit: a promotion marker is NOT capability evidence — the
+    // stats fold must stay empty over a markers-only stream.
+    let caps = crate::stats::CapsReport::from_rows(&loaded);
+    assert_eq!(caps, crate::stats::CapsReport::default());
+    fs::remove_dir_all(dir).ok();
+}

@@ -1,13 +1,17 @@
 //! Decision + outcome ledger (P2 slice 1, R6): the append-only JSONL stream a
 //! task card references via `route_id` (F3/R10 — decision rows, not cards).
 //!
-//! Two row kinds share one stream:
+//! Three row kinds share one stream:
 //! - **decision** — what [`crate::route`] chose and why-cheaply (the P1
 //!   [`RouteDecision`] value, persisted);
 //! - **outcome** — the brief's telemetry row
 //!   `{card_id, task_class, lane, model, cost_tokens, cost_usd_est,
 //!   latency_ms, verify_outcome, escalated_to}` — the A6 collector's shape,
-//!   born retroactive. EWMA capability ([`crate::stats`]) folds THESE only.
+//!   born retroactive. EWMA capability ([`crate::stats`]) folds THESE only;
+//! - **promotion** (P4/R2) — the transient->persistent transition marker the
+//!   [`crate::alerts`] scan appends when a lane's trailing RED-TEST fails
+//!   reach hysteresis (demotion) or a pass clears them again (healed). Not
+//!   capability evidence: the fold ignores it, exactly like decisions.
 //!
 //! QQ1a is a TYPE law here: `verify_outcome` is pass|fail from the task
 //! card's own RED-TEST (R3: deterministic checks only). A warden policy-deny
@@ -42,7 +46,7 @@ pub const LOCK_WAIT: Duration = Duration::from_secs(2);
 const ROW_CAP: usize = 4096;
 /// Escaped-byte cap per string field. Twelve fields at 256 plus the JSON
 /// skeleton keep every row under ROW_CAP BY CONSTRUCTION.
-const FIELD_CAP: usize = 256;
+pub(crate) const FIELD_CAP: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -112,10 +116,24 @@ pub struct OutcomeRow {
     pub escalated_to: Option<String>,
 }
 
+/// R2 transition marker (P4): a lane's decay became PERSISTENT (demoted) or
+/// cleared (healed). Appended only by the [`crate::alerts`] scan, which
+/// derives transitions from outcome rows — never by dispatch adapters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromotionRow {
+    pub lane_id: String,
+    pub task_class: String,
+    /// true = demoted to persistent decay; false = healed (one pass, QQ2).
+    pub demoted: bool,
+    /// Trailing fails AT the transition (0 for healed).
+    pub trailing_fails: u32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Row {
     Decision(DecisionRow),
     Outcome(OutcomeRow),
+    Promotion(PromotionRow),
 }
 
 #[derive(Debug)]
@@ -280,7 +298,7 @@ pub fn parse_stream(text: &str) -> Loaded {
 /// structural characters, the five short forms, and every remaining C0 as
 /// `\u00xx`. A raw newline inside a JSONL record ENDS the record — this is
 /// what keeps one append reading back as one line.
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     for c in s.chars() {
         match c {
@@ -301,7 +319,7 @@ fn esc(s: &str) -> String {
 /// Elide `s` so its ESCAPED form fits FIELD_CAP, saying so with a trailing
 /// `...` when it does. Budgeted on the escaped form — `esc` can turn one
 /// byte into six, so a raw-byte budget is not a row-byte budget.
-fn fit(s: &str) -> String {
+pub(crate) fn fit(s: &str) -> String {
     if esc(s).len() <= FIELD_CAP {
         return s.to_string();
     }
@@ -371,6 +389,15 @@ fn encode(seq: u64, ts: &str, row: &Row) -> Result<String, LedgerErr> {
                 ),
             ]);
         }
+        Row::Promotion(p) => {
+            f[2].1 = Tok::Text("promotion".into());
+            f.extend([
+                ("lane_id", Tok::Text(fit(&p.lane_id))),
+                ("task_class", Tok::Text(fit(&p.task_class))),
+                ("demoted", Tok::Raw(p.demoted.to_string())),
+                ("trailing_fails", Tok::Raw(p.trailing_fails.to_string())),
+            ]);
+        }
     }
     let body: String = f
         .iter()
@@ -411,7 +438,7 @@ pub(crate) fn parse_line(line: &str) -> Result<(u64, Row), String> {
     decode(&map)
 }
 
-fn parse_object(line: &str) -> Result<BTreeMap<String, Val>, String> {
+pub(crate) fn parse_object(line: &str) -> Result<BTreeMap<String, Val>, String> {
     let b: Vec<char> = line.chars().collect();
     let mut i = 0usize;
     let n = b.len();
@@ -623,16 +650,16 @@ fn parse_number(b: &[char], i: &mut usize) -> Result<Val, String> {
 
 // --- decode: map -> typed row ----------------------------------------------
 
-fn get<'a>(m: &'a BTreeMap<String, Val>, k: &str) -> Result<&'a Val, String> {
+pub(crate) fn get<'a>(m: &'a BTreeMap<String, Val>, k: &str) -> Result<&'a Val, String> {
     m.get(k).ok_or_else(|| format!("missing field '{k}'"))
 }
-fn as_str<'a>(v: &'a Val, k: &str) -> Result<&'a str, String> {
+pub(crate) fn as_str<'a>(v: &'a Val, k: &str) -> Result<&'a str, String> {
     match v {
         Val::Str(s) => Ok(s),
         _ => Err(format!("field '{k}' not a string")),
     }
 }
-fn as_u64(v: &Val, k: &str) -> Result<u64, String> {
+pub(crate) fn as_u64(v: &Val, k: &str) -> Result<u64, String> {
     match v {
         Val::Num(n) if n.fract() == 0.0 && *n >= 0.0 && *n <= u64::MAX as f64 => Ok(*n as u64),
         _ => Err(format!("field '{k}' not a non-negative integer")),
@@ -696,6 +723,15 @@ pub(crate) fn decode(m: &BTreeMap<String, Val>) -> Result<(u64, Row), String> {
                 }),
             ))
         }
+        "promotion" => Ok((
+            seq,
+            Row::Promotion(PromotionRow {
+                lane_id: as_str(get(m, "lane_id")?, "lane_id")?.to_string(),
+                task_class: as_str(get(m, "task_class")?, "task_class")?.to_string(),
+                demoted: as_bool(get(m, "demoted")?, "demoted")?,
+                trailing_fails: as_u64(get(m, "trailing_fails")?, "trailing_fails")? as u32,
+            }),
+        )),
         other => Err(format!("unknown kind '{other}'")),
     }
 }

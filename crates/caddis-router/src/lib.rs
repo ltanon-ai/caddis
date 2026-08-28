@@ -37,10 +37,17 @@
 //! R1 static per-class budget ceilings in [`policy`] (no ceiling = fail
 //! closed), QQ2/R9 decay+hysteresis wired through
 //! [`stats::HYSTERESIS_FAILS`] into [`route`] selection and escalation
-//! rungs (one pass heals; floor guards re-entry). Still ahead: warden
-//! policy wiring + dispatch-path adapters + R2 persistent-promotion rows
-//! (P4), in-world room (P5).
+//! rungs (one pass heals; floor guards re-entry).
+//!
+//! P4 (2026-08-28, slice 1): [`alerts`] — the alert organ (`alerts.jsonl`,
+//! same append law as the ledger) + the R2/R4 transition scan: persistent
+//! decay becomes a `promotion` ledger row and an operator alert, idempotent
+//! by prefix; [`Alert::from_escalation_stop`] is the surface the dispatch
+//! adapters will call on every P3 fail-safe halt. Still ahead: warden
+//! policy wiring + dispatch-path adapters + R5 identity (P4 remainder),
+//! in-world room (P5).
 
+pub mod alerts;
 pub mod collect;
 pub mod escalation;
 pub mod lane;
@@ -52,6 +59,10 @@ pub mod route;
 pub mod stats;
 pub mod verify;
 
+pub use alerts::{
+    run_scan, transitions, Alert, AlertErr, AlertKind, AlertRow, Alerts, LoadedAlerts, ScanErr,
+    ScanPlan, ScanReport, Transition,
+};
 pub use collect::{
     collect_bees, collect_councils, collect_tinyagi, BeeLane, BeeReport, CollectErr, CollectReport,
     SeatDispatch, TinyagiReport, TASK_CLASS_BEE, TASK_CLASS_CONSULT, TASK_CLASS_TINYAGI,
@@ -65,4 +76,4 @@ pub use route::{route, RouteDecision, RouteErr};
 pub use stats::{CapsReport, LaneCap, EWMA_ALPHA, HYSTERESIS_FAILS, MIN_SAMPLES};
 pub use verify::{verify_path, Finding, VerifyReport};
 
-pub const VERSION: &str = "0.4.0";
+pub const VERSION: &str = "0.5.0";
