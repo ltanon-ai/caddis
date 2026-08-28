@@ -1,4 +1,4 @@
-//! registry.rs — P1 slice 1: the SEAT REGISTRY as an append-only card
+//! registry.rs — P1: the SEAT REGISTRY as an append-only card
 //! stream (BUILD-QUEUE r2-organs-rewrite; plan P1; F2 — groq Q2 + nvidia
 //! R2: "seat registry = append-only card stream (truth) + CACHED JSON
 //! VIEW for fast reads, re-synced on each row; edits via warden-gated
@@ -24,6 +24,13 @@
 //! - **No secrets, ever**: the card fields below carry no credential
 //!   material. `auth_path` is a VAULT PATH (a file path), never a key
 //!   value — the collector enforces this at the boundary (Ruling 9).
+//!
+//! P1 slice 2 extends the grammar: provider cards carry `caps`
+//! (Ruling 7 per-provider concurrency) and seat cards carry
+//! `since_epoch_s` (when the seat entered its state; 0 = the clock-free
+//! seed). The laws that READ them live in [`crate::caps`] (cap law +
+//! dispatch planner) and [`crate::ttl`] (TTL state machine) — this
+//! module stays the stream grammar only.
 //! - **Fail-closed I/O**: a malformed line refuses the WHOLE load with
 //!   the 1-based line number (the registry never half-loads); an append
 //!   re-derives the view from the full stream, not an incremental patch
@@ -124,6 +131,11 @@ pub struct ProviderCard {
     /// VAULT PATH only — never a credential value. Empty = auth lives in
     /// the source file, un-copied (the collector's honest blank).
     pub auth_path: String,
+    /// Max CONCURRENT dispatches across all this provider's seats
+    /// (Ruling 7). ollama/ollama-cloud rule 1 with hard ceiling 2;
+    /// others seed the F4 serialized default 1. The law + planner live
+    /// in [`crate::caps`].
+    pub caps: u32,
     /// Deterministic provenance, e.g. `models.json#a1b2c3d4`.
     pub source: String,
 }
@@ -141,8 +153,15 @@ pub struct SeatCard {
     pub lane_type: crate::LaneType,
     pub cost_class: crate::CostClass,
     pub state: crate::SeatState,
-    /// Max concurrent dispatches (Ruling 7 lands per-provider caps in P1
-    /// slice 2; seeds carry 1 = serialized-by-default, F4).
+    /// When this seat entered `state` (Unix epoch seconds). `0` = no
+    /// clock data — exactly the deterministic collector seed (no clocks
+    /// in seed cards); every later state-change row stamps `now`. The
+    /// TTL machine ([`crate::ttl`]) reads it; `Probing` + 0 = "never
+    /// probed" (first probe due now), not "probed at epoch".
+    pub since_epoch_s: u64,
+    /// Max concurrent dispatches for THIS seat — the effective cap is
+    /// the min with the provider row's ([`crate::caps::effective_caps`]).
+    /// Seeds carry 1 = serialized-by-default (F4).
     pub caps: u32,
     /// Measured facts, USD per 1M tokens (0 = the lane bills nothing).
     pub cost_in_usd_per_mtok: f64,
@@ -208,6 +227,8 @@ pub fn encode_card(card: &Card) -> String {
             json_str(&p.base_url, &mut o);
             o.push_str(",\"auth_path\":");
             json_str(&p.auth_path, &mut o);
+            o.push_str(",\"caps\":");
+            o.push_str(&p.caps.to_string());
             o.push_str(",\"source\":");
             json_str(&p.source, &mut o);
             o.push('}');
@@ -227,7 +248,9 @@ pub fn encode_card(card: &Card) -> String {
             o.push_str(cost_class_word(s.cost_class));
             o.push_str("\",\"state\":\"");
             o.push_str(seat_state_word(s.state));
-            o.push_str("\",\"caps\":");
+            o.push_str("\",\"since_epoch_s\":");
+            o.push_str(&s.since_epoch_s.to_string());
+            o.push_str(",\"caps\":");
             o.push_str(&s.caps.to_string());
             o.push_str(",\"cost_in_usd_per_mtok\":");
             push_num(s.cost_in_usd_per_mtok, &mut o);
@@ -423,6 +446,7 @@ const PROVIDER_FIELDS: &[&str] = &[
     "lane_type",
     "base_url",
     "auth_path",
+    "caps",
     "source",
 ];
 const SEAT_FIELDS: &[&str] = &[
@@ -434,6 +458,7 @@ const SEAT_FIELDS: &[&str] = &[
     "lane_type",
     "cost_class",
     "state",
+    "since_epoch_s",
     "caps",
     "cost_in_usd_per_mtok",
     "cost_out_usd_per_mtok",
@@ -461,6 +486,7 @@ fn parse_provider(obj: &[(String, Value)], line_no: usize) -> Result<Card, Strea
         lane_type: lane_type_field(obj, line_no)?,
         base_url: str_field(obj, "base_url", line_no)?,
         auth_path: str_field(obj, "auth_path", line_no)?,
+        caps: u32_field(obj, "caps", line_no)?,
         source: non_empty(obj, "source", line_no)?,
     }))
 }
@@ -485,6 +511,7 @@ fn parse_seat(obj: &[(String, Value)], line_no: usize) -> Result<Card, StreamErr
                 "unknown state {state_word:?} (live|expired|rate-limited|retired|probing|failed)"
             ),
         })?,
+        since_epoch_s: u64_field(obj, "since_epoch_s", line_no)?,
         caps: u32_field(obj, "caps", line_no)?,
         cost_in_usd_per_mtok: num_field(obj, "cost_in_usd_per_mtok", line_no)?,
         cost_out_usd_per_mtok: num_field(obj, "cost_out_usd_per_mtok", line_no)?,

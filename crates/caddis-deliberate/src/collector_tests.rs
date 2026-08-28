@@ -195,6 +195,7 @@ fn seeds_are_probing_with_caps_one_and_family_equals_provider() {
         if let Card::Seat(s) = c {
             assert_eq!(s.state, crate::SeatState::Probing, "{} never probed", s.id);
             assert_eq!(s.caps, 1, "{} serialized by default (F4)", s.id);
+            assert_eq!(s.since_epoch_s, 0, "{}: seed carries no clock data", s.id);
             assert_eq!(s.family, s.provider);
         }
     }
@@ -202,6 +203,32 @@ fn seeds_are_probing_with_caps_one_and_family_equals_provider() {
     let reg = Registry::fold(&report.cards);
     let err = crate::construct_panel(&reg.seats(), &crate::Floors::default()).unwrap_err();
     assert!(matches!(err, crate::PanelErr::NotEnoughLiveSeats { .. }));
+}
+
+#[test]
+fn provider_caps_seed_from_the_ruling7_table() {
+    let report = collect(&fixture()).unwrap();
+    // ollama-cloud is IN the fixture and IN the Ruling-7 table: caps 1.
+    let oc = report
+        .cards
+        .iter()
+        .find_map(|c| match c {
+            Card::Provider(p) if p.id == "ollama-cloud" => Some(p),
+            _ => None,
+        })
+        .expect("fixture carries ollama-cloud");
+    assert_eq!(oc.caps, crate::caps::ruled_caps("ollama-cloud"));
+    assert_eq!(oc.caps, 1);
+    // Every seeded provider satisfies the cap law, table or not.
+    for c in &report.cards {
+        if let Card::Provider(p) = c {
+            crate::caps::check_provider_caps(&p.id, p.caps)
+                .unwrap_or_else(|e| panic!("seed violates the cap law: {e}"));
+        }
+    }
+    // And the whole folded registry validates.
+    let reg = Registry::fold(&report.cards);
+    crate::caps::validate_registry(&reg).expect("seeded registry satisfies the cap law");
 }
 
 #[test]

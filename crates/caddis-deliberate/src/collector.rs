@@ -18,10 +18,12 @@
 //!   provider is SKIPPED WITH CAUSE (fail-closed: the collector never
 //!   guesses bridge/cli — those are ruled, not derived).
 //! - **seat card per model row**; `id` = `<provider>/<model id>`; family
-//!   = provider id; `caps` = 1 (serialized-by-default, F4 — Ruling 7
-//!   per-provider caps land in slice 2); `state` = `probing` (never
-//!   probed: honest — a fresh registry selects NOTHING until probes flip
-//!   seats live, F10).
+//!   = provider id; `caps` = 1 (serialized-by-default, F4); `state` =
+//!   `probing` with `since_epoch_s` = 0 (never probed: honest — a fresh
+//!   registry selects NOTHING until probes flip seats live, F10). The
+//!   PROVIDER card's `caps` comes from the Ruling-7 table
+//!   ([`crate::caps::ruled_caps`] — ollama/ollama-cloud = 1, ceiling 2),
+//!   a transcribed ruling, not taste.
 //! - **cost_class from measured cost**: input+output both 0 → `free`;
 //!   any positive → `mid`. `premium` is NEVER collector-derived — it is
 //!   taste, set only by a ruling through the edit path.
@@ -151,6 +153,9 @@ pub fn collect(text: &str) -> Result<CollectReport, String> {
             lane_type,
             base_url,
             auth_path,
+            // Ruling 7 table (ollama/ollama-cloud = 1), else the F4
+            // serialized default — transcribed fact, not taste.
+            caps: crate::caps::ruled_caps(pid),
             source: source.clone(),
         });
 
@@ -200,6 +205,10 @@ pub fn collect(text: &str) -> Result<CollectReport, String> {
                 lane_type,
                 cost_class,
                 state: crate::SeatState::Probing,
+                // 0 = no clock data: the deterministic seed. The TTL
+                // machine reads it as "never probed" (first probe due
+                // now) — never "probed at epoch".
+                since_epoch_s: 0,
                 caps: 1,
                 cost_in_usd_per_mtok: cost_in,
                 cost_out_usd_per_mtok: cost_out,

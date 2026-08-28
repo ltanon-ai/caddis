@@ -21,6 +21,12 @@
 //! secrets, no taste: cost classes derive from measured cost, states
 //! seed `probing`, and anything judgment-shaped stays an operator
 //! ruling through the P1-slice-3 edit path.
+//! P1 slice 2 = [`caps`] + [`ttl`]: the Ruling-7 per-provider
+//! concurrency law (ollama/ollama-cloud = 1 concurrent, hard ceiling 2)
+//! with a pure dispatch planner that SERIALIZES a capped provider's
+//! requests into separate waves, and the F10 TTL state machine — the
+//! Expired quota-cooldown → Failed (renewable) / Retired (not), per-state
+//! re-probe cadence as DATA, renewable free lanes never auto-retire.
 //!
 //! - **F1/R1** pure crate — the substrate never dispatches, never probes,
 //!   never touches a ledger. It classifies DATA and constructs values; the
@@ -29,8 +35,9 @@
 //!   [`LaneType::Cli`] — CLI agents are first-class seats, not adapters
 //!   bolted on later.
 //! - **F10** [`SeatState`] carries the TTL state-machine vocabulary; P0
-//!   selection is Live-only. The Expired→Failed/Retired TTL transitions and
-//!   re-probe cadence are P1 registry work.
+//!   selection is Live-only. The Expired→Failed/Retired TTL transitions
+//!   and re-probe cadence are P1 slice 2 ([`ttl`]) — Live-only selection
+//!   is the law every state honors.
 //! - **Floors are DATA** (router F6 precedent): minimum distinct families
 //!   and minimum non-Chinese seats are [`Floors`] fields with prior
 //!   defaults (2 / 1), never scattered magic numbers. Floor changes are
@@ -49,12 +56,14 @@
 //! (at least one seat from OUTSIDE the Chinese free-provider cluster). The
 //! operator may re-rule it; the floor's meaning never lives in control flow.
 
+pub mod caps;
 pub mod collector;
 pub mod disjoint;
 pub mod json;
 pub mod protocol;
 pub mod registry;
 pub mod sha256;
+pub mod ttl;
 
 use std::collections::BTreeSet;
 use std::fmt;

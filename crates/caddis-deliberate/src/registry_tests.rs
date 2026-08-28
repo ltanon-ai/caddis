@@ -9,6 +9,7 @@ fn provider(id: &str) -> Card {
         lane_type: crate::LaneType::Http,
         base_url: format!("https://{id}.example/v1"),
         auth_path: String::new(),
+        caps: 1,
         source: "models.json#deadbeef".into(),
     })
 }
@@ -22,6 +23,7 @@ fn seat(id: &str, provider: &str, state: crate::SeatState, cost: crate::CostClas
         lane_type: crate::LaneType::Http,
         cost_class: cost,
         state,
+        since_epoch_s: 0,
         caps: 1,
         cost_in_usd_per_mtok: 0.0,
         cost_out_usd_per_mtok: 0.0,
