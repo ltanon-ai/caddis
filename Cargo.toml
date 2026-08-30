@@ -11,6 +11,7 @@ members = [
     "crates/caddis-router",
     "crates/caddis-deliberate",
     "crates/caddis",
+    "crates/caddis-bitynas",
 ]
 
 # caddis — a conscience for coding agents.

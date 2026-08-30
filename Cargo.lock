@@ -4,7 +4,20 @@ version = 4
 
 [[package]]
 name = "caddis"
+version = "0.2.0"
+dependencies = [
+ "caddis-core",
+ "caddis-organs",
+]
+
+[[package]]
+name = "caddis-bitynas"
 version = "0.1.0"
+dependencies = [
+ "caddis-organs",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "caddis-card"

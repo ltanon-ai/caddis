@@ -1,0 +1,16 @@
+[package]
+name = "caddis-bitynas"
+version = "0.1.0"
+edition = "2021"
+description = "BITYNAS LEASE ORGAN (unit H1, CARD-BITYNAS-1): GPU-pool slot leases over an append-only pool/leases.jsonl journal — atomic claim/heartbeat/release, TTL stale-preemption that is NEVER silent (PeremptionEvent on every reclaim), and the O2 lane guard (no droid lanes). Single-writer store."
+# Origin: CARD-BITYNAS-1, two-bee bitynas build — H1 lease core (this crate),
+#   H2 registry (sibling). Steering 2026-08-30 (orchestrator): workspace deps
+#   allowed — time math via caddis-organs util_time, journal rows via serde_json
+#   (no hand-rolled scanner, no esc() replica). Copies law by card order: lane
+#   vocabulary mirrors caddis-router/src/lane.rs LaneTier::parse (do NOT depend
+#   on the router crate).
+
+[dependencies]
+caddis-organs = { path = "../caddis-organs" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
