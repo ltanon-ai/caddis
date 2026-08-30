@@ -17,11 +17,17 @@
 //!   not a supervisor reflex.
 //! - **Spawn: settle before start.** After a death/kill the horn waits for
 //!   the port to free PLUS a settle window (the post-kill WDDM reclaim race
-//!   that once hung a model load). The QQ2 VRAM snapshot is taken and
-//!   attached to every spawn attempt — measured-first doctrine: DXGI's Desc1
-//!   reports TOTAL, not free, so a free-VRAM gate would invent a number;
-//!   the snapshot is telemetry, the settle is the gate. (If soak shows OOM
-//!   races anyway, a perf-counter free-VRAM poll is the P4 hardening.)
+//!   that once hung a model load). **Cold-load grace (`start_grace_s`) is a
+//!   hard gate:** a living child we spawned whose port is not yet bound is
+//!   LOADING, never "died". Treating port-free as death during load spawned
+//!   five whisper-server copies on 2026-08-31 (~18 GB VRAM). An already
+//!   running engine image blocks spawn (wait/adopt). Alive-past-grace and
+//!   still unbound is killed, then backoff — never a second copy. The QQ2
+//!   VRAM snapshot is taken and attached to every spawn attempt —
+//!   measured-first doctrine: DXGI's Desc1 reports TOTAL, not free, so a
+//!   free-VRAM gate would invent a number; the snapshot is telemetry, the
+//!   settle is the gate. (If soak shows OOM races anyway, a perf-counter
+//!   free-VRAM poll is the P4 hardening.)
 //! - **Backoff + blocked.** Repeated spawn failures back off exponentially;
 //!   after `max_failures` the supervisor stops thrashing and parks in
 //!   `Blocked` until [`Supervisor::unblock`] — the surface shows it, the
@@ -130,6 +136,15 @@ pub trait EngineWorld {
     fn image_name(&mut self, pid: u32) -> Option<String>;
     /// Spawn the engine with `settings`; return its pid.
     fn spawn_engine(&mut self, settings: &HornSettings) -> Result<u32, String>;
+    /// Is this pid still a live process? Used to tell LOADING from dead
+    /// during cold-load grace (port-free is not death while the child lives).
+    fn pid_alive(&mut self, pid: u32) -> bool;
+    /// Every live pid whose image matches `engine_exe`'s basename.
+    /// Non-empty => spawn is refused (adopt-don't-duplicate at the image).
+    fn running_engine_pids(&mut self, exe: &str) -> Vec<u32>;
+    /// Kill one pid we spawned that never bound. Adopted engines are
+    /// never passed here (stop_own refuses that path).
+    fn kill_pid(&mut self, pid: u32);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +205,12 @@ impl EngineWorld for OsEngineWorld {
         if !std::path::Path::new(&s.engine_exe).is_file() {
             return Err(format!("engine exe missing: {}", s.engine_exe));
         }
+        let already = self.running_engine_pids(&s.engine_exe);
+        if !already.is_empty() {
+            return Err(format!(
+                "engine image already running pids={already:?}; refusing duplicate spawn"
+            ));
+        }
         let log = std::fs::File::create(&s.engine_log)
             .map_err(|e| format!("cannot open engine log {}: {e}", s.engine_log))?;
         let log_err = log
@@ -240,6 +261,42 @@ impl EngineWorld for OsEngineWorld {
         // automatically — if the organ dies, the kernel reaps the engine.
         Ok(child.id())
     }
+
+    fn pid_alive(&mut self, pid: u32) -> bool {
+        self.image_name(pid).is_some()
+    }
+
+    fn running_engine_pids(&mut self, exe: &str) -> Vec<u32> {
+        let name = exe.rsplit(['\\', '/']).next().unwrap_or(exe);
+        let out = match Command::new("tasklist")
+            .args(["/FI", &format!("IMAGENAME eq {name}"), "/FO", "CSV", "/NH"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut pids = Vec::new();
+        for line in text.lines() {
+            let mut cols = line.split(',');
+            let img = cols.next().unwrap_or("").trim().trim_matches('"');
+            if img.is_empty() || img.to_ascii_lowercase().contains("no tasks") {
+                continue;
+            }
+            if let Some(pid_s) = cols.next() {
+                if let Ok(p) = pid_s.trim().trim_matches('"').parse::<u32>() {
+                    pids.push(p);
+                }
+            }
+        }
+        pids
+    }
+
+    fn kill_pid(&mut self, pid: u32) {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .output();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +340,9 @@ pub struct Supervisor<W: EngineWorld> {
     healthy_since: Option<Instant>,
     /// Earliest next spawn attempt (backoff / settle).
     next_spawn_at: Option<Instant>,
+    /// When the current Spawned child was created. Cold-load grace is
+    /// measured from this instant, not from "port free".
+    spawn_started: Option<Instant>,
 }
 
 impl<W: EngineWorld> Supervisor<W> {
@@ -294,6 +354,7 @@ impl<W: EngineWorld> Supervisor<W> {
             failures: 0,
             healthy_since: None,
             next_spawn_at: None,
+            spawn_started: None,
         }
     }
 
@@ -367,8 +428,8 @@ impl<W: EngineWorld> Supervisor<W> {
         // Port free.
         match &self.state {
             HornState::Spawned { pid } => {
-                actions.push(format!("engine pid={pid} died (port free)"));
-                self.enter_failure_state(&mut actions);
+                let pid = *pid;
+                self.on_unbound_spawned(pid, &mut actions);
             }
             HornState::Adopted { pid, image } => {
                 // The adopted engine went away on its own (owner stopped it).
@@ -399,9 +460,9 @@ impl<W: EngineWorld> Supervisor<W> {
         }
     }
 
-    /// Record a failure, park in Blocked when the budget is spent.
     fn enter_failure_state(&mut self, actions: &mut Vec<String>) {
         self.failures += 1;
+        self.spawn_started = None;
         self.state = if self.failures >= self.settings.max_failures {
             actions.push(format!(
                 "failures={} >= max: BLOCKED until unblock()",
@@ -419,6 +480,29 @@ impl<W: EngineWorld> Supervisor<W> {
         self.healthy_since = None;
     }
 
+    /// Port free while we still have a Spawned pid: LOADING vs dead vs stuck.
+    fn on_unbound_spawned(&mut self, pid: u32, actions: &mut Vec<String>) {
+        if self.world.pid_alive(pid) {
+            let grace = Duration::from_secs(self.settings.start_grace_s);
+            let loading = self
+                .spawn_started
+                .map(|t| t.elapsed() < grace)
+                .unwrap_or(false);
+            if loading {
+                actions.push(format!("engine pid={pid} loading; port not bound yet"));
+                return;
+            }
+            actions.push(format!(
+                "engine pid={pid} never bound within grace; killing"
+            ));
+            self.world.kill_pid(pid);
+            self.enter_failure_state(actions);
+            return;
+        }
+        actions.push(format!("engine pid={pid} died (port free)"));
+        self.enter_failure_state(actions);
+    }
+
     fn try_spawn(&mut self, actions: &mut Vec<String>) {
         // Backoff / settle window: not yet.
         if let Some(at) = self.next_spawn_at {
@@ -426,6 +510,13 @@ impl<W: EngineWorld> Supervisor<W> {
                 actions.push("settle/backoff window still open".into());
                 return;
             }
+        }
+        let running = self.world.running_engine_pids(&self.settings.engine_exe);
+        if !running.is_empty() {
+            actions.push(format!(
+                "engine image already running pids={running:?}; not spawning"
+            ));
+            return;
         }
         // QQ2 doctrine: VRAM snapshot travels WITH the attempt (telemetry,
         // measured-first; see module doc for why it is not a free-VRAM gate).
@@ -439,6 +530,7 @@ impl<W: EngineWorld> Supervisor<W> {
             Ok(pid) => {
                 self.state = HornState::Spawned { pid };
                 self.healthy_since = None; // health = port binds, next tick proves it
+                self.spawn_started = Some(Instant::now());
                 actions.push(format!("engine spawned pid={pid}; waiting for port bind",));
             }
             Err(cause) => {
@@ -473,6 +565,7 @@ impl<W: EngineWorld> Supervisor<W> {
                 self.state = HornState::NoServer;
                 self.failures = 0;
                 self.healthy_since = None;
+                self.spawn_started = None;
                 // Settle before any respawn (post-kill WDDM race law).
                 self.next_spawn_at =
                     Some(Instant::now() + Duration::from_millis(self.settings.settle_ms));
@@ -500,6 +593,8 @@ mod tests {
         Pid(Option<u32>),
         Image(Option<String>),
         Spawn(Result<u32, String>),
+        Running(Vec<u32>),
+        Alive(bool),
     }
     impl FakeWorld {
         fn new(obs: Vec<WorldObs>) -> Self {
@@ -533,6 +628,27 @@ mod tests {
                 other => panic!("unexpected spawn; next={other:?}"),
             }
         }
+        fn pid_alive(&mut self, _pid: u32) -> bool {
+            let mut q = self.script.borrow_mut();
+            match q.front() {
+                Some(WorldObs::Alive(_)) => match q.pop_front() {
+                    Some(WorldObs::Alive(b)) => b,
+                    _ => unreachable!(),
+                },
+                _ => false,
+            }
+        }
+        fn running_engine_pids(&mut self, _exe: &str) -> Vec<u32> {
+            let mut q = self.script.borrow_mut();
+            match q.front() {
+                Some(WorldObs::Running(_)) => match q.pop_front() {
+                    Some(WorldObs::Running(v)) => v,
+                    _ => unreachable!(),
+                },
+                _ => Vec::new(),
+            }
+        }
+        fn kill_pid(&mut self, _pid: u32) {}
     }
 
     fn small_settings() -> HornSettings {
@@ -685,5 +801,51 @@ mod tests {
         assert_eq!(r.state, HornState::Spawned { pid: 78 });
         let r = sup.tick();
         assert_eq!(r.state, HornState::Spawned { pid: 78 }); // healthy again
+    }
+
+    #[test]
+    fn spawned_engine_loading_does_not_respawn() {
+        // Live defect 2026-08-31: port-free during cold load was treated as
+        // death, so the next tick spawned another whisper-server.
+        let w = FakeWorld::new(vec![
+            WorldObs::Taken(false),
+            WorldObs::Spawn(Ok(11)),
+            WorldObs::Taken(false),
+            WorldObs::Alive(true),
+            WorldObs::Taken(false),
+            WorldObs::Alive(true),
+            WorldObs::Taken(true),
+        ]);
+        let mut sup = Supervisor::new(HornSettings::default(), w);
+        let r = sup.tick();
+        assert_eq!(r.state, HornState::Spawned { pid: 11 });
+        let r = sup.tick();
+        assert_eq!(r.state, HornState::Spawned { pid: 11 });
+        assert!(
+            r.actions.iter().any(|a| a.contains("loading")),
+            "cold-load ticks must say loading, got {:?}",
+            r.actions
+        );
+        let r = sup.tick();
+        assert_eq!(r.state, HornState::Spawned { pid: 11 });
+        assert!(r.actions.iter().any(|a| a.contains("loading")));
+        let r = sup.tick();
+        assert_eq!(r.state, HornState::Spawned { pid: 11 });
+        assert!(!r.actions.iter().any(|a| a.contains("engine spawned")));
+    }
+
+    #[test]
+    fn no_spawn_when_engine_image_already_running() {
+        let w = FakeWorld::new(vec![WorldObs::Taken(false), WorldObs::Running(vec![55])]);
+        let mut sup = Supervisor::new(small_settings(), w);
+        let r = sup.tick();
+        assert_eq!(r.state, HornState::NoServer);
+        assert!(
+            r.actions.iter().any(|a| a.contains("already running")),
+            "census must refuse spawn, got {:?}",
+            r.actions
+        );
+        assert!(!r.actions.iter().any(|a| a.contains("engine spawned")));
+        assert!(!r.actions.iter().any(|a| a.contains("backoff")));
     }
 }
