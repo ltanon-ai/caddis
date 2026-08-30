@@ -34,6 +34,11 @@ pub struct LeaseRecord {
     pub ttl_s: u64,
     /// RFC3339 UTC — refreshed by [`LeaseStore::heartbeat`](crate::store::LeaseStore::heartbeat).
     pub heartbeat_at_utc: String,
+    /// Set only by quorum claims: two clients asking the SAME question
+    /// JOIN one live consultation instead of racing two (see
+    /// [`resource`](crate::resource)). Absent on every legacy row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_hash: Option<String>,
 }
 
 impl LeaseRecord {

@@ -25,15 +25,20 @@ use std::path::{Path, PathBuf};
 use caddis_organs::util_time::iso8601_now;
 
 use crate::journal::{self, Row};
-use crate::lease::{BusyError, LeaseOwner, LeaseRecord, PeremptionEvent, DEFAULT_TTL_S};
+use crate::lease::{BusyError, LeaseOwner, LeaseRecord, PeremptionEvent};
+use crate::resource::{ClaimOutcome, ResourceType};
 
-/// The one preemption cause this unit knows.
-const CAUSE_TTL: &str = "ttl_expired";
+/// The one preemption cause this unit knows — shared with the typed claim
+/// path in [`resource`](crate::resource).
+pub(crate) const CAUSE_TTL: &str = "ttl_expired";
 
 pub struct LeaseStore {
     path: PathBuf,
-    index: BTreeMap<String, LeaseRecord>,
-    pending: Vec<PeremptionEvent>,
+    /// Live leases by journaled slot id. `pub(crate)`: the typed claim
+    /// path (resource.rs) shares this ONE index — same atom, same journal.
+    pub(crate) index: BTreeMap<String, LeaseRecord>,
+    /// Claim-preemptions awaiting [`events()`](LeaseStore::events).
+    pub(crate) pending: Vec<PeremptionEvent>,
     unreadable: usize,
 }
 
@@ -86,7 +91,11 @@ impl LeaseStore {
         self.index.get(slot_id)
     }
 
-    /// Atomically claim `slot_id` for `owner`.
+    /// Atomically claim `slot_id` for `owner` — the H-1 bee entry point,
+    /// UNCHANGED in behavior: a thin wrapper over
+    /// [`claim_typed(BeeSlot, …)`](crate::resource::LeaseStore::claim_typed),
+    /// so bees share ONE atomic path and ONE journal with every other
+    /// resource type and stay in the BARE slot namespace of H-1 rows.
     ///
     /// Free (or never taken) → a new lease with `ttl_s = DEFAULT_TTL_S`.
     /// Held and fresh → `Err(BusyError)` carrying the holder's full
@@ -106,41 +115,12 @@ impl LeaseStore {
         lane: &str,
         owner: LeaseOwner,
     ) -> Result<LeaseRecord, BusyError> {
-        assert!(
-            !slot_id.trim().is_empty() && !lane.trim().is_empty(),
-            "bitynas: claim needs a non-empty slot_id and lane"
-        );
-        let now = iso8601_now();
-        let held = self.index.get(slot_id).cloned();
-        match held {
-            None => {
-                let rec = fresh_record(slot_id, lane, &owner, DEFAULT_TTL_S);
-                self.append(&journal::line(&Row::Claim { record: rec.clone() }));
-                self.index.insert(slot_id.to_string(), rec.clone());
-                Ok(rec)
+        match self.claim_typed(ResourceType::BeeSlot, slot_id, lane, owner, None) {
+            ClaimOutcome::Claimed(rec) => Ok(rec),
+            ClaimOutcome::Busy(err) => Err(err),
+            ClaimOutcome::Join { .. } => {
+                unreachable!("bee slots never join: no question_hash on a bee claim")
             }
-            Some(held) if held.is_stale(&now, &held.heartbeat_at_utc) => {
-                self.append(&journal::line(&Row::Reclaim {
-                    slot_id: slot_id.to_string(),
-                    at_utc: now.clone(),
-                    cause: CAUSE_TTL.to_string(),
-                    new_owner: Some(owner.clone()),
-                    previous: held.clone(),
-                }));
-                let rec = fresh_record(slot_id, lane, &owner, DEFAULT_TTL_S);
-                self.append(&journal::line(&Row::Claim { record: rec.clone() }));
-                self.pending.push(PeremptionEvent {
-                    slot_id: slot_id.to_string(),
-                    lane: held.lane.clone(),
-                    previous: held,
-                    new_owner: Some(owner),
-                    at_utc: now.clone(),
-                    cause: CAUSE_TTL.to_string(),
-                });
-                self.index.insert(slot_id.to_string(), rec.clone());
-                Ok(rec)
-            }
-            Some(held) => Err(BusyError { holder: held }),
         }
     }
 
@@ -230,8 +210,9 @@ impl LeaseStore {
 
     /// One complete `\n`-terminated line, one `write_all` — atomic per
     /// syscall on Windows `FILE_APPEND_DATA` (the CARD-0108 law; never
-    /// `writeln!`, which can tear).
-    fn append(&self, row_line: &str) {
+    /// `writeln!`, which can tear). `pub(crate)`: the typed claim path
+    /// journals through this same append.
+    pub(crate) fn append(&self, row_line: &str) {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -242,8 +223,15 @@ impl LeaseStore {
     }
 }
 
-/// A brand-new lease stamped `now` for both clocks.
-fn fresh_record(slot_id: &str, lane: &str, owner: &LeaseOwner, ttl_s: u64) -> LeaseRecord {
+/// A brand-new lease stamped `now` for both clocks. `pub(crate)`: the
+/// typed claim path in resource.rs mints through the same constructor.
+pub(crate) fn fresh_record(
+    slot_id: &str,
+    lane: &str,
+    owner: &LeaseOwner,
+    ttl_s: u64,
+    question_hash: Option<&str>,
+) -> LeaseRecord {
     let now = iso8601_now();
     LeaseRecord {
         slot_id: slot_id.to_string(),
@@ -256,5 +244,6 @@ fn fresh_record(slot_id: &str, lane: &str, owner: &LeaseOwner, ttl_s: u64) -> Le
         taken_at_utc: now.clone(),
         ttl_s,
         heartbeat_at_utc: now,
+        question_hash: question_hash.map(str::to_string),
     }
 }

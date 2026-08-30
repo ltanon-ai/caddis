@@ -1,6 +1,10 @@
 //! caddis-bitynas — the BITYNAS lease organ core (CARD-BITYNAS-1): GPU-pool
 //! slot leases over an append-only `pool/leases.jsonl` journal, with TTL
 //! preemption that is never silent, and the O2 lane guard (no droid lanes).
+//! CARD-BITYNAS-6 adds TYPED resources — Council, Quorum (same question
+//! JOINs one consultation) and Voice — on the same atom and journal via
+//! [`ResourceType`]/[`LeaseStore::claim_typed`], bees staying in their
+//! bare H-1 namespace.
 //!
 //! Time math comes from `caddis-organs::util_time` and journal rows from
 //! `serde_json` (orchestrator steering 2026-08-30: workspace deps allowed).
@@ -37,6 +41,7 @@
 //! ```
 
 pub mod lease;
+pub mod resource;
 pub mod store;
 
 mod journal;
@@ -44,4 +49,5 @@ mod lane;
 
 pub use lane::lane_allowed;
 pub use lease::{BusyError, LeaseOwner, LeaseRecord, PeremptionEvent, DEFAULT_TTL_S};
+pub use resource::{ClaimOutcome, ResourceType, COUNCIL_TTL_S, QUORUM_TTL_S, VOICE_TTL_S};
 pub use store::LeaseStore;

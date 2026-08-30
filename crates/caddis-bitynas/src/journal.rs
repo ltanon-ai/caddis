@@ -95,6 +95,7 @@ mod tests {
             taken_at_utc: "2026-08-30T10:00:00Z".to_string(),
             ttl_s: 900,
             heartbeat_at_utc: "2026-08-30T10:05:00Z".to_string(),
+            question_hash: None,
         }
     }
 
