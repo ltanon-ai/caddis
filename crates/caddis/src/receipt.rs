@@ -91,8 +91,7 @@ pub fn load_or_create_key(dir: &Path) -> Result<Vec<u8>, String> {
         return Ok(key);
     }
     let key = random_bytes(32)?;
-    fs::write(&key_path, &key)
-        .map_err(|e| format!("write {}: {e}", key_path.display()))?;
+    fs::write(&key_path, &key).map_err(|e| format!("write {}: {e}", key_path.display()))?;
     Ok(key)
 }
 
@@ -121,8 +120,7 @@ fn random_bytes(n: usize) -> Result<Vec<u8>, String> {
     #[cfg(unix)]
     {
         use std::io::Read;
-        let mut f = fs::File::open("/dev/urandom")
-            .map_err(|e| format!("/dev/urandom: {e}"))?;
+        let mut f = fs::File::open("/dev/urandom").map_err(|e| format!("/dev/urandom: {e}"))?;
         f.read_exact(&mut out)
             .map_err(|e| format!("/dev/urandom read: {e}"))?;
     }
@@ -149,8 +147,8 @@ fn windows_random(out: &mut [u8]) -> Result<(), String> {
         return Err("powershell CSPRNG failed".into());
     }
     let hex = String::from_utf8_lossy(&result.stdout);
-    let bytes = decode_hex(hex.trim())
-        .ok_or_else(|| "powershell CSPRNG output not hex".to_string())?;
+    let bytes =
+        decode_hex(hex.trim()).ok_or_else(|| "powershell CSPRNG output not hex".to_string())?;
     if bytes.len() != n {
         return Err(format!("CSPRNG got {} bytes, want {n}", bytes.len()));
     }

@@ -41,7 +41,8 @@ pub mod receipt;
 pub mod receipt_report;
 pub mod replay;
 pub mod report;
-pub mod verify;
+pub mod size;
+pub mod sqlite_ledger;
 pub mod wire;
 
 // Rendering for `replay`, and the ONE ledger-row parser both `replay` and

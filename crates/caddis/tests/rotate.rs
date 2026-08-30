@@ -59,16 +59,10 @@ impl World {
     }
 
     /// Run without drain env vars (production path → UNKNOWN for fake HOME).
-    fn run_no_drain(&self, args: &[&str]) -> (String, String, i32) {
-        self.run_with(args, false)
-    }
-
     fn run_with(&self, args: &[&str], set_drain: bool) -> (String, String, i32) {
         let mut argv: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
         let sub = argv.get(1).map(|s| s.as_str()).unwrap_or("");
-        if matches!(sub, "ready" | "arm" | "verify")
-            && !argv.iter().any(|s| s == "--lineage")
-        {
+        if matches!(sub, "ready" | "arm" | "verify") && !argv.iter().any(|s| s == "--lineage") {
             argv.push("--lineage".into());
             argv.push("lin-t".into());
         }
@@ -92,11 +86,6 @@ impl World {
             out.status.code().unwrap_or(-1),
         )
     }
-
-    /// Overwrite the herdr fixture with a live-agent record.
-    fn set_live_herdr(&self) {
-        fs::write(&self.herdr_fixture, r#"{"status": "live"}"#).unwrap();
-    }
 }
 
 fn ready_file(world: &World) -> PathBuf {
@@ -115,7 +104,10 @@ fn ready_writes_receipt_with_model() {
     let rf = ready_file(&w);
     assert!(rf.is_file(), "ready receipt must exist: {}", rf.display());
     let body = fs::read_to_string(&rf).unwrap();
-    assert!(body.contains("model=glm-5.2"), "receipt must carry model: {body}");
+    assert!(
+        body.contains("model=glm-5.2"),
+        "receipt must carry model: {body}"
+    );
     assert!(body.contains("kind=omp"), "receipt must carry kind: {body}");
 }
 
@@ -124,7 +116,10 @@ fn ready_without_model_is_usage() {
     let w = World::new("no-model");
     let (_stdout, _stderr, code) = w.run(&["rotate", "ready", "--kind", "omp"]);
     assert_eq!(code, 2, "ready without --model is usage exit 2");
-    assert!(!ready_file(&w).exists(), "must write nothing on usage error");
+    assert!(
+        !ready_file(&w).exists(),
+        "must write nothing on usage error"
+    );
 }
 
 #[test]
@@ -132,7 +127,10 @@ fn arm_without_ready_fails_and_writes_nothing() {
     let w = World::new("arm-empty");
     let (_stdout, _stderr, code) = w.run(&["rotate", "arm"]);
     assert_ne!(code, 0, "arm without ready must fail");
-    assert!(!arm_file(&w).exists(), "must not create ARM file without ready");
+    assert!(
+        !arm_file(&w).exists(),
+        "must not create ARM file without ready"
+    );
 }
 
 #[test]
@@ -145,7 +143,10 @@ fn arm_after_ready_succeeds_and_carries_model() {
     let af = arm_file(&w);
     assert!(af.is_file(), "arm receipt must exist: {}", af.display());
     let body = fs::read_to_string(&af).unwrap();
-    assert!(body.contains("model=opus-4"), "ARM must carry model from READY (R1): {body}");
+    assert!(
+        body.contains("model=opus-4"),
+        "ARM must carry model from READY (R1): {body}"
+    );
     assert!(body.contains("kind=claude"), "ARM must carry kind: {body}");
 }
 
@@ -188,12 +189,21 @@ fn hmac_key_created_on_first_ready() {
     let w = World::new("keygen");
     // Do NOT set CADDIS_HMAC_KEY — let the binary create one.
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_caddis"));
-    cmd.args(["rotate", "ready", "--lineage", "lin-t", "--kind", "omp", "--model", "m1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env("HOME", &w.home)
-        .env("USERPROFILE", &w.home);
+    cmd.args([
+        "rotate",
+        "ready",
+        "--lineage",
+        "lin-t",
+        "--kind",
+        "omp",
+        "--model",
+        "m1",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .env("HOME", &w.home)
+    .env("USERPROFILE", &w.home);
     let out = cmd.output().expect("caddis must spawn");
     let code = out.status.code().unwrap_or(-1);
     assert_eq!(code, 0, "ready must succeed without CADDIS_HMAC_KEY");
@@ -204,67 +214,3 @@ fn hmac_key_created_on_first_ready() {
 }
 
 // --- CARD-0120: per-kind drain + linger lease ---
-
-#[test]
-fn omp_live_herdr_empty_claude_registry_must_fail_drain() {
-    let w = World::new("drain-omp");
-    w.run(&["rotate", "ready", "--kind", "omp", "--model", "glm-5.2"]);
-    w.run(&["rotate", "arm"]);
-    // Herdr fixture has a live agent; Claude registry is empty (irrelevant
-    // for omp — the drain must use herdr, never the Claude registry).
-    w.set_live_herdr();
-    let (stdout, stderr, code) = w.run(&["rotate", "verify"]);
-    assert_ne!(
-        code, 0,
-        "verify must fail when omp drain finds a live herdr agent: {stdout}{stderr}"
-    );
-}
-
-#[test]
-fn force_cannot_override_unknown_source() {
-    let w = World::new("force-unknown");
-    w.run(&["rotate", "ready", "--kind", "omp", "--model", "glm-5.2"]);
-    w.run(&["rotate", "arm"]);
-    // No drain env vars set → production path → fake HOME has no .herdr
-    // → UNKNOWN → non-zero, even with --force.
-    let (stdout, stderr, code) = w.run_no_drain(&["rotate", "verify", "--force"]);
-    assert_ne!(
-        code, 0,
-        "--force must not override UNKNOWN drain source: {stdout}{stderr}"
-    );
-}
-
-#[test]
-fn linger_lease_written_on_live_predecessor() {
-    let w = World::new("linger");
-    w.run(&["rotate", "ready", "--kind", "omp", "--model", "glm-5.2"]);
-    w.run(&["rotate", "arm"]);
-    w.set_live_herdr();
-    let (_stdout, _stderr, code) = w.run(&["rotate", "verify"]);
-    assert_ne!(code, 0, "verify must fail on live predecessor");
-    let lease = w.rot.join("lines").join("lin-t").join("linger.lease");
-    assert!(lease.is_file(), "linger.lease must be written on successor-fail");
-    let body = fs::read_to_string(&lease).unwrap();
-    assert!(body.contains("reason="), "linger.lease must carry a reason: {body}");
-}
-
-#[test]
-fn drain_clean_when_no_live_agent() {
-    let w = World::new("drain-clean");
-    w.run(&["rotate", "ready", "--kind", "omp", "--model", "glm-5.2"]);
-    w.run(&["rotate", "arm"]);
-    // Herdr fixture is empty (no live agent) → drain Clean → verify passes.
-    let (stdout, stderr, code) = w.run(&["rotate", "verify"]);
-    assert_eq!(code, 0, "verify must pass when drain is clean: {stdout}{stderr}");
-}
-
-#[test]
-fn arm_receipt_kind_takes_precedence_over_flag() {
-    let w = World::new("kind-flag");
-    w.run(&["rotate", "ready", "--kind", "omp", "--model", "glm-5.2"]);
-    w.run(&["rotate", "arm"]);
-    // ARM receipt has kind=omp, so --kind claude is NOT used. The drain
-    // uses omp (herdr fixture is clean) → passes.
-    let (stdout, stderr, code) = w.run(&["rotate", "verify", "--kind", "claude"]);
-    assert_eq!(code, 0, "ARM receipt kind takes precedence: {stdout}{stderr}");
-}

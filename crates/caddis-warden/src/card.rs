@@ -220,9 +220,6 @@ pub(crate) fn changed_since_open(active: &ActiveCard) -> Option<String> {
 /// enough to be redacted whole, and a redacted card row cannot be reconstructed
 /// into state (quorum, program REVISION 1).
 pub(crate) fn append(row_type: &str, body: &str, caller: &str) -> Result<u64, String> {
-    let path = ledger_path();
-    let mut led = caddis_core::ledger::Ledger::open(&path)
-        .map_err(|e| format!("ledger unavailable at {}: {e}", path.display()))?;
     let id = format!("card{:016x}", fnv1a(body));
     let env = caddis_core::envelope::validate(
         1,
@@ -235,16 +232,19 @@ pub(crate) fn append(row_type: &str, body: &str, caller: &str) -> Result<u64, St
         &unix_seconds().to_string(),
     )
     .map_err(|e| format!("envelope refused: {} {}", e.code, e.why))?;
-    let seq = led
-        .append(&env)
-        .map_err(|e| format!("ledger append failed: {e}"))?;
-    let written = std::fs::read_to_string(&path).unwrap_or_default();
-    if !written.contains(&id) {
-        return Err(format!(
-            "the {row_type} row reported seq {seq} but is not in {}; \
-             the append failed open and the card is NOT recorded",
-            path.display()
-        ));
+    let seq = crate::sqlite_ledger::commit_open(&env);
+    if seq == 0 {
+        return Err(format!("the {row_type} row was not recorded"));
+    }
+    if let Some(path) = crate::sqlite_ledger::jsonl_test_override() {
+        let written = std::fs::read_to_string(&path).unwrap_or_default();
+        if !written.contains(&id) {
+            return Err(format!(
+                "the {row_type} row reported seq {seq} but is not in {}; \
+                 the append failed open and the card is NOT recorded",
+                path.display()
+            ));
+        }
     }
     Ok(seq)
 }

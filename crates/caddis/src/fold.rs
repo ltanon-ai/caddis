@@ -1,4 +1,4 @@
-//! fold.rs — CARD-0135. UI threshold organ: warn once, then deny.
+//! fold.rs — CARD-0135 + CARD-0210. Warn at cap, hold until era, then deny.
 
 use std::env;
 use std::fs;
@@ -28,6 +28,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     match sub.as_str() {
         "threshold" => threshold(&args[1..]),
         "tick" => tick(&args[1..]),
+        "cap" => cap(&args[1..]),
         _ => Err(Error::Usage(format!("unknown fold subcommand {sub}"))),
     }
 }
@@ -35,9 +36,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
 fn threshold(args: &[String]) -> Result<(), Error> {
     let at = parse_u32(args, "--at")?;
     if !(1..=99).contains(&at) {
-        return Err(Error::Usage(
-            "fold threshold --at must be 1..=99".into(),
-        ));
+        return Err(Error::Usage("fold threshold --at must be 1..=99".into()));
     }
     let path = fold_at_path()?;
     mkdir_parent(&path)?;
@@ -48,26 +47,63 @@ fn threshold(args: &[String]) -> Result<(), Error> {
 
 fn tick(args: &[String]) -> Result<(), Error> {
     let (id, rest) = lineage::take(args).map_err(Error::Usage)?;
-    let used = parse_u32(&rest, "--used-pct")?;
+    let used = flag_u32(&rest, "--used-pct")?
+        .ok_or_else(|| Error::Usage("fold requires --used-pct".into()))?;
     if used > 100 {
         return Err(Error::Usage("fold tick --used-pct must be 0..=100".into()));
     }
-    decide(&id, used, read_threshold()?)
+    let tokens = flag_u32(&rest, "--used-tokens")?;
+    let t = pct_limit(&id)?;
+    let cap = read_cap(&id)?;
+    decide(&id, used >= t || over_tokens(tokens, cap))
 }
 
-fn decide(id: &str, used: u32, t: u32) -> Result<(), Error> {
+fn pct_limit(id: &str) -> Result<u32, Error> {
+    if arm_kind(id).as_deref() == Some("claude") {
+        return Ok(30);
+    }
+    read_threshold()
+}
+
+fn over_tokens(tokens: Option<u32>, cap: Option<u32>) -> bool {
+    match (tokens, cap) {
+        (Some(tok), Some(c)) => tok >= c,
+        _ => false,
+    }
+}
+
+fn cap(args: &[String]) -> Result<(), Error> {
+    let (id, rest) = lineage::take(args).map_err(Error::Usage)?;
+    let n = parse_u32(&rest, "--tokens")?;
+    let path = lineage::dir(&id).map_err(Error::Fail)?.join("cap.tokens");
+    mkdir_parent(&path)?;
+    fs::write(&path, format!("{n}\n"))
+        .map_err(|e| Error::Fail(format!("write cap.tokens: {e}")))?;
+    println!("cap.tokens {n}");
+    Ok(())
+}
+
+fn decide(id: &str, over: bool) -> Result<(), Error> {
     let warned = already_warned(id)?;
-    if used < t && !warned {
+    if !over && !warned {
         println!("FOLD quiet");
+        crate::pace::feed(id);
         return Ok(());
     }
-    if warned {
-        println!("FOLD deny");
-        return Err(Error::Deny);
+    if !warned {
+        write_warned(id)?;
+        println!("FOLD warn");
+        crate::pace::feed(id);
+        return Ok(());
     }
-    write_warned(id)?;
-    println!("FOLD warn");
-    Ok(())
+    if !era_open(id)? {
+        println!("FOLD hold");
+        crate::pace::feed(id);
+        return Ok(());
+    }
+    println!("FOLD deny");
+    crate::pace::feed(id);
+    Err(Error::Deny)
 }
 
 fn parse_u32(args: &[String], flag: &str) -> Result<u32, Error> {
@@ -84,6 +120,57 @@ fn parse_u32(args: &[String], flag: &str) -> Result<u32, Error> {
     let raw = val.ok_or_else(|| Error::Usage(format!("fold requires {flag}")))?;
     raw.parse::<u32>()
         .map_err(|_| Error::Usage(format!("invalid {flag} {raw}")))
+}
+
+fn flag_u32(args: &[String], flag: &str) -> Result<Option<u32>, Error> {
+    let mut val = None;
+    let mut i = 0;
+    while i < args.len() {
+        if let Some(v) = flag_val(args, &mut i, flag)? {
+            val = Some(v);
+        }
+        i += 1;
+    }
+    match val {
+        None => Ok(None),
+        Some(raw) => raw
+            .parse()
+            .map(Some)
+            .map_err(|_| Error::Usage(format!("invalid {flag} {raw}"))),
+    }
+}
+
+fn era_open(id: &str) -> Result<bool, Error> {
+    let path = caddis_home()?.join("pager").join(id).join("era");
+    let Ok(text) = fs::read_to_string(path) else {
+        return Ok(false);
+    };
+    Ok(text.lines().any(|l| l.trim() == "open=1"))
+}
+
+fn arm_kind(id: &str) -> Option<String> {
+    let path = lineage::dir(id).ok()?.join("arm.receipt");
+    let text = fs::read_to_string(path).ok()?;
+    text.lines()
+        .find_map(|l| l.strip_prefix("kind=").map(str::trim).map(str::to_string))
+}
+
+fn read_cap(id: &str) -> Result<Option<u32>, Error> {
+    let path = lineage::dir(id).map_err(Error::Fail)?.join("cap.tokens");
+    let Ok(text) = fs::read_to_string(path) else {
+        if arm_kind(id).as_deref() == Some("claude") {
+            return Ok(None);
+        }
+        return Ok(Some(170_000));
+    };
+    let n: u32 = text
+        .trim()
+        .parse()
+        .map_err(|_| Error::Fail("cap.tokens is not a number".into()))?;
+    if n == 0 {
+        return Ok(None);
+    }
+    Ok(Some(n))
 }
 
 fn flag_val(args: &[String], i: &mut usize, flag: &str) -> Result<Option<String>, Error> {
@@ -116,6 +203,18 @@ fn read_threshold() -> Result<u32, Error> {
     } else {
         Err(Error::Fail("fold.at out of range".into()))
     }
+}
+
+/// CARD-0151: succession spends the warn. A clean rotate verify clears
+/// fold.state so the successor's first tick is quiet, not deny. Without
+/// this the loop bricks: warned once, every successor denied forever.
+pub fn clear_warned(id: &str) -> Result<bool, Error> {
+    let path = state_path(id)?;
+    if !path.is_file() {
+        return Ok(false);
+    }
+    fs::remove_file(&path).map_err(|e| Error::Fail(format!("clear fold.state: {e}")))?;
+    Ok(true)
 }
 
 fn already_warned(id: &str) -> Result<bool, Error> {

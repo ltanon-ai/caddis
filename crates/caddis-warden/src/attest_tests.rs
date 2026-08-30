@@ -123,6 +123,28 @@ fn verdicts_and_laws_inside_the_window_are_counted() {
 }
 
 #[test]
+fn a_fingerprint_tail_is_not_counted_as_a_law() {
+    let c = CardFile::new("fp", &["src/a.rs"]);
+    let led = ledger(
+        &c,
+        &r(
+            2,
+            "t.s1",
+            "tool.bash",
+            "steer|git x||one.law|deadbeefdeadbeef",
+        ),
+    );
+    let b = build(&led, "CARD-A").expect("bundle");
+    assert_eq!(b.steer, 1);
+    assert_eq!(b.laws.get("one.law"), Some(&1));
+    assert!(
+        !b.laws.contains_key("deadbeefdeadbeef"),
+        "fp counted as law: {:?}",
+        b.laws
+    );
+}
+
+#[test]
 fn rows_outside_the_window_are_not_attested() {
     let c = CardFile::new("window", &["src/a.rs"]);
     let before = r(0, "t.s1", "tool.bash", "allow|echo before||");

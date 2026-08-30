@@ -173,19 +173,61 @@ impl Card {
             .section("EXECUTION")
             .ok_or(CardErr::MissingSection("EXECUTION"))?;
         let exec = Execution::parse(exec_section.body.as_str())?;
+        self.check_continuation(&exec)?;
+        self.check_split()?;
+        self.check_island(&exec)?;
+        Ok(exec)
+    }
+
+    /// The CONTINUATION annex may never broaden the card it continues.
+    fn check_continuation(&self, exec: &Execution) -> Result<(), CardErr> {
         if let Some(ann) = self.continuation() {
             if ann.blast_cap.unwrap_or(exec.blast) > exec.blast {
                 return Err(CardErr::MissingSection("CONTINUATION-broadens"));
             }
         }
+        Ok(())
+    }
+
+    /// The SPLIT marker must name a real child position.
+    fn check_split(&self) -> Result<(), CardErr> {
         if let Some(split) = self.split() {
             if split.order == 0 || split.of == 0 || split.order > split.of {
                 return Err(CardErr::MissingSection("SPLIT-malformed"));
             }
         }
-        Ok(exec)
+        Ok(())
     }
 
+    /// CARD-0324 (islanding, LAYER 1): creating compiled source is a
+    /// declared decision — the Done-When must reach the unit through a
+    /// caller (crate/workspace test run), or the frontmatter must carry
+    /// `dormant: <why>`. Cards 0250/0251/0277 shipped unreachable.
+    fn check_island(&self, exec: &Execution) -> Result<(), CardErr> {
+        if Self::island_path(&exec.allowlist).is_none() {
+            return Ok(());
+        }
+        let caller_reach = self.section("Done-When").is_some_and(|s| {
+            s.body.contains("cargo test -p ") || s.body.contains("cargo test --workspace")
+        });
+        if !caller_reach && !self.frontmatter.contains_key("dormant") {
+            return Err(CardErr::MissingSection("island/caller-reach-or-dormant"));
+        }
+        Ok(())
+    }
+
+    /// The first `create`d compiled source file, if any: crates/*/src/**.rs,
+    /// never under tests/ (a test file IS the caller) — the island shape.
+    fn island_path(allowlist: &[String]) -> Option<&str> {
+        allowlist.iter().find_map(|item| {
+            let p = item.strip_prefix("create ")?;
+            (p.starts_with("crates/")
+                && p.contains("/src/")
+                && p.ends_with(".rs")
+                && !p.contains("/tests/"))
+            .then_some(p)
+        })
+    }
     /// The CONTINUATION annex: how a chained card carries context from its
     /// parent. It may never broaden what it continues — the cap is stated,
     /// and strict rejects a cap above the card's own blast.

@@ -70,7 +70,11 @@ fn rfc4231_case7_key_and_data_larger_than_block() {
     let data = b"Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data";
     let expected = "c9731f25665706dab8200d9ce68fad2cbac48efc4a5f72292e4eeb81e7d29298";
     let got = hmac::hmac_sha256(&key, data);
-    assert_eq!(hex_encode(&got), expected, "RFC 4231 case 7 (key + data > block)");
+    assert_eq!(
+        hex_encode(&got),
+        expected,
+        "RFC 4231 case 7 (key + data > block)"
+    );
 }
 
 #[test]

@@ -12,15 +12,31 @@
 //! PROVE; the host (harness adapter, heartbeat runner) decides and halts.
 //! Zero runtime dependencies beyond caddis-core; sync, std only.
 
+pub mod accept_prefix;
+pub mod attention;
 pub mod blocker;
 pub mod canary;
 pub mod canary_state;
 pub mod checkpoint;
+pub mod cosine_draft;
+pub mod deja_vu;
+pub mod eddy;
+pub mod eddy_arm;
+pub mod eddy_health;
+pub mod eddy_law;
+pub mod eddy_runner;
 pub mod hop;
 pub mod hops_core;
 pub mod hops_organs;
+pub mod kv_bridge;
+pub mod python_arsenal;
 pub mod shell;
+pub mod soul;
 pub mod util;
+pub mod util_time;
+pub mod valence;
+pub mod valence_mood;
+pub mod valence_senses;
 pub mod watchdog;
 
 pub const VERSION: &str = "0.1.0";

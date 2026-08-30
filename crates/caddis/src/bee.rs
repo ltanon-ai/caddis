@@ -29,6 +29,11 @@ pub fn run(args: &[String]) -> Result<i32, Error> {
     if cmd.is_empty() {
         return Err(Error::Usage("bee spawn requires a command after --".into()));
     }
+    if !crate::which::warden_on_path() {
+        return Err(Error::Fail(
+            "CONSCIENCE OFFLINE: caddis-warden is not on PATH".into(),
+        ));
+    }
     let status = Command::new(&cmd[0])
         .args(&cmd[1..])
         .env("CADDIS_HARNESS", &harness)

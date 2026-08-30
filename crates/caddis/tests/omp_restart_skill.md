@@ -103,15 +103,19 @@ herdr agent start <name> --kind omp --pane "$NEW" \
 
 **Step 3: WAIT for it to load** (status becomes `idle`)
 ```bash
-herdr agent wait <name> --until idle --timeout 180000
+# CARD-NO-TIMEOUT-1: no deadline flag. An agent is never killed
+# because a clock ran out. Poll until idle; the agent runs until it finishes.
+herdr agent wait <name> --until idle
 ```
 
-**Step 4: ONLY THEN give it the prompt**
 ```bash
+# Quote commands inside the prompt with 'single quotes', NEVER backticks.
+# A dropped backslash-escape makes YOUR shell run them: w3J:p3 closed its
+# own pane mid-prompt (2026-08-27). $LINEAGE/$OLD still expand in "...".
 herdr agent prompt <name> "You are the successor OMP session, running unattended.
-Read <HANDOFF PATH> and resume from it. When you have confirmed the first RESUME
-step is actionable, close the predecessor — but ONLY after the gate blesses it:
-run `caddis rotate verify --lineage $LINEAGE` (exit 0), then `herdr pane close $OLD`.
+Run 'caddis lineage packet --lineage $LINEAGE' and resume from that packet.
+When the first RESUME step is actionable, close the predecessor — but ONLY after
+'caddis rotate verify --lineage $LINEAGE' exits 0, then 'herdr pane close $OLD'.
 If verify fails, do NOT close: say so and tell the predecessor what is missing." --wait --until working
 ```
 
@@ -120,13 +124,13 @@ If verify fails, do NOT close: say so and tell the predecessor what is missing."
 ## If you are the SUCCESSOR reading this
 
 ```bash
+caddis lineage packet --lineage <id>
 caddis rotate verify --lineage <id>
 ```
 
-`verify` checks the ARM receipt's HMAC AND runs the per-kind drain
-(CARD-0120). On exit 0 it also writes `$HOME/.caddis/rotation/session.receipt`
-(CARD-0125/0126). Paste that file into the handoff — it is the rotation
-evidence, not memory. Then close the predecessor:
+The packet is the page table. Do not write a HANDOFF.md letter.
+`verify` checks the ARM HMAC AND the per-kind drain (CARD-0120). On exit 0
+it writes `$HOME/.caddis/rotation/session.receipt`. Then close:
 
 ```bash
 herdr pane close <OLD>

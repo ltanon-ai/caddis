@@ -53,8 +53,16 @@ impl World {
 fn packet_prints_this_lineage_arm() {
     let w = World::new("pkt");
     let (o, e, c) = w.run(&[
-        "rotate", "ready", "--lineage", "line-a", "--kind", "omp", "--model", "ma",
-        "--pane", "w3J:p1",
+        "rotate",
+        "ready",
+        "--lineage",
+        "line-a",
+        "--kind",
+        "omp",
+        "--model",
+        "ma",
+        "--pane",
+        "w3J:p1",
     ]);
     assert_eq!(c, 0, "ready: {o}{e}");
     let (o, e, c) = w.run(&["rotate", "arm", "--lineage", "line-a"]);

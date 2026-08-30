@@ -4,7 +4,9 @@
 use std::fs;
 use std::path::Path;
 
+use crate::fold;
 use crate::hmac;
+use crate::lease;
 use crate::lineage;
 use crate::receipt;
 
@@ -41,6 +43,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
             let (id, rest) = lineage::take(&args[1..]).map_err(Error::Usage)?;
             verify(&rest, &id)
         }
+        "handover" => lease::handover_cmd(&args[1..]).map_err(Error::Usage),
         _ => Err(Error::Usage(format!("unknown rotate subcommand {sub}"))),
     }
 }
@@ -48,12 +51,14 @@ pub fn run(args: &[String]) -> Result<(), Error> {
 fn ready(args: &[String], id: &str) -> Result<(), Error> {
     let (kind, model, pane) = parse_ready(args)?;
     let dir = lineage::dir(id).map_err(Error::Fail)?;
+    lease::refuse_if_blocked(&dir).map_err(Error::Fail)?;
     fs::create_dir_all(&dir).map_err(|e| Error::Fail(format!("mkdir {}: {e}", dir.display())))?;
     let key = receipt::load_or_create_key(&dir).map_err(Error::Fail)?;
     let path = lineage::write_receipt(&dir, "ready.receipt", &key, &kind, &model, &pane, id)
         .map_err(Error::Fail)?;
     println!("LINEAGE {id}");
-    println!("ready: {} model={model}", path.display());
+    let root = lease::stamp_root(&dir).map_err(Error::Fail)?;
+    println!("ready: {} model={model} root={root}", path.display());
     Ok(())
 }
 
@@ -63,6 +68,10 @@ fn arm(id: &str) -> Result<(), Error> {
     let path = lineage::write_receipt(&dir, "arm.receipt", &key, &kind, &model, &pane, id)
         .map_err(Error::Fail)?;
     println!("LINEAGE {id}");
+    if let Ok(root) = fs::read_to_string(dir.join("ready.root")) {
+        // swallow: fail-safe-by-law — no stamp, no root line (legacy line)
+        println!("root: {} (spawn target)", root.trim_end());
+    }
     println!("arm: {} model={model}", path.display());
     Ok(())
 }
@@ -70,18 +79,38 @@ fn arm(id: &str) -> Result<(), Error> {
 fn verify(args: &[String], id: &str) -> Result<(), Error> {
     let (kind_flag, force) = parse_verify_args(args)?;
     let dir = lineage::dir(id).map_err(Error::Fail)?;
-    let body = read_and_verify_hmac(&dir)?;
+    let (body, key) = read_named(&dir, "arm.receipt")?;
     match_lineage(&body, id)?;
     let model = field_or_fail(&body, "model")?;
     let kind = resolve_kind(&body, kind_flag)?;
     let pane = receipt::extract_field(&body, "pane");
     println!("LINEAGE {id}");
-    run_drain(&dir, &kind, &model, pane.as_deref(), force)
+    run_drain(&dir, &kind, &model, pane.as_deref(), force)?;
+    succeed(&dir, &key, &kind, &model, id)
 }
-
-fn read_and_verify_hmac(dir: &Path) -> Result<Vec<u8>, Error> {
-    let (body, _) = read_named(dir, "arm.receipt")?;
-    Ok(body)
+/// CARD-0301/0302: succession proven — claim, linger hygiene, warn spent.
+fn succeed(dir: &Path, key: &[u8], kind: &str, model: &str, id: &str) -> Result<(), Error> {
+    // CARD-0301/0302: the CLAIM is the succession act; arm.receipt froze
+    // at arm time (the CARD-0150 restamp destroyed the armed identity).
+    let claimer = std::env::var("HERDR_PANE_ID").unwrap_or_default(); // swallow: fail-safe-by-law — no pane env, empty claimer
+    let note = if lease::classify(dir) {
+        "clean handover"
+    } else {
+        "crash promote — escalate"
+    };
+    println!("lease: {note}");
+    if lease::clear_linger(dir).map_err(Error::Fail)? {
+        println!("linger: cleared");
+    }
+    let gen = lease::claim(dir, key, kind, model, id, &claimer).map_err(Error::Fail)?;
+    println!("claim: gen={gen}");
+    if let Some(owner) = lineage::owner_pane(dir) {
+        println!("owner: pane={owner}");
+    }
+    if fold::clear_warned(id).map_err(|e| Error::Fail(e.to_string()))? {
+        println!("fold: warn spent");
+    }
+    Ok(())
 }
 
 fn read_named(dir: &Path, name: &str) -> Result<(Vec<u8>, Vec<u8>), Error> {
@@ -131,7 +160,7 @@ fn run_drain(
             Ok(())
         }
         crate::drain::DrainResult::LiveAgent(msg) => {
-            write_linger(dir, &msg)?;
+            lease::write_linger(dir, &msg).map_err(Error::Fail)?;
             Err(Error::Fail(format!(
                 "drain fail ({msg}){force_note}",
                 force_note = force_note(force)
@@ -170,16 +199,6 @@ fn force_note(force: bool) -> &'static str {
     } else {
         ""
     }
-}
-
-/// Write a linger lease on successor-fail (drain found live predecessor).
-fn write_linger(dir: &Path, reason: &str) -> Result<(), Error> {
-    let ts = receipt::timestamp();
-    let path = dir.join("linger.lease");
-    let text = format!("reason={reason}\nts={ts}\n");
-    fs::write(&path, text.as_bytes())
-        .map_err(|e| Error::Fail(format!("write {}: {e}", path.display())))?;
-    Ok(())
 }
 
 fn read_ready(dir: &Path, id: &str) -> Result<(String, String, String, Vec<u8>), Error> {
@@ -253,4 +272,3 @@ fn flag_value(args: &[String], i: &mut usize, flag: &str) -> Result<Option<Strin
     }
     Ok(None)
 }
-

@@ -31,13 +31,28 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     }
 }
 
+/// CARD-0257: the orientation packet is three zones — the soul HEAD
+/// (session-stable identity), the arm-receipt body (unchanged), and the
+/// valence TAIL (volatile body state). HEAD and TAIL are pure additions;
+/// the arm lines and their order stay byte-identical.
 fn packet(args: &[String]) -> Result<(), Error> {
     let (id, rest) = lineage::take(args).map_err(Error::Usage)?;
     if let Some(a) = rest.first() {
         return Err(Error::Usage(format!("unknown argument {a}")));
     }
     let dir = lineage::dir(&id).map_err(Error::Fail)?;
-    let body = read_arm(&dir)?;
+    let home = home()?;
+    print!("{}", crate::soul_cli::identity_for(&id).unwrap_or_default());
+    arm_body(&dir, &id)?;
+    println!("{}", crate::packet_tail::tail(&dir, &home, &id));
+    Ok(())
+}
+
+/// Print the arm-receipt body (the unchanged middle zone). Validates the
+/// arm fields and the lineage match, then prints the arm lines in their
+/// fixed byte-identical order.
+fn arm_body(dir: &Path, id: &str) -> Result<(), Error> {
+    let body = read_arm(dir)?;
     let kind = field(&body, "kind")?;
     let model = field(&body, "model")?;
     let got = field(&body, "lineage")?;
@@ -52,12 +67,13 @@ fn packet(args: &[String]) -> Result<(), Error> {
         println!("pane={pane}");
     }
     println!("fold_at={}", fold_at());
-    println!("fold={}", fold_status(&dir));
+    println!("fold={}", fold_status(dir));
     Ok(())
 }
 
 fn read_arm(dir: &Path) -> Result<Vec<u8>, Error> {
-    let bytes = fs::read(dir.join("arm.receipt")).map_err(|e| Error::Fail(format!("no arm: {e}")))?;
+    let bytes =
+        fs::read(dir.join("arm.receipt")).map_err(|e| Error::Fail(format!("no arm: {e}")))?;
     let key = receipt::load_key(dir).map_err(Error::Fail)?;
     let (body, mac) = receipt::split_receipt(&bytes)
         .ok_or_else(|| Error::Fail("arm receipt is malformed".into()))?;
@@ -68,8 +84,7 @@ fn read_arm(dir: &Path) -> Result<Vec<u8>, Error> {
 }
 
 fn field(body: &[u8], name: &str) -> Result<String, Error> {
-    receipt::extract_field(body, name)
-        .ok_or_else(|| Error::Fail(format!("arm has no {name}")))
+    receipt::extract_field(body, name).ok_or_else(|| Error::Fail(format!("arm has no {name}")))
 }
 
 fn fold_at() -> u32 {
@@ -79,7 +94,11 @@ fn fold_at() -> u32 {
     let Ok(text) = fs::read_to_string(home.join(".caddis").join("fold.at")) else {
         return 50;
     };
-    text.trim().parse().ok().filter(|n| (1..=99).contains(n)).unwrap_or(50)
+    text.trim()
+        .parse()
+        .ok()
+        .filter(|n| (1..=99).contains(n))
+        .unwrap_or(50)
 }
 
 fn fold_status(dir: &Path) -> &'static str {

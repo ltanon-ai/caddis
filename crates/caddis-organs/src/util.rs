@@ -30,46 +30,10 @@ pub fn unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// ISO-8601 UTC timestamp (seconds precision) from the system clock.
-pub fn iso8601_now() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    iso8601_from_unix(secs)
-}
-
-/// ISO-8601 UTC from unix seconds. Civil-from-days per Howard Hinnant's
-/// algorithm (public domain) — deterministic, no calendar crate. Handles
-/// pre-epoch seconds correctly (div_euclid/rem_euclid keep the math total).
-pub fn iso8601_from_unix(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    let secs_of_day = secs.rem_euclid(86_400);
-    let (y, m, d) = civil_from_days(days);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y,
-        m,
-        d,
-        secs_of_day / 3600,
-        (secs_of_day % 3600) / 60,
-        secs_of_day % 60
-    )
-}
-
-/// days since 1970-01-01 -> (year, month, day). Hinnant's civil_from_days.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097); // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
+pub use crate::util_time::{
+    iso8601_from_unix, iso8601_from_unix_vilnius, iso8601_now, unix_from_iso8601,
+    vilnius_offset_secs,
+};
 
 /// Extract `"key":"value"` from a flat one-line JSON object (unescapes
 /// \\n, \\r, \\t and \\\\ pairs). None when the key is absent.
@@ -140,6 +104,23 @@ fn scan_json_string(s: &str) -> Option<String> {
     None
 }
 
+/// The estate's build-stable hash. BYTE-IDENTICAL to
+/// `caddis-warden/src/identity.rs::fnv1a` — including its prime literal
+/// `0x1000_0000_01b3`, which carries one more zero than published
+/// FNV-1a (0x100000001b3). Kept that way ON PURPOSE: the warden has
+/// persisted id/idem/fp values under this literal, so the estate's one
+/// hash law is THIS function, and "stable across builds" (never
+/// `DefaultHasher`) is the requirement — published-vector parity is not
+/// (CARD-0228).
+pub fn fnv1a(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x1000_0000_01b3);
+    }
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +131,16 @@ mod tests {
         assert_eq!(json_escape("a\"b\\c"), "a\\\"b\\\\c");
         assert_eq!(json_escape("l1\nl2\tl3\rl4"), "l1\\nl2\\tl3\\rl4");
         assert_eq!(json_escape("\u{1}"), "\\u0001");
+    }
+
+    #[test]
+    fn fnv1a_estate_vectors() {
+        // Pinned to the ESTATE algorithm (see fnv1a docs): any change to
+        // basis, prime, or order breaks these — including a "fix" to the
+        // published FNV prime, which would fork the estate hash law.
+        assert_eq!(fnv1a(""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a("a"), 0xaf74_d84c_8601_ec8c);
+        assert_eq!(fnv1a("foobar"), 0xf8ac_2471_f739_67e8);
     }
 
     #[test]

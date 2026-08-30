@@ -37,7 +37,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     project::copy_tree(&src, &dest)
         .map_err(|e| Error::Fail(format!("project {}: {e}", dest.display())))?;
     inherit_bee(&dest)?;
-    inherit_fold(&home, parsed.harness)?;
+    inherit_exts(&home, parsed.harness)?;
     voice::register(parsed.harness.voice_label()).map_err(Error::Fail)?;
     println!("attached {} -> {}", parsed.harness_name, dest.display());
     Ok(())
@@ -167,31 +167,41 @@ fn find_skill_src() -> Option<PathBuf> {
     }
 }
 
-fn inherit_fold(home: &Path, harness: Harness) -> Result<(), Error> {
+/// Projected OMP extensions: (file, env override). One walker, one law:
+/// deploy is organ-owned — a hand copy into ~/.omp is the fragility the
+/// operator banned (CARD-0154/0158).
+const EXTENSIONS: &[(&str, &str)] = &[
+    ("caddis-fold.ts", "CADDIS_FOLD_EXT"),
+    ("caddis-page-observe.ts", "CADDIS_PAGE_EXT"),
+    ("caddis-page.ts", "CADDIS_PAGE_NERVE_EXT"),
+];
+
+fn inherit_exts(home: &Path, harness: Harness) -> Result<(), Error> {
     if harness != Harness::OmpPeleda {
         return Ok(());
     }
-    let Some(src) = fold_ext_src() else {
-        return Ok(());
-    };
     let dest_dir = home.join(".omp").join("agent").join("extensions");
-    fs::create_dir_all(&dest_dir)
-        .map_err(|e| Error::Fail(format!("mkdir fold ext: {e}")))?;
-    let dest = dest_dir.join("caddis-fold.ts");
-    fs::copy(&src, &dest).map_err(|e| Error::Fail(format!("fold ext copy: {e}")))?;
+    fs::create_dir_all(&dest_dir).map_err(|e| Error::Fail(format!("mkdir extensions: {e}")))?;
+    for (file, env_name) in EXTENSIONS {
+        if let Some(src) = ext_src(file, env_name) {
+            fs::copy(&src, dest_dir.join(file))
+                .map_err(|e| Error::Fail(format!("copy {file}: {e}")))?;
+        }
+    }
     Ok(())
 }
 
-fn fold_ext_src() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CADDIS_FOLD_EXT") {
+fn ext_src(file: &str, env_name: &str) -> Option<PathBuf> {
+    if let Some(p) = env::var_os(env_name) {
         let p = PathBuf::from(p);
         if p.is_file() {
             return Some(p);
         }
     }
+    let want = format!("extension/{file}");
     let mut dir = env::current_dir().ok()?;
     loop {
-        let cand = dir.join("extension").join("caddis-fold.ts");
+        let cand = dir.join(&want);
         if cand.is_file() {
             return Some(cand);
         }

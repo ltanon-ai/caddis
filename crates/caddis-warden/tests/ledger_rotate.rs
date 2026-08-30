@@ -9,9 +9,13 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn tmp(tag: &str) -> PathBuf {
     let n = SEQ.fetch_add(1, Ordering::SeqCst);
-    let p = std::env::temp_dir().join(format!("caddis-lrot-{tag}-{n}.jsonl"));
-    let _ = fs::remove_file(&p);
-    p
+    // A UNIQUE DIR per run: a panicking run never cleans up, and a stale
+    // sibling archive in a shared temp dir poisons every later run (the
+    // find-by-prefix below would read a leftover with different bytes).
+    let dir = std::env::temp_dir().join(format!("caddis-lrot-{tag}-{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir.join("ledger.jsonl")
 }
 
 fn run(ledger: &PathBuf, args: &[&str]) -> (String, String, i32) {

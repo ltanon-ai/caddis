@@ -73,10 +73,24 @@ fn two_lineages_cannot_clobber_each_others_arm() {
     let w = World::new("two");
     fs::write(w.home.join("empty-drain"), "").unwrap();
     let ready_a = [
-        "rotate", "ready", "--kind", "omp", "--model", "ma", "--lineage", "line-a",
+        "rotate",
+        "ready",
+        "--kind",
+        "omp",
+        "--model",
+        "ma",
+        "--lineage",
+        "line-a",
     ];
     let ready_b = [
-        "rotate", "ready", "--kind", "omp", "--model", "mb", "--lineage", "line-b",
+        "rotate",
+        "ready",
+        "--kind",
+        "omp",
+        "--model",
+        "mb",
+        "--lineage",
+        "line-b",
     ];
     let (o, e, c) = w.run(&ready_a);
     assert_eq!(c, 0, "ready a: {o}{e}");
@@ -93,5 +107,8 @@ fn two_lineages_cannot_clobber_each_others_arm() {
     );
     let (o, e, c) = w.run(&["rotate", "verify", "--lineage", "line-a"]);
     assert_eq!(c, 0, "verify A after B armed: {o}{e}");
-    assert!(o.contains("LINEAGE line-a"), "verify must print lineage: {o}");
+    assert!(
+        o.contains("LINEAGE line-a"),
+        "verify must print lineage: {o}"
+    );
 }

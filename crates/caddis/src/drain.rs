@@ -6,6 +6,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub enum DrainResult {
     Clean,
@@ -29,69 +30,96 @@ fn drain_herdr(pane: Option<&str>) -> DrainResult {
     if let Some(path) = env::var_os("CADDIS_HERDR_SNAPSHOT") {
         return check_snapshot(&PathBuf::from(path), pane);
     }
-    if let Some(home) = herdr_home() {
-        let session = home.join("session.json");
-        if session.is_file() {
-            return check_snapshot(&session, pane);
-        }
-        return scan_dir_for_live(&home);
-    }
-    DrainResult::Unknown("herdr source not found".into())
+    live_pane_list(pane)
 }
 
-fn herdr_home() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("CADDIS_HERDR_HOME") {
-        let p = PathBuf::from(p);
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    if let Some(app) = env::var_os("APPDATA") {
-        let p = PathBuf::from(app).join("herdr");
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    let home = home_dir()?;
-    let p = home.join(".herdr");
-    if p.is_dir() {
-        Some(p)
-    } else {
-        None
+/// CARD-0310: production truth is the LIVE daemon (`herdr pane list`,
+/// the same view the operator sees). %APPDATA%/herdr/session.json is
+/// the desktop client's layout persistence — schema v3 carries no
+/// pane_id keys, lacks live panes and keeps stale ones — presence
+/// against it can never gate. Unreachable herdr = Unknown, never Clean.
+fn live_pane_list(pane: Option<&str>) -> DrainResult {
+    match crate::which::herdr(&["pane", "list"]) {
+        Some(text) => check_pane_text(&text, pane),
+        None => DrainResult::Unknown("herdr unreachable — cannot prove predecessor gone".into()),
     }
 }
 
 fn check_snapshot(path: &Path, pane: Option<&str>) -> DrainResult {
+    // CARD-0300: a stale state source is Unknown, never Clean — E1 must
+    // not be reborn one layer up via a frozen snapshot.
+    if let Some(why) = staleness(path) {
+        return DrainResult::Unknown(why);
+    }
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
         Err(_) => return DrainResult::Unknown("snapshot not readable".into()),
     };
+    check_pane_text(&text, pane)
+}
+
+/// The shared presence verdict: a pane id in pane-list-shaped text at
+/// ANY agent_status is a live agent (CARD-0300); no arm pane = Unknown.
+fn check_pane_text(text: &str, pane: Option<&str>) -> DrainResult {
     let Some(pane) = pane.filter(|p| !p.is_empty()) else {
         return DrainResult::Unknown("arm has no pane".into());
     };
-    if pane_is_working(&text, pane) {
+    if pane_present(text, pane) {
         DrainResult::LiveAgent(format!("live agent in pane {pane}"))
     } else {
         DrainResult::Clean
     }
 }
 
-fn pane_is_working(text: &str, pane: &str) -> bool {
-    let a = format!("\"pane_id\":\"{pane}\"");
-    let b = format!("\"pane_id\": \"{pane}\"");
-    for n in [a.as_str(), b.as_str()] {
-        if let Some(i) = text.find(n) {
-            let rest = &text[i..];
-            let end = rest.find('}').unwrap_or(rest.len());
-            let obj = &rest[..end];
-            if obj.contains("\"agent_status\":\"working\"")
-                || obj.contains("\"agent_status\": \"working\"")
-            {
+/// CARD-0300: mtime age over the bound names staleness; so does a future
+/// mtime (clock skew — fail closed either way). Bound 0 = always stale.
+fn staleness(path: &Path) -> Option<String> {
+    let bound = env::var("CADDIS_DRAIN_FRESHNESS_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(120);
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    match SystemTime::now().duration_since(modified) {
+        Ok(age) if age.as_secs() >= bound => Some(format!(
+            "stale herdr state ({}s >= {bound}s bound)",
+            age.as_secs()
+        )),
+        Ok(_) => None,
+        Err(_) => Some("herdr state mtime is in the future (clock skew)".into()),
+    }
+}
+
+/// CARD-0300: pane PRESENCE at any agent_status is live — E1 drained an
+/// idle predecessor Clean and verify restamped over it. Structural
+/// quoted-value equality: no substring prefix lies, no first-`}`
+/// truncation — a nested object cannot hide a live pane.
+fn pane_present(text: &str, pane: &str) -> bool {
+    let mut rest = text;
+    while let Some(i) = rest.find("\"pane_id\"") {
+        rest = &rest[i + "\"pane_id\"".len()..];
+        if let Some(value) = quoted_value(rest) {
+            if value == pane {
                 return true;
             }
         }
     }
     false
+}
+
+/// The JSON string literal that must follow a key token: optional
+/// whitespace, `:`, whitespace, then a quoted string (escape-aware).
+fn quoted_value(mut s: &str) -> Option<String> {
+    s = s.trim_start().strip_prefix(':')?.trim_start();
+    let mut out = String::new();
+    let mut chars = s.strip_prefix('"')?.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => out.push(chars.next()?),
+            _ => out.push(c),
+        }
+    }
+    None
 }
 
 fn drain_claude() -> DrainResult {

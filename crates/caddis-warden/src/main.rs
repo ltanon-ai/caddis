@@ -21,9 +21,9 @@
 mod body;
 
 use body::{body_command, mask_at_rest, why_field};
-use caddis_warden::identity::{caller_id, fnv1a, ledger_path, unix_seconds};
+use caddis_warden::identity::{caller_id, fnv1a, unix_seconds};
 use caddis_warden::{
-    attest, card, cli, decide, laws, propose, receipt, replay, report, verify, wire, Verdict,
+    attest, card, cli, decide, laws, propose, receipt, replay, report, wire, Verdict,
 };
 use std::io::{Read, Write};
 use std::process::ExitCode;
@@ -77,7 +77,6 @@ fn dispatch(args: &[String]) -> Option<ExitCode> {
     match args.get(1).map(String::as_str) {
         Some("--replay") => Some(exit_code(replay::run(args))),
         Some("report") => Some(exit_code(report::run(args))),
-        Some("verify") => Some(exit_code(verify::run(args))),
         Some("card") => Some(exit_code(card::run(args))),
         Some("receipt") => Some(exit_code(receipt::run(args))),
         Some("laws") => Some(exit_code(laws::run(args))),
@@ -132,17 +131,6 @@ fn fail_closed(reason: &str) {
 /// disguised. Fail-closed guards the JUDGEMENT; the RECORD fails open and says
 /// so.
 fn record(call: &caddis_warden::ToolCall, verdict: &Verdict) -> u64 {
-    let path = ledger_path();
-    let mut led = match caddis_core::ledger::Ledger::open(&path) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!(
-                "caddis-warden: ledger unavailable at {}: {e}",
-                path.display()
-            );
-            return 0;
-        }
-    };
     let raw = body_command(&call.command);
     let fp = fnv1a(&call.command);
     let body = format!(
@@ -175,13 +163,7 @@ fn record(call: &caddis_warden::ToolCall, verdict: &Verdict) -> u64 {
             return 0;
         }
     };
-    match led.append(&env) {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("caddis-warden: ledger append failed: {e}");
-            0
-        }
-    }
+    caddis_warden::sqlite_ledger::commit_open(&env)
 }
 
 /// The envelope `type` must start with an ASCII letter (envelope.rs); this

@@ -1,8 +1,21 @@
 [package]
 name = "caddis"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Caddis join binary: attach a chair (CARD-0118 / join CARD-0). rotate is CARD-1 (sergeant organ)."
 
-# Join CLI, not a world organ. Zero runtime deps (TCB/AGENT-LAW).
+# Join CLI. CARD-0233 ends the zero-dep era HONESTLY: the eddy nerve
+# links caddis-organs so the halt law exists as ONE compiled definition
+# (CARD-0234 forbids a second threshold anywhere — duplicating the law
+# into this crate to stay "zero-dep" would be exactly that). Both deps
+# are workspace-internal; still no external crates.
+#
+# CARD-0251: lib target exposes harness_driver trait to integration tests.
+
+[lib]
+name = "caddis"
+path = "src/lib.rs"
+
 [dependencies]
+caddis-core = { path = "../caddis-core" }
+caddis-organs = { path = "../caddis-organs" }

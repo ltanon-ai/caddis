@@ -217,6 +217,9 @@ pub fn apply(call: &ToolCall, cwd: &Path) -> Verdict {
     if is_read_only(&call.tool) {
         return Verdict::Allow;
     }
+    if let Some(v) = crate::size::check(call) {
+        return v;
+    }
 
     // THE REGISTRY RUNS BEFORE THE PAYLOAD RULES, and the ordering is
     // load-bearing rather than incidental. Both can fire on the same command,
